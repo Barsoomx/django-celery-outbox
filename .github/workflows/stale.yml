@@ -1,0 +1,23 @@
+name: "Close stale issues"
+on:
+  schedule:
+    - cron: "0 2 * * *"
+
+jobs:
+  stale:
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      pull-requests: write
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/stale@v9
+        with:
+          stale-pr-message: >
+            This PR has been automatically marked as stale because it has not had
+            recent activity. It will be closed if no further activity occurs.
+          close-pr-message: Closed as stale PR
+          operations-per-run: 10
+          exempt-draft-pr: true
+          exempt-pr-labels: "dependencies,dependabot,security"

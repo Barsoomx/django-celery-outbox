@@ -1,0 +1,118 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "django-celery-outbox"
+dynamic = ["version"]
+description = "Transactional Outbox pattern for Celery tasks in Django"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [
+  { name = "Filipp Balakin", email = "filipp@balakin.ru" },
+]
+maintainers = [
+  { name = "Filipp Balakin", email = "filipp@balakin.ru" },
+]
+keywords = ["celery", "outbox", "django", "transactional-outbox", "reliability"]
+dependencies = [
+  "Django>=4.2",
+  "celery>=5.3",
+  "structlog>=21.4.0",
+  "sentry-sdk>=2.0.0",
+  "datadog>=0.44.0",
+]
+classifiers = [
+  "Framework :: Django",
+  "Framework :: Django :: 4.2",
+  "Framework :: Django :: 5.0",
+  "Framework :: Django :: 5.1",
+  "Framework :: Django :: 5.2",
+  "Framework :: Celery",
+  "Intended Audience :: Developers",
+  "Operating System :: OS Independent",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.10",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Software Development :: Libraries :: Python Modules",
+  "Topic :: System :: Distributed Computing",
+]
+
+[project.urls]
+Homepage = "https://github.com/Barsoomx/django-celery-outbox"
+Repository = "https://github.com/Barsoomx/django-celery-outbox"
+Changelog = "https://github.com/Barsoomx/django-celery-outbox/blob/master/CHANGELOG.md"
+Issues = "https://github.com/Barsoomx/django-celery-outbox/issues"
+
+[project.optional-dependencies]
+dev = [
+  "ruff==0.12.10",
+  "django-stubs>=5.0.0",
+  "django-stubs-ext>=5.0.0",
+  "mypy>=1.8",
+  "celery-stubs",
+]
+test = [
+  "pytest>=7.0",
+  "pytest-django>=4.5",
+  "factory-boy>=3.3",
+]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["django_celery_outbox*"]
+
+[tool.setuptools.package-data]
+django_celery_outbox = [
+  "py.typed",
+  "templates/**/*.html",
+]
+
+[tool.setuptools.dynamic]
+version = { attr = "django_celery_outbox.__version__" }
+
+[tool.ruff]
+line-length = 150
+lint.select = [
+  "W", "ARG", "ANN", "ASYNC", "B", "COM", "C4", "C90", "DTZ", "E", "ERA", "F", "UP", "T10", "T20", "Q", "S", "I", "N", "YTT", "PTH",
+]
+lint.ignore = [
+  "UP037", "W291", "S324", "DTZ901", "DTZ006", "ANN401", "S101", "Q000", "Q003", "DTZ001", "ARG001", "ARG002", "PTH118", "S105", "DTZ005", "ERA001", "PTH123", "S106", "DTZ007", "B017", "B904", "B005", "S113", "COM812",
+]
+lint.exclude = [
+  ".git", ".mypy_cache", ".ruff_cache", "__pycache__", "*/migrations/**",
+]
+lint.fixable = ["ALL"]
+lint.dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+target-version = "py310"
+
+[tool.ruff.format]
+quote-style = "single"
+docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.10"
+pretty = true
+warn_unused_configs = true
+check_untyped_defs = true
+disallow_incomplete_defs = false
+no_implicit_optional = false
+ignore_missing_imports = true
+show_error_codes = true
+exclude = "^(tests|docs)/"
+plugins = ["mypy_django_plugin.main"]
+
+[tool.pytest.ini_options]
+DJANGO_SETTINGS_MODULE = 'tests.settings'
+pythonpath = ['.']
+python_files = ['*_tests.py']
+python_classes = ['']
+python_functions = ['test_*']
+
+[tool.django-stubs]
+django_settings_module = "tests.settings"
