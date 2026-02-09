@@ -15,18 +15,18 @@ This guarantees **at-least-once delivery**: if the business transaction commits,
 │                                                                 │
 │   ┌──────────────┐    transaction.atomic()    ┌──────────────┐  │
 │   │ Business     │ ──────────────────────────>│ CeleryOutbox │  │
-│   │ Logic        │    OutboxCelery.send_task() │ (DB table)   │  │
+│   │ Logic        │  OutboxCelery.send_task()  │ (DB table)   │  │
 │   │              │                            │              │  │
 │   │ Order.save() │ ── same transaction ──────>│ INSERT INTO  │  │
 │   └──────────────┘                            │ celery_outbox│  │
 │                                               └──────┬───────┘  │
 └──────────────────────────────────────────────────────┼──────────┘
                                                        │
-                              ┌─────────────────────────┘
+                              ┌────────────────────────┘
                               │ Relay reads pending messages
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                     Relay Process (daemon)                       │
+│                     Relay Process (daemon)                      │
 │                                                                 │
 │   ┌──────────────┐                            ┌──────────────┐  │
 │   │ SELECT       │    Celery.send_task()      │ RabbitMQ /   │  │
@@ -35,10 +35,10 @@ This guarantees **at-least-once delivery**: if the business transaction commits,
 │   └──────────────┘                            └──────┬───────┘  │
 │         │                                            │          │
 │         │ DELETE sent messages                       ▼          │
-│         │ UPDATE failed retries              ┌──────────────┐   │
-│         │ MOVE exceeded → dead letter        │ Celery Worker │   │
-│         └───────────────────────────────────>│ executes task │   │
-│                                              └──────────────┘   │
+│         │ UPDATE failed retries              ┌───────────────┐  │
+│         │ MOVE exceeded → dead letter        │ Celery Worker │  │
+│         └───────────────────────────────────>│ executes task │  │
+│                                              └───────────────┘  │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -84,7 +84,7 @@ Database table storing pending tasks.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│                   celery_outbox table                     │
+│                   celery_outbox table                    │
 ├──────────────────────┬───────────────────────────────────┤
 │ id                   │ BigAutoField (PK)                 │
 │ created_at           │ DateTimeField (auto_now_add)      │
@@ -119,7 +119,7 @@ payload so that operators can inspect failures and retry via admin.
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│               celery_outbox_dead_letter table             │
+│               celery_outbox_dead_letter table            │
 ├──────────────────────┬───────────────────────────────────┤
 │ id                   │ BigAutoField (PK)                 │
 │ created_at           │ DateTimeField (original creation) │
@@ -160,13 +160,13 @@ relay.start()
                 │
                 ├── close_old_connections()
                 │
-                ├── ┌─── Transaction 1 ───────────────────────┐
+                ├── ┌─── Transaction 1 ────────────────────────┐
                 │   │ messages = _select_messages()            │
                 │   │   SELECT ... FOR UPDATE SKIP LOCKED      │
                 │   │   WHERE updated_at IS NULL               │
-                │   │      OR retry_after <= Now()              │
-                │   │      OR (updated_at <= Now()-5min         │
-                │   │          AND retry_after IS NULL)         │
+                │   │      OR retry_after <= Now()             │
+                │   │      OR (updated_at <= Now()-5min        │
+                │   │          AND retry_after IS NULL)        │
                 │   │   ORDER BY id ASC                        │
                 │   │   LIMIT batch_size                       │
                 │   │                                          │
@@ -205,19 +205,19 @@ relay.start()
                 │
                 ├── close_old_connections()
                 │
-                ├── ┌─── Transaction 2 ───────────────────────┐
+                ├── ┌─── Transaction 2 ────────────────────────┐
                 │   │ _update_failed(failed)                   │
                 │   │   UPDATE SET retries = retries + 1,      │
-                │   │              updated_at = Now(),          │
-                │   │              retry_after = <exp backoff>  │
+                │   │              updated_at = Now(),         │
+                │   │              retry_after = <exp backoff> │
                 │   │                                          │
                 │   │ _delete_done(published)                  │
-                │   │   DELETE WHERE id IN (...)                │
+                │   │   DELETE WHERE id IN (...)               │
                 │   │                                          │
                 │   │ _move_to_dead_letter(exceeded)           │
-                │   │   INSERT INTO celery_outbox_dead_letter   │
-                │   │   DELETE FROM celery_outbox               │
-                │   │   _send_signal_safe(dead_lettered)        │
+                │   │   INSERT INTO celery_outbox_dead_letter  │
+                │   │   DELETE FROM celery_outbox              │
+                │   │   _send_signal_safe(dead_lettered)       │
                 │   └──────────────────────────────────────────┘
                 │
                 ├── gauge('queue.depth', CeleryOutbox.objects.count())
@@ -269,13 +269,13 @@ with the database clock, which matters when relay instances run on different hos
 
 ```
   Relay Instance A                    Relay Instance B
-┌──────────────────┐              ┌──────────────────┐
-│ SELECT ... FOR   │              │ SELECT ... FOR   │
-│ UPDATE SKIP      │              │ UPDATE SKIP      │
-│ LOCKED           │              │ LOCKED           │
-│ -> gets msgs 1-5 │              │ -> gets msgs 6-10│
-│ (1-5 are locked) │              │ (1-5 skipped)    │
-└──────────────────┘              └──────────────────┘
+┌──────────────────┐                ┌──────────────────┐
+│ SELECT ... FOR   │                │ SELECT ... FOR   │
+│ UPDATE SKIP      │                │ UPDATE SKIP      │
+│ LOCKED           │                │ LOCKED           │
+│ -> gets msgs 1-5 │                │ -> gets msgs 6-10│
+│ (1-5 are locked) │                │ (1-5 skipped)    │
+└──────────────────┘                └──────────────────┘
 ```
 
 `SKIP LOCKED` ensures multiple relay instances process different messages without conflicts.
@@ -397,7 +397,7 @@ Handles conversion between Python/Celery objects and JSON-safe dicts for databas
 │  exchange: KombuExch > exchange: "exch_name"    │
 │                                                 │
 │  _TRANSIENT_KEYS ────> DROPPED (producer,       │
-│                        connection, app, etc.)    │
+│                        connection, app, etc.)   │
 │  None values ────────> DROPPED                  │
 └─────────────────────────────────────────────────┘
 
@@ -411,7 +411,7 @@ Handles conversion between Python/Celery objects and JSON-safe dicts for databas
 │                                                 │
 │  link: [dict, ...] ──> link: [Signature, ...]   │
 │  chain: [dict, ...] ─> chain: [Signature, ...]  │
-│  chord: dict ────────> chord: Signature          │
+│  chord: dict ────────> chord: Signature         │
 │                                                 │
 │  other keys ─────────> passed through as-is     │
 └─────────────────────────────────────────────────┘
@@ -429,8 +429,8 @@ The outbox captures observability context at `send_task` time and restores it at
 │  .get_traceparent │──> sentry_trace_id ────>│  sentry-trace: "..."  │
 │  .get_baggage()   │──> sentry_baggage ─────>│  baggage: "..."       │
 │                   │                         │                       │
-│ structlog         │                         │ structlog.contextvars  │
-│  .contextvars     │                         │  .bound_contextvars(   │
+│ structlog         │                         │ structlog.contextvars │
+│  .contextvars     │                         │  .bound_contextvars(  │
 │  .get_contextvars │──> structlog_context ──>│    request_id='abc',  │
 │                   │    (JSON string)        │    user_id=42,        │
 │                   │                         │  )                    │
@@ -491,8 +491,8 @@ get_statsd()
     │
     ├── host:      MONITORING_STATSD_HOST      (default: 'localhost')
     ├── port:      MONITORING_STATSD_PORT      (default: 9125)
-    ├── namespace: MONITORING_STATSD_PREFIX     (default: 'celery_outbox')
-    └── tags:      MONITORING_STATSD_TAGS       (default: {})
+    ├── namespace: MONITORING_STATSD_PREFIX    (default: 'celery_outbox')
+    └── tags:      MONITORING_STATSD_TAGS      (default: {})
                    dict -> ['k:v', ...] constant tags
 ```
 
@@ -559,14 +559,15 @@ If `liveness_file` is `None` (default), the method is a no-op.
 
 ### 9. Management Command (`celery_outbox_relay`)
 
-```
+```bash
 $ python manage.py celery_outbox_relay \
     --batch-size 100 \
     --idle-time 1.0 \
     --backoff-time 120 \
     --max-retries 5 \
     --liveness-file /tmp/celery-outbox-alive
-
+```
+```
     │
     ├── _get_celery_app()
     │       reads CELERY_OUTBOX_APP setting
@@ -608,20 +609,20 @@ the dead letter table. This re-enqueues them for the relay to process.
 ## Data Flow: Complete Lifecycle
 
 ```
- 1. Application code                    2. Database
- ─────────────────                      ────────────
+ 1. Application code                        2. Database
+ ─────────────────                          ────────────
 
  with transaction.atomic():
    order = Order.objects.create(...)
    app.send_task(                       ┌─────────────────┐
-     'process_order',                   │ INSERT INTO      │
-     args=[order.id],             ───>  │ celery_outbox    │
-   )                                    │ (task_id,        │
-   # COMMIT                            │  task_name,      │
-                                        │  args, kwargs,   │
- --> signal: outbox_message_created     │  options,        │
-                                        │  sentry_*,       │
-                                        │  structlog_ctx)  │
+     'process_order',                   │ INSERT INTO     │
+     args=[order.id],             ───>  │ celery_outbox   │
+   )                                    │ (task_id,       │
+   # COMMIT                             │  task_name,     │
+                                        │  args, kwargs,  │
+ --> signal: outbox_message_created     │  options,       │
+                                        │  sentry_*,      │
+                                        │  structlog_ctx) │
                                         └────────┬────────┘
                                                  │
  3. Relay daemon                                 │
@@ -648,7 +649,7 @@ the dead letter table. This re-enqueues them for the relay to process.
      deserialize_options()
      Celery.send_task(                  ┌─────────────────┐
        name='process_order',            │                 │
-       args=[42],                 ───>  │  Message Broker  │
+       args=[42],                 ───>  │  Message Broker │
        task_id='abc-123',               │  (RabbitMQ /    │
        headers={sentry-trace, ...},     │   Redis)        │
      )                                  └────────┬────────┘
