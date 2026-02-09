@@ -44,7 +44,7 @@ def m_celery_send() -> Generator[MagicMock]:
         yield mock
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture()
 def f_sentry_init() -> Generator[None]:
     sentry_sdk.init(traces_sample_rate=1.0)
     yield
@@ -388,6 +388,7 @@ def test_e2e_multiple_messages_batch_processing(
 
 @pytest.mark.django_db
 def test_sentry_captures_traceparent_and_baggage(
+    f_sentry_init: None,
     f_outbox_app: OutboxCelery,
 ) -> None:
     with sentry_sdk.start_transaction(name='test-tx'):
@@ -408,6 +409,7 @@ def test_sentry_captures_traceparent_and_baggage(
 
 @pytest.mark.django_db
 def test_sentry_relay_restores_headers(
+    f_sentry_init: None,
     f_outbox_app: OutboxCelery,
     f_relay: Relay,
     m_celery_send: MagicMock,
@@ -428,6 +430,7 @@ def test_sentry_relay_restores_headers(
 
 @pytest.mark.django_db
 def test_sentry_full_trace_id_consistency(
+    f_sentry_init: None,
     f_outbox_app: OutboxCelery,
     f_relay: Relay,
     m_celery_send: MagicMock,
