@@ -1,11 +1,12 @@
 import json
 from collections.abc import Generator
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
 import sentry_sdk
+import sentry_sdk.transport
 import structlog.contextvars
 from celery import Celery
 from celery.canvas import Signature
@@ -15,6 +16,8 @@ from django.db import transaction
 from django_celery_outbox.app import OutboxCelery
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay import Relay
+
+_DUMMY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0'
 
 
 @pytest.fixture()
@@ -44,9 +47,18 @@ def m_celery_send() -> Generator[MagicMock]:
         yield mock
 
 
+class _NoopTransport(sentry_sdk.transport.Transport):
+    def capture_envelope(self, *args: Any, **kwargs: Any) -> None:
+        pass
+
+
 @pytest.fixture()
 def f_sentry_init() -> Generator[None]:
-    sentry_sdk.init(traces_sample_rate=1.0)
+    sentry_sdk.init(
+        dsn=_DUMMY_DSN,
+        traces_sample_rate=1.0,
+        transport=_NoopTransport,
+    )
     yield
     client = sentry_sdk.get_client()
     if client is not None:
@@ -97,19 +109,18 @@ def test_e2e_countdown_converts_to_eta(
     f_relay: Relay,
     m_celery_send: MagicMock,
 ) -> None:
-    before = datetime.now(timezone.utc)
-
     with transaction.atomic():
         f_outbox_app.send_task('my.task', countdown=120)
+
+    msg = CeleryOutbox.objects.get()
+    stored_eta = datetime.fromisoformat(msg.options['eta'])
 
     f_relay._processing()
 
     call_kwargs = m_celery_send.call_args
     eta = call_kwargs.kwargs['eta']
     assert isinstance(eta, datetime)
-    expected_min = before + timedelta(seconds=119)
-    expected_max = before + timedelta(seconds=125)
-    assert expected_min <= eta <= expected_max
+    assert eta == stored_eta
 
 
 @pytest.mark.django_db
