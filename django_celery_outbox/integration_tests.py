@@ -1,4 +1,5 @@
 import json
+from collections.abc import Generator
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -38,13 +39,13 @@ def f_relay(f_relay_app: Celery) -> Relay:
 
 
 @pytest.fixture()
-def m_celery_send() -> MagicMock:
+def m_celery_send() -> Generator[MagicMock]:
     with patch('django_celery_outbox.relay.Celery.send_task') as mock:
         yield mock
 
 
 @pytest.fixture(autouse=True)
-def f_sentry_init() -> None:
+def f_sentry_init() -> Generator[None]:
     sentry_sdk.init(traces_sample_rate=1.0)
     yield
     client = sentry_sdk.get_client()
@@ -54,7 +55,7 @@ def f_sentry_init() -> None:
 
 
 @pytest.fixture(autouse=True)
-def f_clean_structlog() -> None:
+def f_clean_structlog() -> Generator[None]:
     structlog.contextvars.clear_contextvars()
     yield
     structlog.contextvars.clear_contextvars()
@@ -433,12 +434,14 @@ def test_sentry_full_trace_id_consistency(
 ) -> None:
     with sentry_sdk.start_transaction(name='test-tx'):
         traceparent = sentry_sdk.get_traceparent()
+        assert traceparent is not None
         trace_id = traceparent.split('-')[0]
 
         with transaction.atomic():
             f_outbox_app.send_task('my.task', task_id='trace-consistency-1')
 
     msg = CeleryOutbox.objects.get()
+    assert msg.sentry_trace_id is not None
     stored_trace_id = msg.sentry_trace_id.split('-')[0]
     assert stored_trace_id == trace_id
 
