@@ -139,9 +139,7 @@ class Relay:
                 skip_locked=True,
             )
             .filter(
-                Q(updated_at__isnull=True)
-                | Q(retry_after__lte=Now())
-                | Q(updated_at__lte=Now() - _STALE_TIMEOUT, retry_after__isnull=True),
+                Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | Q(updated_at__lte=Now() - _STALE_TIMEOUT, retry_after__isnull=True),
             )
             .order_by('id')[: self._batch_size]
         )
@@ -267,7 +265,7 @@ class Relay:
 
         for msg_id, retries in failed_messages:
             jitter = random.uniform(0, self._backoff_time * 0.1)  # noqa: S311
-            delay = timedelta(seconds=self._backoff_time * (2 ** retries) + jitter)
+            delay = timedelta(seconds=self._backoff_time * (2**retries) + jitter)
             CeleryOutbox.objects.filter(pk=msg_id).update(
                 retries=F('retries') + 1,
                 updated_at=Now(),
