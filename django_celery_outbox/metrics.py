@@ -14,6 +14,17 @@ def _to_tags(tags: dict[str, str] | None) -> list[str] | None:
     return [f'{k}:{v}' for k, v in tags.items()]
 
 
+def _get_task_tag(task_name: str) -> dict[str, str]:
+    if getattr(settings, 'CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS', False):
+        return {}
+
+    monitored = getattr(settings, 'CELERY_OUTBOX_MONITORED_TASKS', None)
+    if monitored is not None and task_name not in monitored:
+        return {'task_name': 'other'}
+
+    return {'task_name': task_name}
+
+
 def increment(name: str, value: int = 1, tags: dict[str, str] | None = None) -> None:
     if not _is_enabled():
         return

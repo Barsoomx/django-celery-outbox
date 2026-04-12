@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 from django.test import override_settings
 
 from django_celery_outbox import metrics
+from django_celery_outbox.metrics import _get_task_tag
 
 
 @override_settings(MONITORING_METRICS_ENABLED=True)
@@ -121,3 +122,40 @@ def test_is_enabled_defaults_to_true() -> None:
     result = metrics._is_enabled()
 
     assert result is True
+
+
+def test_get_task_tag_returns_task_name_by_default() -> None:
+    with override_settings(
+        CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=False,
+        CELERY_OUTBOX_MONITORED_TASKS=None,
+    ):
+        result = _get_task_tag('myapp.tasks.send_email')
+
+    assert result == {'task_name': 'myapp.tasks.send_email'}
+
+
+def test_get_task_tag_returns_empty_when_disabled() -> None:
+    with override_settings(CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=True):
+        result = _get_task_tag('myapp.tasks.send_email')
+
+    assert result == {}
+
+
+def test_get_task_tag_returns_other_when_not_monitored() -> None:
+    with override_settings(
+        CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=False,
+        CELERY_OUTBOX_MONITORED_TASKS={'allowed.task'},
+    ):
+        result = _get_task_tag('myapp.tasks.send_email')
+
+    assert result == {'task_name': 'other'}
+
+
+def test_get_task_tag_returns_task_name_when_monitored() -> None:
+    with override_settings(
+        CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=False,
+        CELERY_OUTBOX_MONITORED_TASKS={'myapp.tasks.send_email'},
+    ):
+        result = _get_task_tag('myapp.tasks.send_email')
+
+    assert result == {'task_name': 'myapp.tasks.send_email'}
