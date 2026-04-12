@@ -14,7 +14,7 @@ jobs:
 
       - name: Start services
         working-directory: examples/minimal_django
-        run: docker compose up -d --wait --wait-timeout 180
+        run: docker compose up -d --wait --wait-timeout 180 || (docker compose logs && exit 1)
 
       - name: Create order
         run: |
