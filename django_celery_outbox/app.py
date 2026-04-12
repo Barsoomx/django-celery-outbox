@@ -1,3 +1,5 @@
+from collections.abc import Callable
+from functools import lru_cache
 from typing import Any
 
 import sentry_sdk
@@ -7,6 +9,7 @@ from celery.result import AsyncResult
 from celery.utils import uuid
 from django.conf import settings
 from django.db import connections
+from django.utils.module_loading import import_string
 
 from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, serialize_options
@@ -14,6 +17,31 @@ from django_celery_outbox.signals import outbox_message_created
 from django_celery_outbox.structlog_utils import get_structlog_context_json
 
 _logger = structlog.getLogger(__name__)
+
+
+@lru_cache(maxsize=1)
+def _get_redactor() -> Callable[[str, list, dict], tuple[list, dict]] | None:
+    redactor = getattr(settings, 'CELERY_OUTBOX_PII_REDACTOR', None)
+    if redactor is None:
+        return None
+
+    if isinstance(redactor, str):
+        return import_string(redactor)
+
+    return redactor
+
+
+def _redact_task_data(
+    task_name: str,
+    args: list,
+    kwargs: dict,
+) -> tuple[list, dict]:
+    redactor = _get_redactor()
+    if redactor is None:
+        return args, kwargs
+
+    return redactor(task_name, args, kwargs)
+
 
 _OUTBOX_OPTION_KEYS = (
     'expires',
@@ -139,6 +167,10 @@ class OutboxCelery(Celery):
             eta=eta,
         )
 
+        args_list = list(args) if args else []
+        kwargs_dict = dict(kwargs) if kwargs else {}
+        args_list, kwargs_dict = _redact_task_data(name, args_list, kwargs_dict)
+
         if not connections[CeleryOutbox.objects.db].in_atomic_block:
             _logger.warning(
                 'celery_outbox_not_in_transaction',
@@ -153,8 +185,8 @@ class OutboxCelery(Celery):
             CeleryOutbox.objects.create(
                 task_id=task_id,
                 task_name=name,
-                args=list(args) if args else [],
-                kwargs=dict(kwargs) if kwargs else {},
+                args=args_list,
+                kwargs=kwargs_dict,
                 options=serialized_options,
                 schema_version=CURRENT_SCHEMA_VERSION,
                 sentry_trace_id=sentry_sdk.get_traceparent(),

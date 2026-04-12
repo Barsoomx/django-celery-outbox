@@ -1,9 +1,11 @@
+from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
 from celery import Celery
 from celery.result import AsyncResult
 from django.db import transaction
+from django.test import override_settings
 
 from django_celery_outbox.app import OutboxCelery
 from django_celery_outbox.models import CeleryOutbox
@@ -12,6 +14,20 @@ from django_celery_outbox.models import CeleryOutbox
 @pytest.fixture()
 def f_app() -> OutboxCelery:
     return OutboxCelery('test')
+
+
+@pytest.fixture()
+def f_outbox_celery() -> OutboxCelery:
+    return OutboxCelery('test')
+
+
+@pytest.fixture(autouse=True)
+def clear_redactor_cache() -> Generator[None, None, None]:
+    from django_celery_outbox.app import _get_redactor
+
+    _get_redactor.cache_clear()
+    yield
+    _get_redactor.cache_clear()
 
 
 @pytest.mark.django_db
@@ -256,6 +272,7 @@ def test_send_task_excluded_does_not_create_outbox(m_super_send: MagicMock, f_ap
 def test_send_task_not_excluded_creates_outbox(f_app: OutboxCelery) -> None:
     with patch('django_celery_outbox.app.settings') as m_settings:
         m_settings.CELERY_OUTBOX_EXCLUDE_TASKS = {'other.task'}
+        m_settings.CELERY_OUTBOX_PII_REDACTOR = None
         f_app.send_task('my.task')
 
     assert CeleryOutbox.objects.count() == 1
@@ -365,3 +382,43 @@ def test_send_task_exclude_tasks_as_list(m_super_send: MagicMock, f_app: OutboxC
 
     m_super_send.assert_called_once()
     assert CeleryOutbox.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_send_task_applies_pii_redactor(
+    f_outbox_celery: OutboxCelery,
+) -> None:
+    def redactor(name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+        redacted_kwargs = {k: '[REDACTED]' if k == 'email' else v for k, v in kwargs.items()}
+        return args, redacted_kwargs
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=redactor):
+        f_outbox_celery.send_task('test.task', kwargs={'email': 'user@example.com', 'safe': 1})
+
+    msg = CeleryOutbox.objects.first()
+    assert msg is not None
+    assert msg.kwargs == {'email': '[REDACTED]', 'safe': 1}
+
+
+@pytest.mark.django_db
+def test_send_task_no_redactor_stores_original(
+    f_outbox_celery: OutboxCelery,
+) -> None:
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=None):
+        f_outbox_celery.send_task('test.task', kwargs={'email': 'user@example.com'})
+
+    msg = CeleryOutbox.objects.first()
+    assert msg is not None
+    assert msg.kwargs == {'email': 'user@example.com'}
+
+
+@pytest.mark.django_db
+def test_send_task_redactor_exception_propagates(
+    f_outbox_celery: OutboxCelery,
+) -> None:
+    def bad_redactor(name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+        raise ValueError('blocked')
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=bad_redactor):
+        with pytest.raises(ValueError, match='blocked'):
+            f_outbox_celery.send_task('test.task', kwargs={})
