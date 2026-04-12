@@ -895,14 +895,14 @@ def test_oldest_pending_age_seconds_emitted(
         args=[],
         kwargs={},
         options={},
-        updated_at=django_timezone.now() - timedelta(seconds=60),
+        updated_at=None,
         retry_after=None,
     )
     CeleryOutbox.objects.filter(pk=msg.pk).update(
         created_at=django_timezone.now() - timedelta(seconds=60),
     )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+    with patch.object(f_relay._selector, 'run', return_value=[]):
         with patch('django_celery_outbox.relay._relay.time.sleep'):
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 f_relay._processing()

@@ -6,8 +6,14 @@ from django.db.models.functions import Now
 from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_VERSION
 
-# TODO(mcproger) expose to config?
 _STALE_TIMEOUT = timedelta(minutes=5)
+
+
+def get_pending_filter(stale_timeout: timedelta = _STALE_TIMEOUT) -> Q:
+    return (Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | Q(updated_at__lte=Now() - stale_timeout, retry_after__isnull=True)) & Q(
+        schema_version__gte=MIN_SUPPORTED_VERSION,
+        schema_version__lte=CURRENT_SCHEMA_VERSION,
+    )
 
 
 class MessageSelector:
@@ -23,11 +29,7 @@ class MessageSelector:
     def _select(self) -> list[CeleryOutbox]:
         queryset = (
             CeleryOutbox.objects.select_for_update(skip_locked=True)
-            .filter(
-                Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | Q(updated_at__lte=Now() - self._stale_timeout, retry_after__isnull=True),
-                schema_version__gte=MIN_SUPPORTED_VERSION,
-                schema_version__lte=CURRENT_SCHEMA_VERSION,
-            )
+            .filter(get_pending_filter(self._stale_timeout))
             .order_by('id')[: self._batch_size]
         )
 

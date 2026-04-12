@@ -11,7 +11,7 @@ import structlog
 from celery import Celery
 from django.conf import settings
 from django.db import close_old_connections, connections, transaction
-from django.db.models import F, Q
+from django.db.models import F
 from django.db.models.functions import Now
 from django.dispatch import Signal
 from django.utils import timezone
@@ -23,7 +23,7 @@ from django_celery_outbox import metrics
 from django_celery_outbox.metrics import get_task_tag
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay._config import RelayConfig
-from django_celery_outbox.relay._message_selector import MessageSelector
+from django_celery_outbox.relay._message_selector import MessageSelector, get_pending_filter
 from django_celery_outbox.serialization import deserialize_options
 from django_celery_outbox.signals import (
     outbox_message_dead_lettered,
@@ -153,15 +153,9 @@ class Relay:
         metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
         metrics.timing('batch.duration_ms', (time.monotonic() - start_time) * 1000)
 
-        now = timezone.now()
-        oldest = (
-            CeleryOutbox.objects.filter(Q(retry_after__isnull=True) | Q(retry_after__lte=now))
-            .order_by('created_at')
-            .values_list('created_at', flat=True)
-            .first()
-        )
+        oldest = CeleryOutbox.objects.filter(get_pending_filter()).order_by('created_at').values_list('created_at', flat=True).first()
         if oldest:
-            age_seconds = (now - oldest).total_seconds()
+            age_seconds = (timezone.now() - oldest).total_seconds()
             metrics.gauge('oldest_pending_age_seconds', age_seconds)
         else:
             metrics.gauge('oldest_pending_age_seconds', 0)

@@ -169,13 +169,19 @@ class OutboxCelery(Celery):
 
         args_list = list(args) if args else []
         kwargs_dict = dict(kwargs) if kwargs else {}
-        redacted_args, redacted_kwargs = _redact_task_data(
-            name,
-            deepcopy(args_list),
-            deepcopy(kwargs_dict),
-        )
-        stored_redacted_args = redacted_args if redacted_args != args_list else None
-        stored_redacted_kwargs = redacted_kwargs if redacted_kwargs != kwargs_dict else None
+
+        redactor = _get_redactor()
+        if redactor is not None:
+            redacted_args, redacted_kwargs = redactor(
+                name,
+                deepcopy(args_list),
+                deepcopy(kwargs_dict),
+            )
+            stored_redacted_args = redacted_args if redacted_args != args_list else None
+            stored_redacted_kwargs = redacted_kwargs if redacted_kwargs != kwargs_dict else None
+        else:
+            stored_redacted_args = None
+            stored_redacted_kwargs = None
         from django_celery_outbox.models import CeleryOutbox
 
         if not connections[CeleryOutbox.objects.db].in_atomic_block:
