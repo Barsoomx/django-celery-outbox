@@ -203,7 +203,7 @@ def _deserialize_signatures(result: dict[str, Any], app: Celery) -> None:
             result['chord'] = Signature.from_dict(val, app=app)
 
 
-def deserialize_options(options: dict[str, Any], app: Celery) -> dict[str, Any]:
+def _deserialize_options_v1(options: dict[str, Any], app: Celery) -> dict[str, Any]:
     result = dict(options)
 
     if 'eta' in result:
@@ -217,3 +217,18 @@ def deserialize_options(options: dict[str, Any], app: Celery) -> dict[str, Any]:
     _deserialize_signatures(result, app)
 
     return result
+
+
+_DESERIALIZERS: dict[int, Any] = {
+    1: _deserialize_options_v1,
+}
+
+
+def deserialize_options(options: dict[str, Any], app: Celery, schema_version: int) -> dict[str, Any]:
+    if schema_version > CURRENT_SCHEMA_VERSION:
+        raise UnsupportedSchemaVersion(schema_version)
+
+    if schema_version < MIN_SUPPORTED_VERSION:
+        raise UnsupportedSchemaVersion(schema_version)
+
+    return _DESERIALIZERS[schema_version](options, app)
