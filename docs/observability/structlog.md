@@ -15,13 +15,15 @@ The outbox propagates structlog context from producer to consumer.
 # settings.py
 CELERY_OUTBOX_STRUCTLOG_ENABLED = True  # Default
 
-# Optional: filter sensitive keys
-CELERY_OUTBOX_STRUCTLOG_FILTER_KEYS = {
-    'password',
-    'api_key',
-    'access_token',
-}
+# Optional: capture only safe keys
+CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS = [
+    'request_id',
+    'trace_id',
+    'user_id',
+]
 ```
+
+When `CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS` is set, only the listed keys are stored and propagated.
 
 ## Example
 

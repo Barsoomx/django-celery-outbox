@@ -70,13 +70,6 @@ STATIC_URL = 'static/'
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
-CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', 'amqp://guest:guest@localhost:5672//')
-CELERY_RESULT_BACKEND = None
-CELERY_TASK_ALWAYS_EAGER = False
-CELERY_BROKER_TRANSPORT_OPTIONS = {
-    'confirm_publish': True,
-}
-
-CELERY_OUTBOX_APP = 'minimal_django.celery.app'
+CELERY_OUTBOX_APP = 'minimal_django.celery_app.app'
 CELERY_OUTBOX_EXCLUDE_TASKS = set()
 CELERY_OUTBOX_STRUCTLOG_ENABLED = False

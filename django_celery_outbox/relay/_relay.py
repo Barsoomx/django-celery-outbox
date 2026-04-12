@@ -17,7 +17,7 @@ from django.dispatch import Signal
 from django.utils import timezone
 
 from django_celery_outbox import metrics
-from django_celery_outbox.metrics import _get_task_tag
+from django_celery_outbox.metrics import get_task_tag
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay._config import RelayConfig
 from django_celery_outbox.relay._message_selector import MessageSelector
@@ -37,6 +37,7 @@ class ProcessResult(Enum):
     EXCEEDED = auto()
 
 
+# Order matters: subclasses before parents (ConnectionError, TimeoutError < OSError)
 _EXCEPTION_CATEGORIES: dict[type[Exception], str] = {
     ConnectionError: 'connection',
     TimeoutError: 'timeout',
@@ -135,14 +136,15 @@ class Relay:
         metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
         metrics.timing('batch.duration_ms', (time.monotonic() - start_time) * 1000)
 
+        now = timezone.now()
         oldest = (
-            CeleryOutbox.objects.filter(Q(retry_after__isnull=True) | Q(retry_after__lte=timezone.now()))
+            CeleryOutbox.objects.filter(Q(retry_after__isnull=True) | Q(retry_after__lte=now))
             .order_by('created_at')
             .values_list('created_at', flat=True)
             .first()
         )
         if oldest:
-            age_seconds = (timezone.now() - oldest).total_seconds()
+            age_seconds = (now - oldest).total_seconds()
             metrics.gauge('oldest_pending_age_seconds', age_seconds)
         else:
             metrics.gauge('oldest_pending_age_seconds', 0)
@@ -195,7 +197,7 @@ class Relay:
     def _process_message(self, msg: CeleryOutbox) -> ProcessResult:
         if msg.retries >= self._config.max_retries:
             _logger.warning('celery_outbox_max_retries_exceeded')
-            tags = _get_task_tag(msg.task_name)
+            tags = get_task_tag(msg.task_name)
             metrics.increment('messages.exceeded', tags=tags)
             return ProcessResult.EXCEEDED
 
@@ -218,14 +220,15 @@ class Relay:
                     _logger.error('celery_outbox_send_failed', **log_kwargs, exc_info=True)
                 else:
                     _logger.error('celery_outbox_send_failed', **log_kwargs)
+
                 if msg.retries >= self._config.max_retries - 1:
                     _logger.warning('celery_outbox_max_retries_exceeded')
-                    tags = _get_task_tag(msg.task_name)
+                    tags = get_task_tag(msg.task_name)
                     tags['exception_type'] = exc_type
                     metrics.increment('messages.exceeded', tags=tags)
                     return ProcessResult.EXCEEDED
                 else:
-                    tags = _get_task_tag(msg.task_name)
+                    tags = get_task_tag(msg.task_name)
                     tags['exception_type'] = exc_type
                     metrics.increment('messages.failed', tags=tags)
                     self._send_signal_safe(outbox_message_failed, msg.task_id, msg.task_name, retries=msg.retries)
@@ -233,7 +236,7 @@ class Relay:
             else:
                 span.set_status('ok')
                 latency_ms = (time.time() - msg.created_at.timestamp()) * 1000
-                tags = _get_task_tag(msg.task_name)
+                tags = get_task_tag(msg.task_name)
                 metrics.timing('send_latency_ms', latency_ms, tags=tags)
                 metrics.increment('messages.published', tags=tags)
                 self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
@@ -327,6 +330,8 @@ class Relay:
                     task_name=msg.task_name,
                     args=msg.args,
                     kwargs=msg.kwargs,
+                    redacted_args=msg.redacted_args,
+                    redacted_kwargs=msg.redacted_kwargs,
                     options=msg.options,
                     sentry_trace_id=msg.sentry_trace_id,
                     sentry_baggage=msg.sentry_baggage,

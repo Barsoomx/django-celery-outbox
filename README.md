@@ -67,33 +67,76 @@ INSTALLED_APPS = [
 ]
 ```
 
-### 3. Replace Celery app
+### 3. Add Celery config
 
-In your `myproject/celery.py`:
+In `myproject/celeryconfig.py`:
 
 ```python
+from kombu import Exchange, Queue
+
+broker_transport_options = {
+    'confirm_publish': True,
+}
+broker_native_delayed_delivery_queue_type = 'quorum'
+worker_detect_quorum_queues = True
+
+task_default_queue = 'myproject-default'
+task_default_exchange = task_default_queue
+task_default_exchange_type = 'topic'
+task_default_routing_key = task_default_queue
+task_default_queue_type = 'quorum'
+task_create_missing_queues = False
+task_queues = (
+    Queue(
+        'myproject-default',
+        Exchange('myproject-default', type='topic'),
+        routing_key='myproject-default',
+        queue_arguments={'x-queue-type': 'quorum'},
+    ),
+)
+```
+
+### 4. Create Celery app bootstrap
+
+In `myproject/celery_app.py`:
+
+```python
+import os
+
 from django_celery_outbox import OutboxCelery
 
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
+
 app = OutboxCelery('myproject')
-app.config_from_object('django.conf:settings', namespace='CELERY')
+app.config_from_object('myproject.celeryconfig')
 app.autodiscover_tasks()
 ```
 
-### 4. Configure the outbox app path
+### 5. Export the app from your package
+
+In `myproject/__init__.py`:
+
+```python
+from myproject.celery_app import app as celery_app
+
+__all__ = ('celery_app',)
+```
+
+### 6. Configure the outbox app path
 
 In your Django settings:
 
 ```python
-CELERY_OUTBOX_APP = 'myproject.celery.app'
+CELERY_OUTBOX_APP = 'myproject.celery_app.app'
 ```
 
-### 5. Run migrations
+### 7. Run migrations
 
 ```bash
 python manage.py migrate
 ```
 
-### 6. Start the relay
+### 8. Start the relay
 
 ```bash
 python manage.py celery_outbox_relay
@@ -107,7 +150,7 @@ All settings are configured in your Django settings module.
 
 | Setting | Default | Description |
 |---------|---------|-------------|
-| `CELERY_OUTBOX_APP` | **required** | Dotted path to your Celery app instance, e.g. `'myproject.celery.app'` |
+| `CELERY_OUTBOX_APP` | **required** | Dotted path to your Celery app instance, e.g. `'myproject.celery_app.app'` |
 | `CELERY_OUTBOX_EXCLUDE_TASKS` | `()` | Tuple/set of task names that bypass the outbox and send directly to the broker |
 | `CELERY_OUTBOX_STRUCTLOG_ENABLED` | `True` | Enable structlog context capture at `send_task()` time |
 | `CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS` | `None` | List of structlog context keys to capture. `None` means capture all keys |
@@ -127,10 +170,15 @@ If your tasks receive sensitive data (emails, tokens, PII), consider:
 
 1. **Exclude sensitive tasks** from the outbox:
    ```python
-   CELERY_OUTBOX_EXCLUDE_TASKS = {'myapp.tasks.send_sms', 'payments.*'}
+   CELERY_OUTBOX_EXCLUDE_TASKS = {
+       'myapp.tasks.send_sms',
+       'payments.tasks.capture_payment',
+       'payments.tasks.refund_payment',
+   }
    ```
+   `CELERY_OUTBOX_EXCLUDE_TASKS` matches exact task names only. Globs such as `'payments.*'` are not expanded.
 
-2. **Redact sensitive fields** before storage:
+2. **Store a redacted inspection copy** for admin/dead-letter review while keeping the original payload for delivery:
    ```python
    # myapp/security.py
    SENSITIVE_KEYS = {'email', 'phone', 'password', 'token'}
@@ -145,6 +193,7 @@ If your tasks receive sensitive data (emails, tokens, PII), consider:
    # settings.py
    CELERY_OUTBOX_PII_REDACTOR = 'myapp.security.redact_task_data'
    ```
+   If a task payload must never be persisted in the outbox database, exclude that task instead of relying on redaction.
 
 ### Structlog Context Capture
 
@@ -439,12 +488,26 @@ Or run the management command from cron (uses `CELERY_OUTBOX_DLQ_RETENTION` auto
 
 The at-least-once guarantee requires the broker to confirm message acceptance. Without confirmation, a broker failure (network loss, queue full, quota exceeded) can silently drop messages after the relay deletes them from the outbox.
 
-**RabbitMQ** — enable publisher confirms:
+**RabbitMQ** — enable publisher confirms and use quorum queues:
 
 ```python
-BROKER_TRANSPORT_OPTIONS = {
+from kombu import Exchange, Queue
+
+CELERY_BROKER_TRANSPORT_OPTIONS = {
     'confirm_publish': True,
 }
+CELERY_BROKER_NATIVE_DELAYED_DELIVERY_QUEUE_TYPE = 'quorum'
+CELERY_WORKER_DETECT_QUORUM_QUEUES = True
+CELERY_TASK_DEFAULT_QUEUE = 'myproject-default'
+CELERY_TASK_DEFAULT_QUEUE_TYPE = 'quorum'
+CELERY_TASK_QUEUES = (
+    Queue(
+        'myproject-default',
+        Exchange('myproject-default', type='topic'),
+        routing_key='myproject-default',
+        queue_arguments={'x-queue-type': 'quorum'},
+    ),
+)
 ```
 
 **Redis** — does not support publisher confirms. Message loss is possible if Redis fails between `LPUSH` and relay cleanup. For production workloads requiring strict at-least-once delivery, use RabbitMQ with publisher confirms.

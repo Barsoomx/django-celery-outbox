@@ -12,6 +12,8 @@ def test_default_values() -> None:
 
     assert outbox.args == []
     assert outbox.kwargs == {}
+    assert outbox.redacted_args is None
+    assert outbox.redacted_kwargs is None
     assert outbox.options == {}
     assert outbox.retries == 0
 

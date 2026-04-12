@@ -82,6 +82,15 @@ def f_clean_structlog() -> Generator[None]:
     structlog.contextvars.clear_contextvars()
 
 
+@pytest.fixture(autouse=True)
+def clear_redactor_cache() -> Generator[None]:
+    from django_celery_outbox.app import _get_redactor
+
+    _get_redactor.cache_clear()
+    yield
+    _get_redactor.cache_clear()
+
+
 # ============================================================
 # E2E Flow Tests
 # ============================================================
@@ -380,6 +389,33 @@ def test_e2e_dead_letter_preserves_all_data(
     assert dead.structlog_context is not None
     ctx = json.loads(dead.structlog_context)
     assert ctx['request_id'] == 'req-dead'
+
+
+@pytest.mark.django_db
+def test_e2e_relay_uses_original_payload_when_redacted_copy_exists(
+    f_outbox_app: OutboxCelery,
+    f_relay: Relay,
+    m_celery_send: MagicMock,
+) -> None:
+    def redactor(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+        del task_name
+        kwargs['email'] = '[REDACTED]'
+        return args, kwargs
+
+    with patch('django_celery_outbox.app.settings') as m_settings:
+        m_settings.CELERY_OUTBOX_PII_REDACTOR = redactor
+        m_settings.CELERY_OUTBOX_EXCLUDE_TASKS = set()
+        with transaction.atomic():
+            f_outbox_app.send_task('my.task', kwargs={'email': 'user@example.com'})
+
+    msg = CeleryOutbox.objects.get()
+    assert msg.kwargs == {'email': 'user@example.com'}
+    assert msg.redacted_kwargs == {'email': '[REDACTED]'}
+
+    f_relay._processing()
+
+    call_kwargs = m_celery_send.call_args
+    assert call_kwargs.kwargs['kwargs'] == {'email': 'user@example.com'}
 
 
 @pytest.mark.django_db

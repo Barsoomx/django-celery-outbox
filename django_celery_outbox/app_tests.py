@@ -1,4 +1,7 @@
+import subprocess
+import sys
 from collections.abc import Generator
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,13 +14,12 @@ from django_celery_outbox.app import OutboxCelery
 from django_celery_outbox.models import CeleryOutbox
 
 
+def sample_redactor(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+    return args, dict.fromkeys(kwargs, '[REDACTED]')
+
+
 @pytest.fixture()
 def f_app() -> OutboxCelery:
-    return OutboxCelery('test')
-
-
-@pytest.fixture()
-def f_outbox_celery() -> OutboxCelery:
     return OutboxCelery('test')
 
 
@@ -28,6 +30,20 @@ def clear_redactor_cache() -> Generator[None, None, None]:
     _get_redactor.cache_clear()
     yield
     _get_redactor.cache_clear()
+
+
+def test_package_root_import_outbox_celery_before_django_setup() -> None:
+    repo_root = Path(__file__).resolve().parent.parent
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, '-c', 'from django_celery_outbox import OutboxCelery; print(OutboxCelery.__name__)'],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'OutboxCelery'
 
 
 @pytest.mark.django_db
@@ -386,39 +402,65 @@ def test_send_task_exclude_tasks_as_list(m_super_send: MagicMock, f_app: OutboxC
 
 @pytest.mark.django_db
 def test_send_task_applies_pii_redactor(
-    f_outbox_celery: OutboxCelery,
+    f_app: OutboxCelery,
 ) -> None:
     def redactor(name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+        args[0]['email'] = '[REDACTED]'
         redacted_kwargs = {k: '[REDACTED]' if k == 'email' else v for k, v in kwargs.items()}
         return args, redacted_kwargs
 
     with override_settings(CELERY_OUTBOX_PII_REDACTOR=redactor):
-        f_outbox_celery.send_task('test.task', kwargs={'email': 'user@example.com', 'safe': 1})
+        f_app.send_task(
+            'test.task',
+            args=({'email': 'user@example.com'},),
+            kwargs={'email': 'user@example.com', 'safe': 1},
+        )
 
     msg = CeleryOutbox.objects.first()
     assert msg is not None
-    assert msg.kwargs == {'email': '[REDACTED]', 'safe': 1}
+    assert msg.args == [{'email': 'user@example.com'}]
+    assert msg.redacted_args == [{'email': '[REDACTED]'}]
+    assert msg.kwargs == {'email': 'user@example.com', 'safe': 1}
+    assert msg.redacted_kwargs == {'email': '[REDACTED]', 'safe': 1}
 
 
 @pytest.mark.django_db
 def test_send_task_no_redactor_stores_original(
-    f_outbox_celery: OutboxCelery,
+    f_app: OutboxCelery,
 ) -> None:
     with override_settings(CELERY_OUTBOX_PII_REDACTOR=None):
-        f_outbox_celery.send_task('test.task', kwargs={'email': 'user@example.com'})
+        f_app.send_task('test.task', kwargs={'email': 'user@example.com'})
 
     msg = CeleryOutbox.objects.first()
     assert msg is not None
     assert msg.kwargs == {'email': 'user@example.com'}
+    assert msg.redacted_args is None
+    assert msg.redacted_kwargs is None
 
 
 @pytest.mark.django_db
 def test_send_task_redactor_exception_propagates(
-    f_outbox_celery: OutboxCelery,
+    f_app: OutboxCelery,
 ) -> None:
     def bad_redactor(name: str, args: list, kwargs: dict) -> tuple[list, dict]:
         raise ValueError('blocked')
 
     with override_settings(CELERY_OUTBOX_PII_REDACTOR=bad_redactor):
         with pytest.raises(ValueError, match='blocked'):
-            f_outbox_celery.send_task('test.task', kwargs={})
+            f_app.send_task('test.task', kwargs={})
+
+
+@pytest.mark.django_db
+def test_send_task_applies_pii_redactor_from_string_path(
+    f_app: OutboxCelery,
+) -> None:
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR='django_celery_outbox.app_tests.sample_redactor'):
+        f_app.send_task(
+            'test.task',
+            kwargs={'email': 'user@example.com'},
+        )
+
+    msg = CeleryOutbox.objects.first()
+    assert msg is not None
+    assert msg.kwargs == {'email': 'user@example.com'}
+    assert msg.redacted_kwargs == {'email': '[REDACTED]'}

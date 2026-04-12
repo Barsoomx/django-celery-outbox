@@ -5,6 +5,7 @@ Demonstrates the transactional outbox pattern with:
 - Tasks with countdown (delayed execution)
 - Tasks with links (callbacks)
 - Relay daemon processing
+- RabbitMQ publisher confirms + quorum queues
 
 ## Services
 
@@ -13,6 +14,13 @@ Demonstrates the transactional outbox pattern with:
 - **worker** — Celery worker
 - **postgres** — PostgreSQL database
 - **rabbitmq** — RabbitMQ broker (management UI at port 15672)
+
+The example declares RabbitMQ quorum queues explicitly and enables publisher confirms:
+- `CELERY_BROKER_TRANSPORT_OPTIONS = {'confirm_publish': True}`
+- `CELERY_BROKER_NATIVE_DELAYED_DELIVERY_QUEUE_TYPE = 'quorum'`
+- explicit `CELERY_TASK_QUEUES` with `x-queue-type=quorum`
+- Celery runtime config lives in `minimal_django/celeryconfig.py`
+- Celery app bootstrap lives in `minimal_django/celery_app.py`
 
 ## Quick Start
 

@@ -27,33 +27,76 @@ INSTALLED_APPS = [
 ]
 ```
 
-### 2. Replace Celery app
+### 2. Add Celery config
 
-In your `myproject/celery.py`:
+In `myproject/celeryconfig.py`:
 
 ```python
+from kombu import Exchange, Queue
+
+broker_transport_options = {
+    'confirm_publish': True,
+}
+broker_native_delayed_delivery_queue_type = 'quorum'
+worker_detect_quorum_queues = True
+
+task_default_queue = 'myproject-default'
+task_default_exchange = task_default_queue
+task_default_exchange_type = 'topic'
+task_default_routing_key = task_default_queue
+task_default_queue_type = 'quorum'
+task_create_missing_queues = False
+task_queues = (
+    Queue(
+        'myproject-default',
+        Exchange('myproject-default', type='topic'),
+        routing_key='myproject-default',
+        queue_arguments={'x-queue-type': 'quorum'},
+    ),
+)
+```
+
+### 3. Create Celery app bootstrap
+
+In `myproject/celery_app.py`:
+
+```python
+import os
+
 from django_celery_outbox import OutboxCelery
 
+os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'myproject.settings')
+
 app = OutboxCelery('myproject')
-app.config_from_object('django.conf:settings', namespace='CELERY')
+app.config_from_object('myproject.celeryconfig')
 app.autodiscover_tasks()
 ```
 
-### 3. Configure outbox app path
+### 4. Export the app from your package
+
+In `myproject/__init__.py`:
+
+```python
+from myproject.celery_app import app as celery_app
+
+__all__ = ('celery_app',)
+```
+
+### 5. Configure outbox app path
 
 In your Django settings:
 
 ```python
-CELERY_OUTBOX_APP = 'myproject.celery.app'
+CELERY_OUTBOX_APP = 'myproject.celery_app.app'
 ```
 
-### 4. Run migrations
+### 6. Run migrations
 
 ```bash
 python manage.py migrate
 ```
 
-### 5. Start the relay
+### 7. Start the relay
 
 ```bash
 python manage.py celery_outbox_relay

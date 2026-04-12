@@ -47,7 +47,7 @@ dl.delete()
 
 ```bash
 # Delete entries older than 30 days
-python manage.py celery_outbox_dead_letter_purge --older-than 30
+python manage.py celery_outbox_purge_dead_letter --older-than-dead 30d
 ```
 
 ## Retention Policy

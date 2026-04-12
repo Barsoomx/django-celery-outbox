@@ -1,5 +1,7 @@
 __version__ = '0.1.0'
 
+from django_celery_outbox.app import OutboxCelery
+
 __all__ = [
     'OutboxCelery',
     'Relay',
@@ -13,11 +15,6 @@ __all__ = [
 
 
 def __getattr__(name: str) -> type:
-    if name == 'OutboxCelery':
-        from django_celery_outbox.app import OutboxCelery
-
-        return OutboxCelery
-
     if name == 'Relay':
         from django_celery_outbox.relay import Relay
 

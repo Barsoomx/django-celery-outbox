@@ -6,10 +6,10 @@ The relay emits StatsD metrics for monitoring.
 
 ```python
 # settings.py
-CELERY_OUTBOX_STATSD_HOST = 'localhost'
-CELERY_OUTBOX_STATSD_PORT = 8125
-CELERY_OUTBOX_STATSD_PREFIX = 'celery_outbox'
-CELERY_OUTBOX_STATSD_TAGS = {
+MONITORING_STATSD_HOST = 'localhost'
+MONITORING_STATSD_PORT = 9125
+MONITORING_STATSD_PREFIX = 'celery_outbox'
+MONITORING_STATSD_TAGS = {
     'env': 'production',
     'service': 'myapp',
 }

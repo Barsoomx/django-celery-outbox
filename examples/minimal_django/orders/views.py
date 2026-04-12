@@ -31,6 +31,7 @@ class OrderCreateView(View):
             schedule_shipping_reminder.apply_async(
                 args=[order.id],
                 countdown=3600,
+                queue='minimal-batch',
             )
 
         return JsonResponse(

@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from copy import deepcopy
 from functools import lru_cache
 from typing import Any
 
@@ -11,7 +12,6 @@ from django.conf import settings
 from django.db import connections
 from django.utils.module_loading import import_string
 
-from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, serialize_options
 from django_celery_outbox.signals import outbox_message_created
 from django_celery_outbox.structlog_utils import get_structlog_context_json
@@ -169,7 +169,14 @@ class OutboxCelery(Celery):
 
         args_list = list(args) if args else []
         kwargs_dict = dict(kwargs) if kwargs else {}
-        args_list, kwargs_dict = _redact_task_data(name, args_list, kwargs_dict)
+        redacted_args, redacted_kwargs = _redact_task_data(
+            name,
+            deepcopy(args_list),
+            deepcopy(kwargs_dict),
+        )
+        stored_redacted_args = redacted_args if redacted_args != args_list else None
+        stored_redacted_kwargs = redacted_kwargs if redacted_kwargs != kwargs_dict else None
+        from django_celery_outbox.models import CeleryOutbox
 
         if not connections[CeleryOutbox.objects.db].in_atomic_block:
             _logger.warning(
@@ -187,6 +194,8 @@ class OutboxCelery(Celery):
                 task_name=name,
                 args=args_list,
                 kwargs=kwargs_dict,
+                redacted_args=stored_redacted_args,
+                redacted_kwargs=stored_redacted_kwargs,
                 options=serialized_options,
                 schema_version=CURRENT_SCHEMA_VERSION,
                 sentry_trace_id=sentry_sdk.get_traceparent(),

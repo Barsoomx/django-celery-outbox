@@ -14,7 +14,7 @@ def _to_tags(tags: dict[str, str] | None) -> list[str] | None:
     return [f'{k}:{v}' for k, v in tags.items()]
 
 
-def _get_task_tag(task_name: str) -> dict[str, str]:
+def get_task_tag(task_name: str) -> dict[str, str]:
     if getattr(settings, 'CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS', False):
         return {}
 

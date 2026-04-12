@@ -47,12 +47,21 @@ Dead Letter:  3
 Oldest:       2024-01-15 10:30:00 (5m ago)
 ```
 
-## celery_outbox_dead_letter_purge
+## celery_outbox_purge_dead_letter
 
 Purge old dead letter entries.
 
 ```bash
-python manage.py celery_outbox_dead_letter_purge --older-than 30
+python manage.py celery_outbox_purge_dead_letter --older-than-dead 30d
 ```
 
-Deletes entries older than 30 days.
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--older-than-dead` | str | None | Delete records where `dead_at` is older than the specified duration |
+| `--older-than-created` | str | None | Delete records where `created_at` is older than the specified duration |
+| `--task-name` | str | None | Optional task-name glob for filtering dead letters |
+| `--dry-run` | flag | `False` | Show what would be deleted without deleting records |
+
+Specify at least one of `--older-than-dead` or `--older-than-created`.

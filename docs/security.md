@@ -7,6 +7,7 @@ Task arguments are stored in the database. If they contain PII:
 1. **Minimize data**: Pass IDs, not full objects
 2. **Use PII redactor**: Configure `CELERY_OUTBOX_PII_REDACTOR`
 3. **Encrypt sensitive fields**: Before passing to tasks
+4. **Exclude tasks entirely**: Use `CELERY_OUTBOX_EXCLUDE_TASKS` when a payload must never be persisted in the outbox database
 
 ### PII Redactor
 
@@ -24,17 +25,18 @@ def redact_pii(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
     return args, redacted_kwargs
 ```
 
+The redactor creates sanitized inspection copies (`redacted_args`, `redacted_kwargs`) for admin and dead-letter review. The original task payload remains in the database and is used by the relay for actual task dispatch. If you need to prevent PII from being stored at all, use `CELERY_OUTBOX_EXCLUDE_TASKS` to bypass the outbox or encrypt sensitive fields at the application level before passing them as task arguments.
+
 ## structlog Context
 
-Filter sensitive keys from propagated context:
+Allowlist safe keys from propagated context:
 
 ```python
-CELERY_OUTBOX_STRUCTLOG_FILTER_KEYS = {
-    'password',
-    'api_key',
-    'access_token',
-    'credit_card',
-}
+CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS = [
+    'request_id',
+    'trace_id',
+    'user_id',
+]
 ```
 
 ## Exception Tracebacks
@@ -50,7 +52,7 @@ CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK = False
 Dead letters may contain sensitive data. Purge regularly:
 
 ```bash
-python manage.py celery_outbox_dead_letter_purge --older-than 30
+python manage.py celery_outbox_purge_dead_letter --older-than-dead 30d
 ```
 
 ## Database Access

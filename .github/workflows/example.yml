@@ -25,13 +25,21 @@ jobs:
       - name: Verify outbox processed
         working-directory: examples/minimal_django
         run: |
-          sleep 5
-          docker compose exec -T app python manage.py shell -c "
+          for i in $(seq 1 12); do
+            count=$(docker compose exec -T app python manage.py shell -c "
           from django_celery_outbox.models import CeleryOutbox
-          count = CeleryOutbox.objects.count()
-          print(f'Pending: {count}')
-          assert count == 0, f'Outbox not flushed: {count} pending'
-          "
+          print(CeleryOutbox.objects.count())
+          ")
+            count=$(echo "$count" | tr -d '[:space:]')
+            echo "Attempt $i: pending=$count"
+            if [ "$count" = "0" ]; then
+              echo "Outbox flushed successfully"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Outbox not flushed after 60s"
+          exit 1
 
       - name: Cleanup
         working-directory: examples/minimal_django
