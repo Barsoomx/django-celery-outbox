@@ -25,11 +25,13 @@ class TestPurgeDeadLetterTask:
         )
         assert result == {'deleted_count': 5, 'task_names': {'app.task': 5}}
 
-    @override_settings(CELERY_OUTBOX_DLQ_RETENTION={
-        'older_than_dead': '7d',
-        'older_than_created': '90d',
-        'task_name': 'myapp.*',
-    })
+    @override_settings(
+        CELERY_OUTBOX_DLQ_RETENTION={
+            'older_than_dead': '7d',
+            'older_than_created': '90d',
+            'task_name': 'myapp.*',
+        }
+    )
     @patch('django_celery_outbox.tasks.purge_dead_letter')
     def test_uses_all_settings_fields(self, m_purge: MagicMock) -> None:
         from django_celery_outbox.tasks import purge_dead_letter_task

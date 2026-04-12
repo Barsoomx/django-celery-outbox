@@ -11,8 +11,6 @@ services:
       - DB_ENGINE=postgresql
       - DB_HOST=postgres
       - DB_NAME=test_db
-      - DB_USER=test
-      - DB_PASSWORD=test
 
   postgres:
     image: postgres:15

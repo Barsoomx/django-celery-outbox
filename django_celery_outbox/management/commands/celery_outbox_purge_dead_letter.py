@@ -36,16 +36,19 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
-        older_than_dead = self._get_duration('older_than_dead', options)
-        older_than_created = self._get_duration('older_than_created', options)
-        task_name_pattern = self._get_task_name_pattern(options)
+        cli_has_retention = bool(options.get('older_than_dead') or options.get('older_than_created'))
+
+        try:
+            older_than_dead = self._get_duration('older_than_dead', options, cli_has_retention)
+            older_than_created = self._get_duration('older_than_created', options, cli_has_retention)
+        except ValueError as e:
+            raise CommandError(str(e)) from e
+
+        task_name_pattern = self._get_task_name_pattern(options, cli_has_retention)
         dry_run = options['dry_run']
 
         if older_than_dead is None and older_than_created is None:
-            raise CommandError(
-                'No retention policy specified. Use --older-than-dead or --older-than-created, '
-                'or set CELERY_OUTBOX_DLQ_RETENTION'
-            )
+            raise CommandError('No retention policy specified. Use --older-than-dead or --older-than-created, or set CELERY_OUTBOX_DLQ_RETENTION')
 
         result = purge_dead_letter(
             older_than_dead=older_than_dead,
@@ -56,10 +59,13 @@ class Command(BaseCommand):
 
         self._output_result(result, dry_run)
 
-    def _get_duration(self, key: str, options: dict[str, Any]) -> timedelta | None:
+    def _get_duration(self, key: str, options: dict[str, Any], cli_has_retention: bool) -> timedelta | None:
         cli_value = options.get(key)
         if cli_value:
             return parse_duration(cli_value)
+
+        if cli_has_retention:
+            return None
 
         retention = getattr(settings, 'CELERY_OUTBOX_DLQ_RETENTION', None) or {}
         settings_value = retention.get(key)
@@ -68,10 +74,13 @@ class Command(BaseCommand):
 
         return None
 
-    def _get_task_name_pattern(self, options: dict[str, Any]) -> str | None:
+    def _get_task_name_pattern(self, options: dict[str, Any], cli_has_retention: bool) -> str | None:
         cli_value = options.get('task_name')
         if cli_value:
             return cli_value
+
+        if cli_has_retention:
+            return None
 
         retention = getattr(settings, 'CELERY_OUTBOX_DLQ_RETENTION', None) or {}
 

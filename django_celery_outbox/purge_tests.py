@@ -85,9 +85,7 @@ class TestPurgeDeadLetterOlderThanDead:
         now = timezone.now()
         with patch('django.utils.timezone.now', return_value=now):
             old_record = CeleryOutboxDeadLetterFactory.create(task_name='myapp.old_task')
-        CeleryOutboxDeadLetter.objects.filter(pk=old_record.pk).update(
-            dead_at=now - timedelta(days=31)
-        )
+        CeleryOutboxDeadLetter.objects.filter(pk=old_record.pk).update(dead_at=now - timedelta(days=31))
         with patch('django.utils.timezone.now', return_value=now):
             new_record = CeleryOutboxDeadLetterFactory.create(task_name='myapp.new_task')
 
@@ -115,9 +113,7 @@ class TestPurgeDeadLetterOlderThanDead:
             r1 = CeleryOutboxDeadLetterFactory.create(task_name='myapp.task_a')
             r2 = CeleryOutboxDeadLetterFactory.create(task_name='myapp.task_a')
             r3 = CeleryOutboxDeadLetterFactory.create(task_name='myapp.task_b')
-        CeleryOutboxDeadLetter.objects.filter(pk__in=[r1.pk, r2.pk, r3.pk]).update(
-            dead_at=old_time
-        )
+        CeleryOutboxDeadLetter.objects.filter(pk__in=[r1.pk, r2.pk, r3.pk]).update(dead_at=old_time)
 
         result = purge_dead_letter(older_than_dead=timedelta(days=30))
 
@@ -187,9 +183,7 @@ class TestPurgeDeadLetterTaskNamePattern:
         with patch('django.utils.timezone.now', return_value=now):
             match = CeleryOutboxDeadLetterFactory.create(task_name='myapp.tasks.send_email')
             no_match = CeleryOutboxDeadLetterFactory.create(task_name='myapp.tasks.process_payment')
-        CeleryOutboxDeadLetter.objects.filter(pk__in=[match.pk, no_match.pk]).update(
-            dead_at=old_time
-        )
+        CeleryOutboxDeadLetter.objects.filter(pk__in=[match.pk, no_match.pk]).update(dead_at=old_time)
 
         result = purge_dead_letter(
             older_than_dead=timedelta(days=30),
@@ -208,9 +202,7 @@ class TestPurgeDeadLetterTaskNamePattern:
             match1 = CeleryOutboxDeadLetterFactory.create(task_name='myapp.tasks.send_email')
             match2 = CeleryOutboxDeadLetterFactory.create(task_name='myapp.tasks.send_sms')
             no_match = CeleryOutboxDeadLetterFactory.create(task_name='other.tasks.process')
-        CeleryOutboxDeadLetter.objects.filter(
-            pk__in=[match1.pk, match2.pk, no_match.pk]
-        ).update(dead_at=old_time)
+        CeleryOutboxDeadLetter.objects.filter(pk__in=[match1.pk, match2.pk, no_match.pk]).update(dead_at=old_time)
 
         result = purge_dead_letter(
             older_than_dead=timedelta(days=30),
@@ -228,9 +220,7 @@ class TestPurgeDeadLetterTaskNamePattern:
             match1 = CeleryOutboxDeadLetterFactory.create(task_name='myapp.tasks.a')
             match2 = CeleryOutboxDeadLetterFactory.create(task_name='myapp.other.b')
             no_match = CeleryOutboxDeadLetterFactory.create(task_name='other.tasks.c')
-        CeleryOutboxDeadLetter.objects.filter(
-            pk__in=[match1.pk, match2.pk, no_match.pk]
-        ).update(dead_at=old_time)
+        CeleryOutboxDeadLetter.objects.filter(pk__in=[match1.pk, match2.pk, no_match.pk]).update(dead_at=old_time)
 
         result = purge_dead_letter(
             older_than_dead=timedelta(days=30),
@@ -246,9 +236,7 @@ class TestPurgeDeadLetterTaskNamePattern:
         with patch('django.utils.timezone.now', return_value=now):
             match = CeleryOutboxDeadLetterFactory.create(task_name='app.tasks.send_email')
             no_match = CeleryOutboxDeadLetterFactory.create(task_name='app.other.process')
-        CeleryOutboxDeadLetter.objects.filter(pk__in=[match.pk, no_match.pk]).update(
-            dead_at=old_time
-        )
+        CeleryOutboxDeadLetter.objects.filter(pk__in=[match.pk, no_match.pk]).update(dead_at=old_time)
 
         result = purge_dead_letter(
             older_than_dead=timedelta(days=30),

@@ -86,9 +86,7 @@ def _execute_purge(queryset: QuerySet, dry_run: bool) -> PurgeResult:
 def parse_duration(value: str) -> timedelta:
     match = _DURATION_PATTERN.match(value)
     if not match:
-        raise ValueError(
-            f'Invalid duration format: \'{value}\'. Use <number><unit> where unit is s/m/h/d/w'
-        )
+        raise ValueError(f"Invalid duration format: '{value}'. Use <number><unit> where unit is s/m/h/d/w")
 
     amount = int(match.group(1))
     unit = match.group(2)

@@ -39,7 +39,7 @@ class QueueStats:
             lines.append('')
             lines.append('Top failing tasks:')
             for i, item in enumerate(self.top_failing, 1):
-                lines.append(f"  {i}. {item['task_name']} ({item['total_retries']} retries)")
+                lines.append(f'  {i}. {item["task_name"]} ({item["total_retries"]} retries)')
 
         return '\n'.join(lines)
 
@@ -69,8 +69,7 @@ def get_queue_stats(top_n: int = 10) -> QueueStats:
     top_failing: list[dict] = []
     if top_n > 0:
         top_failing = list(
-            CeleryOutbox.objects
-            .values('task_name')
+            CeleryOutbox.objects.values('task_name')
             .annotate(total_retries=Sum('retries'))
             .filter(total_retries__gt=0)
             .order_by('-total_retries')[:top_n]

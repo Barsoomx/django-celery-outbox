@@ -158,9 +158,7 @@ def test_get_queue_stats_oldest_pending() -> None:
     from django_celery_outbox.stats import get_queue_stats
 
     old_message = CeleryOutboxFactory.create()
-    CeleryOutbox.objects.filter(pk=old_message.pk).update(
-        created_at=timezone.now() - timedelta(hours=2)
-    )
+    CeleryOutbox.objects.filter(pk=old_message.pk).update(created_at=timezone.now() - timedelta(hours=2))
     CeleryOutboxFactory.create()
 
     result = get_queue_stats()
