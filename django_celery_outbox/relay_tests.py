@@ -701,3 +701,28 @@ def test_process_messages_span_internal_error_on_send_failure(
         f_relay._process_messages([msg])
 
     m_span.set_status.assert_called_once_with('internal_error')
+
+
+def test_relay_init_raises_when_skip_locked_not_supported(m_celery_app: MagicMock) -> None:
+    m_connection = MagicMock()
+    m_connection.features.has_select_for_update_skip_locked = False
+    m_connection.vendor = 'sqlite'
+
+    with patch('django_celery_outbox.relay.connections', {'default': m_connection}):
+        with patch('django_celery_outbox.relay.CeleryOutbox') as m_model:
+            m_model.objects.db = 'default'
+
+            with pytest.raises(RuntimeError, match='does not support SELECT FOR UPDATE SKIP LOCKED'):
+                Relay(app=m_celery_app)
+
+
+def test_relay_init_accepts_when_skip_locked_supported(m_celery_app: MagicMock) -> None:
+    m_connection = MagicMock()
+    m_connection.features.has_select_for_update_skip_locked = True
+
+    with patch('django_celery_outbox.relay.connections', {'default': m_connection}):
+        with patch('django_celery_outbox.relay.CeleryOutbox') as m_model:
+            m_model.objects.db = 'default'
+            relay = Relay(app=m_celery_app)
+
+    assert relay is not None
