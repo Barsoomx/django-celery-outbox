@@ -1,4 +1,6 @@
 from django.contrib import admin, messages
+from django.contrib.admin.models import CHANGE, DELETION, LogEntry
+from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.db.models import QuerySet
 from django.http import HttpRequest, HttpResponse
@@ -15,10 +17,11 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
         'task_name',
         'task_id',
         'retries',
+        'schema_version',
         'created_at',
         'updated_at',
     ]
-    list_filter = ['task_name', 'retries']
+    list_filter = ['task_name', 'retries', 'schema_version']
     search_fields = ['task_id', 'task_name']
     readonly_fields = [
         'id',
@@ -28,6 +31,7 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
         'kwargs',
         'options',
         'retries',
+        'schema_version',
         'created_at',
         'updated_at',
         'retry_after',
@@ -62,7 +66,22 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
 
     @admin.action(description='Reset retries for selected messages')
     def reset_retries(self, request: HttpRequest, queryset: QuerySet[CeleryOutbox]) -> None:
+        content_type = ContentType.objects.get_for_model(CeleryOutbox)
+        entries = list(queryset.values_list('pk', 'task_id'))
+
         count = queryset.update(retries=0, retry_after=None, updated_at=None)
+
+        user_id = int(request.user.pk)  # type: ignore[arg-type]
+        for pk, task_id in entries:
+            LogEntry.objects.create(
+                user_id=user_id,
+                content_type_id=content_type.pk,
+                object_id=str(pk),
+                object_repr=f'CeleryOutbox {task_id}',
+                action_flag=CHANGE,
+                change_message='Reset retries via admin action',
+            )
+
         self.message_user(
             request,
             f'{count} message(s) had retries reset.',
@@ -77,10 +96,11 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         'task_name',
         'task_id',
         'retries',
+        'schema_version',
         'created_at',
         'dead_at',
     ]
-    list_filter = ['task_name', 'dead_at']
+    list_filter = ['task_name', 'dead_at', 'schema_version']
     search_fields = ['task_id', 'task_name']
     readonly_fields = [
         'id',
@@ -90,6 +110,7 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         'kwargs',
         'options',
         'retries',
+        'schema_version',
         'created_at',
         'dead_at',
         'sentry_trace_id',
@@ -110,6 +131,10 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
 
     @admin.action(description='Retry selected dead-lettered messages')
     def retry_selected(self, request: HttpRequest, queryset: QuerySet[CeleryOutboxDeadLetter]) -> None:
+        content_type = ContentType.objects.get_for_model(CeleryOutboxDeadLetter)
+        dead_letter_entries = list(queryset.values_list('pk', 'task_id'))
+        user_id = int(request.user.pk)  # type: ignore[arg-type]
+
         with transaction.atomic():
             outbox_messages = [
                 CeleryOutbox(
@@ -118,6 +143,7 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
                     args=dl.args,
                     kwargs=dl.kwargs,
                     options=dl.options,
+                    schema_version=dl.schema_version,
                     sentry_trace_id=dl.sentry_trace_id,
                     sentry_baggage=dl.sentry_baggage,
                     structlog_context=dl.structlog_context,
@@ -127,6 +153,16 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
             CeleryOutbox.objects.bulk_create(outbox_messages)
             count = len(outbox_messages)
             queryset.delete()
+
+            for pk, task_id in dead_letter_entries:
+                LogEntry.objects.create(
+                    user_id=user_id,
+                    content_type_id=content_type.pk,
+                    object_id=str(pk),
+                    object_repr=f'CeleryOutboxDeadLetter {task_id}',
+                    action_flag=DELETION,
+                    change_message='Retried via admin action (moved back to outbox)',
+                )
 
         self.message_user(
             request,

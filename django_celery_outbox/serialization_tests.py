@@ -6,6 +6,9 @@ from celery import Celery
 from celery.canvas import Signature
 
 from django_celery_outbox.serialization import (
+    CURRENT_SCHEMA_VERSION,
+    MIN_SUPPORTED_VERSION,
+    UnsupportedSchemaVersionError,
     _kombu_obj_to_str,
     _signature_to_dict,
     _signatures_to_list,
@@ -408,7 +411,7 @@ def test_deserialize_options_eta_string_to_datetime(f_app: Celery) -> None:
     eta = datetime(2025, 1, 15, 12, 0, 0, tzinfo=timezone.utc)
     options = {'eta': eta.isoformat()}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert result['eta'] == eta
 
@@ -417,7 +420,7 @@ def test_deserialize_options_expires_string_to_datetime(f_app: Celery) -> None:
     expires = datetime(2025, 6, 1, 0, 0, 0, tzinfo=timezone.utc)
     options = {'expires': expires.isoformat()}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert result['expires'] == expires
 
@@ -425,7 +428,7 @@ def test_deserialize_options_expires_string_to_datetime(f_app: Celery) -> None:
 def test_deserialize_options_expires_int_stays_int(f_app: Celery) -> None:
     options = {'expires': 300}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert result['expires'] == 300
 
@@ -434,7 +437,7 @@ def test_deserialize_options_link_list_of_dicts_to_signatures(f_app: Celery) -> 
     sig = Signature('callback', app=f_app)
     options = {'link': [dict(sig)]}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert len(result['link']) == 1
     assert isinstance(result['link'][0], Signature)
@@ -445,7 +448,7 @@ def test_deserialize_options_link_error_list_of_dicts_to_signatures(f_app: Celer
     sig = Signature('errback', app=f_app)
     options = {'link_error': [dict(sig)]}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert len(result['link_error']) == 1
     assert isinstance(result['link_error'][0], Signature)
@@ -457,7 +460,7 @@ def test_deserialize_options_chain_list_to_signatures(f_app: Celery) -> None:
     sig2 = Signature('step2', app=f_app)
     options = {'chain': [dict(sig1), dict(sig2)]}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert len(result['chain']) == 2
     assert all(isinstance(s, Signature) for s in result['chain'])
@@ -469,7 +472,7 @@ def test_deserialize_options_chord_dict_to_signature(f_app: Celery) -> None:
     sig = Signature('chord_cb', app=f_app)
     options = {'chord': dict(sig)}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert isinstance(result['chord'], Signature)
     assert result['chord']['task'] == 'chord_cb'
@@ -478,7 +481,7 @@ def test_deserialize_options_chord_dict_to_signature(f_app: Celery) -> None:
 def test_deserialize_options_regular_keys_passed_through(f_app: Celery) -> None:
     options = {'priority': 5, 'routing_key': 'my.key'}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert result['priority'] == 5
     assert result['routing_key'] == 'my.key'
@@ -488,13 +491,13 @@ def test_deserialize_options_does_not_mutate_original(f_app: Celery) -> None:
     options = {'priority': 5, 'eta': '2025-01-15T12:00:00+00:00'}
     original_eta = options['eta']
 
-    deserialize_options(options, f_app)
+    deserialize_options(options, f_app, schema_version=1)
 
     assert options['eta'] == original_eta
 
 
 def test_deserialize_options_empty_options(f_app: Celery) -> None:
-    result = deserialize_options({}, f_app)
+    result = deserialize_options({}, f_app, schema_version=1)
 
     assert result == {}
 
@@ -502,7 +505,7 @@ def test_deserialize_options_empty_options(f_app: Celery) -> None:
 def test_deserialize_options_link_non_list_not_converted(f_app: Celery) -> None:
     options = {'link': 'not_a_list'}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert result['link'] == 'not_a_list'
 
@@ -510,7 +513,7 @@ def test_deserialize_options_link_non_list_not_converted(f_app: Celery) -> None:
 def test_deserialize_options_chord_non_dict_not_converted(f_app: Celery) -> None:
     options = {'chord': 'not_a_dict'}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert result['chord'] == 'not_a_dict'
 
@@ -524,7 +527,7 @@ def test_signatures_to_list_empty_list_returns_none() -> None:
 def test_deserialize_options_link_error_non_list_not_converted(f_app: Celery) -> None:
     options = {'link_error': 'not_a_list'}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert result['link_error'] == 'not_a_list'
 
@@ -532,11 +535,48 @@ def test_deserialize_options_link_error_non_list_not_converted(f_app: Celery) ->
 def test_deserialize_options_chain_non_list_not_converted(f_app: Celery) -> None:
     options = {'chain': 'not_a_list'}
 
-    result = deserialize_options(options, f_app)
+    result = deserialize_options(options, f_app, schema_version=1)
 
     assert result['chain'] == 'not_a_list'
 
 
 def test_deserialize_options_invalid_eta_raises(f_app: Celery) -> None:
     with pytest.raises(ValueError):
-        deserialize_options({'eta': 'not-a-date'}, f_app)
+        deserialize_options({'eta': 'not-a-date'}, f_app, schema_version=1)
+
+
+def test_current_schema_version_is_one() -> None:
+    assert CURRENT_SCHEMA_VERSION == 1
+
+
+def test_min_supported_version_is_one() -> None:
+    assert MIN_SUPPORTED_VERSION == 1
+
+
+def test_unsupported_schema_version_stores_version() -> None:
+    exc = UnsupportedSchemaVersionError(99)
+
+    assert exc.version == 99
+    assert 'Unsupported schema version: 99' in str(exc)
+
+
+def test_deserialize_options_with_version_1(f_app: Celery) -> None:
+    options = {'eta': '2025-01-15T12:00:00+00:00'}
+
+    result = deserialize_options(options, f_app, schema_version=1)
+
+    assert isinstance(result['eta'], datetime)
+
+
+def test_deserialize_options_future_version_raises(f_app: Celery) -> None:
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
+        deserialize_options({}, f_app, schema_version=99)
+
+    assert exc_info.value.version == 99
+
+
+def test_deserialize_options_below_min_version_raises(f_app: Celery) -> None:
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
+        deserialize_options({}, f_app, schema_version=0)
+
+    assert exc_info.value.version == 0

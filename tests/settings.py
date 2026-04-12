@@ -2,7 +2,26 @@ import os
 
 SECRET_KEY = 'test-secret-key'
 
-DB_ENGINE = os.environ.get('DB_ENGINE', 'postgresql')
+
+def _get_default_db_engine() -> str:
+    try:
+        import psycopg  # noqa: F401
+
+        return 'postgresql'
+    except ImportError:
+        pass
+
+    try:
+        import psycopg2  # noqa: F401
+
+        return 'postgresql'
+    except ImportError:
+        pass
+
+    return 'sqlite'
+
+
+DB_ENGINE = os.environ.get('DB_ENGINE', _get_default_db_engine())
 
 if DB_ENGINE == 'postgresql':
     DATABASES = {
@@ -26,14 +45,32 @@ elif DB_ENGINE == 'mysql':
             'PORT': os.environ.get('DB_PORT', '3306'),
         }
     }
+elif DB_ENGINE == 'sqlite':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
+        }
+    }
 else:
     raise ValueError(f'Unsupported DB_ENGINE: {DB_ENGINE}')
 
 INSTALLED_APPS = [
     'django.contrib.contenttypes',
     'django.contrib.auth',
+    'django.contrib.sessions',
+    'django.contrib.messages',
     'django.contrib.admin',
     'django_celery_outbox',
+]
+
+MIDDLEWARE = [
+    'django.middleware.security.SecurityMiddleware',
+    'django.contrib.sessions.middleware.SessionMiddleware',
+    'django.middleware.common.CommonMiddleware',
+    'django.middleware.csrf.CsrfViewMiddleware',
+    'django.contrib.auth.middleware.AuthenticationMiddleware',
+    'django.contrib.messages.middleware.MessageMiddleware',
 ]
 
 TEMPLATES = [

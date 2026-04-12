@@ -7,6 +7,20 @@ from celery.canvas import Signature
 
 _logger = structlog.getLogger(__name__)
 
+CURRENT_SCHEMA_VERSION = 1
+MIN_SUPPORTED_VERSION = 1
+
+
+class UnsupportedSchemaVersionError(Exception):
+    def __init__(self, version: int) -> None:
+        self._version = version
+        super().__init__(f'Unsupported schema version: {version}')
+
+    @property
+    def version(self) -> int:
+        return self._version
+
+
 _TRANSIENT_KEYS = frozenset(
     {
         'producer',
@@ -145,7 +159,7 @@ def _serialize_kombu_keys(result: dict[str, Any], options: dict[str, Any]) -> No
                 result[key] = val
 
 
-def serialize_options(
+def _serialize_options_v1(
     options: dict[str, Any],
     countdown: float | None = None,
     eta: datetime | None = None,
@@ -169,6 +183,14 @@ def serialize_options(
     return result
 
 
+def serialize_options(
+    options: dict[str, Any],
+    countdown: float | None = None,
+    eta: datetime | None = None,
+) -> dict[str, Any]:
+    return _serialize_options_v1(options, countdown, eta)
+
+
 def _deserialize_signatures(result: dict[str, Any], app: Celery) -> None:
     for key in ('link', 'link_error', 'chain'):
         if key in result:
@@ -182,7 +204,7 @@ def _deserialize_signatures(result: dict[str, Any], app: Celery) -> None:
             result['chord'] = Signature.from_dict(val, app=app)
 
 
-def deserialize_options(options: dict[str, Any], app: Celery) -> dict[str, Any]:
+def _deserialize_options_v1(options: dict[str, Any], app: Celery) -> dict[str, Any]:
     result = dict(options)
 
     if 'eta' in result:
@@ -196,3 +218,18 @@ def deserialize_options(options: dict[str, Any], app: Celery) -> dict[str, Any]:
     _deserialize_signatures(result, app)
 
     return result
+
+
+_DESERIALIZERS: dict[int, Any] = {
+    1: _deserialize_options_v1,
+}
+
+
+def deserialize_options(options: dict[str, Any], app: Celery, schema_version: int) -> dict[str, Any]:
+    if schema_version > CURRENT_SCHEMA_VERSION:
+        raise UnsupportedSchemaVersionError(schema_version)
+
+    if schema_version < MIN_SUPPORTED_VERSION:
+        raise UnsupportedSchemaVersionError(schema_version)
+
+    return _DESERIALIZERS[schema_version](options, app)
