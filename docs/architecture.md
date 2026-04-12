@@ -176,6 +176,25 @@ Observability context is captured at `send_task()` time and restored at relay ti
 
 **Delivery semantics: at-least-once.** Consumers must be idempotent.
 
+## Schema Versioning
+
+The outbox uses a `schema_version` field to enable safe format migrations across library upgrades.
+
+### Upgrade Policy
+
+- **N-1 compatibility**: Each version supports deserializing the current and previous schema versions
+- **Rolling deployments**: Old relay instances skip messages with newer schema versions (picked up by updated relays)
+- **Deprecated versions**: Messages below minimum supported version are skipped
+
+### Behavior
+
+| Relay Version | Message Version | Action |
+|--------------|-----------------|--------|
+| 1 | 1 | Process normally |
+| 2 | 1 | Process (N-1 support) |
+| 2 | 2 | Process normally |
+| 1 | 2 | Skip (future version) |
+
 ## Module Dependency Graph
 
 ```

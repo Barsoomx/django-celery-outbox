@@ -16,7 +16,7 @@ All settings are prefixed with `CELERY_OUTBOX_`.
 | `CELERY_OUTBOX_STRUCTLOG_ENABLED` | `bool` | `True` | Enable structlog context propagation |
 | `CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS` | `list[str] \| None` | `None` | structlog keys to capture. `None` captures all keys |
 | `CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK` | `bool` | `True` | Include full traceback in exception logs |
-| `CELERY_OUTBOX_PII_REDACTOR` | `str` | `None` | Dotted path to a callable that stores redacted inspection copies of task args/kwargs |
+| `CELERY_OUTBOX_PII_REDACTOR` | `str \| callable` | `None` | Callable (or dotted path to one) that stores redacted inspection copies of task args/kwargs |
 
 ## Relay Command Options
 

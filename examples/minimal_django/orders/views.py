@@ -25,7 +25,7 @@ class OrderCreateView(View):
 
             notify_warehouse.apply_async(
                 args=[order.id],
-                link=schedule_shipping_reminder.s(order.id),
+                link=schedule_shipping_reminder.si(order.id),
             )
 
             schedule_shipping_reminder.apply_async(

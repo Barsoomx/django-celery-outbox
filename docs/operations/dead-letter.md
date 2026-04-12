@@ -36,7 +36,7 @@ Currently manual. Copy task data and re-queue:
 
 ```python
 from django_celery_outbox.models import CeleryOutboxDeadLetter
-from myproject.celery import app
+from myproject.celery_app import app
 
 dl = CeleryOutboxDeadLetter.objects.get(pk=123)
 app.send_task(dl.task_name, args=dl.args, kwargs=dl.kwargs)

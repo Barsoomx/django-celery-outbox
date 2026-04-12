@@ -5,7 +5,7 @@
 With `OutboxCelery`, tasks are sent exactly like regular Celery:
 
 ```python
-from myproject.celery import app
+from myproject.celery_app import app
 
 @app.task
 def send_email(user_id: int, template: str):

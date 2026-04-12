@@ -51,6 +51,25 @@ CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK = False
 
 Dead letters may contain sensitive data. Purge regularly:
 
+```python
+# settings.py
+CELERY_OUTBOX_DLQ_RETENTION = {
+    'older_than_dead': '30d',
+}
+
+# celery.py
+from celery.schedules import crontab
+
+app.conf.beat_schedule = {
+    'purge-dead-letters': {
+        'task': 'django_celery_outbox.tasks.purge_dead_letter',
+        'schedule': crontab(hour=3, minute=0),
+    },
+}
+```
+
+Or via management command:
+
 ```bash
 python manage.py celery_outbox_purge_dead_letter --older-than-dead 30d
 ```
