@@ -29,12 +29,13 @@ send_email.apply_async(args=[user.id], countdown=60)
 ### ETA
 
 ```python
-from datetime import datetime, timedelta
+from datetime import timedelta
+from django.utils import timezone
 
 # Execute at specific time
 send_email.apply_async(
     args=[user.id],
-    eta=datetime.now() + timedelta(hours=1)
+    eta=timezone.now() + timedelta(hours=1)
 )
 ```
 

@@ -244,7 +244,11 @@ class Relay:
                     _logger.error('celery_outbox_send_failed', **log_kwargs)
 
                 if msg.retries >= self._config.max_retries - 1:
-                    _logger.warning('celery_outbox_max_retries_exceeded')
+                    _logger.warning(
+                        'celery_outbox_max_retries_exceeded',
+                        exception_type=exc_type,
+                        exception_message=str(e),
+                    )
                     tags = get_task_tag(msg.task_name)
                     tags['exception_type'] = exc_type
                     metrics.increment('messages.exceeded', tags=tags)

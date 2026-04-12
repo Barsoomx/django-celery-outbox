@@ -28,7 +28,7 @@ Each dead letter entry contains:
 | `retries` | Number of attempts |
 | `failure_reason` | Why it failed |
 | `created_at` | Original queue time |
-| `moved_at` | When dead-lettered |
+| `dead_at` | When dead-lettered |
 
 ## Replaying Dead Letters
 

@@ -10,7 +10,6 @@ services:
         condition: service_healthy
     environment:
       DEBUG: "True"
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minimal_django
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
     volumes:
       - .:/app
@@ -32,7 +31,6 @@ services:
       app:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minimal_django
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
     volumes:
       - .:/app
@@ -47,7 +45,6 @@ services:
       app:
         condition: service_healthy
     environment:
-      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minimal_django
       CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
     volumes:
       - .:/app
