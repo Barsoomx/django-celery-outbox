@@ -15,10 +15,11 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
         'task_name',
         'task_id',
         'retries',
+        'schema_version',
         'created_at',
         'updated_at',
     ]
-    list_filter = ['task_name', 'retries']
+    list_filter = ['task_name', 'retries', 'schema_version']
     search_fields = ['task_id', 'task_name']
     readonly_fields = [
         'id',
@@ -28,6 +29,7 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
         'kwargs',
         'options',
         'retries',
+        'schema_version',
         'created_at',
         'updated_at',
         'retry_after',
@@ -77,10 +79,11 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         'task_name',
         'task_id',
         'retries',
+        'schema_version',
         'created_at',
         'dead_at',
     ]
-    list_filter = ['task_name', 'dead_at']
+    list_filter = ['task_name', 'dead_at', 'schema_version']
     search_fields = ['task_id', 'task_name']
     readonly_fields = [
         'id',
@@ -90,6 +93,7 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         'kwargs',
         'options',
         'retries',
+        'schema_version',
         'created_at',
         'dead_at',
         'sentry_trace_id',

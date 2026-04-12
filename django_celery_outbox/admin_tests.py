@@ -30,14 +30,14 @@ def test_has_change_permission_returns_false() -> None:
 def test_list_display() -> None:
     admin_instance = admin.site._registry[CeleryOutbox]
 
-    expected = ['id', 'task_name', 'task_id', 'retries', 'created_at', 'updated_at']
+    expected = ['id', 'task_name', 'task_id', 'retries', 'schema_version', 'created_at', 'updated_at']
     assert admin_instance.list_display == expected
 
 
 def test_list_filter() -> None:
     admin_instance = admin.site._registry[CeleryOutbox]
 
-    assert admin_instance.list_filter == ['task_name', 'retries']
+    assert admin_instance.list_filter == ['task_name', 'retries', 'schema_version']
 
 
 def test_search_fields() -> None:
@@ -57,6 +57,7 @@ def test_readonly_fields() -> None:
         'kwargs',
         'options',
         'retries',
+        'schema_version',
         'created_at',
         'updated_at',
         'retry_after',
@@ -182,7 +183,7 @@ def test_dead_letter_has_delete_permission_returns_false() -> None:
 def test_dead_letter_list_display() -> None:
     admin_instance = admin.site._registry[CeleryOutboxDeadLetter]
 
-    expected = ['id', 'task_name', 'task_id', 'retries', 'created_at', 'dead_at']
+    expected = ['id', 'task_name', 'task_id', 'retries', 'schema_version', 'created_at', 'dead_at']
     assert admin_instance.list_display == expected
 
 
