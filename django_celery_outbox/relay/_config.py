@@ -49,11 +49,11 @@ class RelayConfig:
         )
 
     @classmethod
-    def from_options(cls, options: dict[str, float | int]) -> 'RelayConfig':
+    def from_options(cls, options: dict[str, float | int | str | None]) -> 'RelayConfig':
         return cls.init(
-            batch_size=options['batch_size'],
-            idle_time=options['idle_time'],
-            backoff_time=options['backoff_time'],
-            max_retries=options['max_retries'],
-            liveness_file=options['liveness_file'],
+            batch_size=int(options['batch_size']),  # type: ignore[arg-type]
+            idle_time=float(options['idle_time']),  # type: ignore[arg-type]
+            backoff_time=int(options['backoff_time']),  # type: ignore[arg-type]
+            max_retries=int(options['max_retries']),  # type: ignore[arg-type]
+            liveness_file=str(options['liveness_file']) if options.get('liveness_file') else None,
         )
