@@ -11,8 +11,8 @@ CURRENT_SCHEMA_VERSION = 1
 MIN_SUPPORTED_VERSION = 1
 
 
-class UnsupportedSchemaVersion(Exception):
-    def __init__(self, version: int):
+class UnsupportedSchemaVersionError(Exception):
+    def __init__(self, version: int) -> None:
         self._version = version
         super().__init__(f'Unsupported schema version: {version}')
 
@@ -226,9 +226,9 @@ _DESERIALIZERS: dict[int, Any] = {
 
 def deserialize_options(options: dict[str, Any], app: Celery, schema_version: int) -> dict[str, Any]:
     if schema_version > CURRENT_SCHEMA_VERSION:
-        raise UnsupportedSchemaVersion(schema_version)
+        raise UnsupportedSchemaVersionError(schema_version)
 
     if schema_version < MIN_SUPPORTED_VERSION:
-        raise UnsupportedSchemaVersion(schema_version)
+        raise UnsupportedSchemaVersionError(schema_version)
 
     return _DESERIALIZERS[schema_version](options, app)

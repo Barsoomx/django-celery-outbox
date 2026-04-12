@@ -8,7 +8,7 @@ from celery.canvas import Signature
 from django_celery_outbox.serialization import (
     CURRENT_SCHEMA_VERSION,
     MIN_SUPPORTED_VERSION,
-    UnsupportedSchemaVersion,
+    UnsupportedSchemaVersionError,
     _kombu_obj_to_str,
     _signature_to_dict,
     _signatures_to_list,
@@ -554,7 +554,7 @@ def test_min_supported_version_is_one() -> None:
 
 
 def test_unsupported_schema_version_stores_version() -> None:
-    exc = UnsupportedSchemaVersion(99)
+    exc = UnsupportedSchemaVersionError(99)
 
     assert exc.version == 99
     assert 'Unsupported schema version: 99' in str(exc)
@@ -569,14 +569,14 @@ def test_deserialize_options_with_version_1(f_app: Celery) -> None:
 
 
 def test_deserialize_options_future_version_raises(f_app: Celery) -> None:
-    with pytest.raises(UnsupportedSchemaVersion) as exc_info:
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
         deserialize_options({}, f_app, schema_version=99)
 
     assert exc_info.value.version == 99
 
 
 def test_deserialize_options_below_min_version_raises(f_app: Celery) -> None:
-    with pytest.raises(UnsupportedSchemaVersion) as exc_info:
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
         deserialize_options({}, f_app, schema_version=0)
 
     assert exc_info.value.version == 0
