@@ -5,7 +5,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.environ.get(
     'SECRET_KEY',
-    'django-insecure-example-key-do-not-use-in-production'  # SECURITY WARNING: use env var in production
+    'django-insecure-example-key-do-not-use-in-production',  # SECURITY WARNING: use env var in production
 )
 
 DEBUG = os.environ.get('DEBUG', 'False').lower() == 'true'
