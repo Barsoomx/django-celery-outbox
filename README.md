@@ -42,9 +42,11 @@ SQLite is **not supported** and will raise an error at startup.
 | Python     | 3.10, 3.11, 3.12 |
 | Django     | 4.2 LTS, 5.0, 5.1, 5.2 * |
 | Celery     | 5.3, 5.4, 5.5, 5.6 |
-| Database   | PostgreSQL 15+, MySQL 8.0+ |
+| Database   | PostgreSQL 9.5+, MySQL 8.0.1+ ** |
 
 \* CI tests LTS (4.2) and latest (5.2); intermediate versions supported but not tested in every combination.
+
+\** Minimum versions required for `SELECT FOR UPDATE SKIP LOCKED`. CI tests PostgreSQL 15 and MySQL 8.0.
 
 ## Quick Start
 

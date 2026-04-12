@@ -5,8 +5,10 @@ services:
       - .:/app
     working_dir: /app
     depends_on:
-      - postgres
-      - mysql
+      postgres:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
     environment:
       - DB_ENGINE=postgresql
       - DB_HOST=postgres
