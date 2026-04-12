@@ -1,12 +1,17 @@
 version: 2
 
 updates:
-  - package-ecosystem: "pip"
-    directory: "/"
+  - package-ecosystem: pip
+    directory: /
     open-pull-requests-limit: 15
     schedule:
-      interval: "weekly"
-      day: "monday"
-      timezone: "Etc/UTC"
+      interval: weekly
+      day: monday
+      timezone: Etc/UTC
     labels:
-      - "dependencies"
+      - dependencies
+    groups:
+      security:
+        applies-to: security-updates
+        patterns:
+          - '*'

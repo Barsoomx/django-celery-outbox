@@ -1,6 +1,7 @@
 # django-celery-outbox
 
-[![CI](https://github.com/Barsoomx/django-celery-outbox/actions/workflows/ci.yml/badge.svg)](https://github.com/Barsoomx/django-celery-outbox/actions/workflows/ci.yml)
+[![Tests](https://github.com/Barsoomx/django-celery-outbox/actions/workflows/tests.yml/badge.svg)](https://github.com/Barsoomx/django-celery-outbox/actions/workflows/tests.yml)
+[![CodeQL](https://github.com/Barsoomx/django-celery-outbox/actions/workflows/codeql.yml/badge.svg)](https://github.com/Barsoomx/django-celery-outbox/actions/workflows/codeql.yml)
 [![PyPI version](https://img.shields.io/pypi/v/django-celery-outbox.svg)](https://pypi.org/project/django-celery-outbox/)
 [![Ruff](https://img.shields.io/badge/lint-ruff-46a2f1.svg)](https://github.com/astral-sh/ruff)
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
@@ -24,6 +25,28 @@ Transactional Outbox pattern for Celery tasks in Django. Instead of sending task
 - Multi-database aware
 - StatsD metrics for monitoring relay throughput and errors
 - Health check endpoint for load balancer / k8s probes
+
+## Database Requirements
+
+django-celery-outbox uses `SELECT FOR UPDATE SKIP LOCKED` for safe concurrent relay instances. This requires:
+
+- **PostgreSQL >= 9.5**
+- **MySQL >= 8.0.1**
+
+SQLite is **not supported** and will raise an error at startup.
+
+## Compatibility
+
+| Dependency | Versions |
+|------------|----------|
+| Python     | 3.10, 3.11, 3.12 |
+| Django     | 4.2 LTS, 5.0, 5.1, 5.2 * |
+| Celery     | 5.3, 5.4, 5.5, 5.6 |
+| Database   | PostgreSQL 9.5+, MySQL 8.0.1+ ** |
+
+\* CI tests LTS (4.2) and latest (5.2); intermediate versions supported but not tested in every combination.
+
+\** Minimum versions required for `SELECT FOR UPDATE SKIP LOCKED`. CI tests PostgreSQL 15 and MySQL 8.0.
 
 ## Quick Start
 
@@ -91,6 +114,7 @@ All settings are configured in your Django settings module.
 | `MONITORING_STATSD_PREFIX` | `'celery_outbox'` | Prefix for all StatsD metric names |
 | `MONITORING_STATSD_TAGS` | `{}` | Extra tags attached to every StatsD metric |
 | `MONITORING_METRICS_ENABLED` | `True` | Enable StatsD metrics emission |
+| `CELERY_OUTBOX_DLQ_RETENTION` | `None` | Dict with retention policy for dead letter purge. Keys: `older_than_dead`, `older_than_created`, `task_name` |
 
 ## Relay Command
 
@@ -267,9 +291,77 @@ When a message exceeds `max_retries`, it is moved to the `celery_outbox_dead_let
 and a warning is logged with `celery_outbox_max_retries_exceeded`. Messages are **never silently
 deleted**. Operators can inspect and retry dead-lettered messages via the Django admin.
 
+### Purging Old Records
+
+To prevent unbounded table growth, use the purge command:
+
+```bash
+# Delete records dead for more than 30 days
+python manage.py celery_outbox_purge_dead_letter --older-than-dead=30d
+
+# Delete records created more than 90 days ago (GDPR compliance)
+python manage.py celery_outbox_purge_dead_letter --older-than-created=90d
+
+# Combine criteria (AND logic)
+python manage.py celery_outbox_purge_dead_letter --older-than-dead=7d --older-than-created=30d
+
+# Filter by task name pattern
+python manage.py celery_outbox_purge_dead_letter --older-than-dead=30d --task-name="myapp.tasks.*"
+
+# Dry run - see what would be deleted
+python manage.py celery_outbox_purge_dead_letter --older-than-dead=30d --dry-run
+```
+
+Duration format: `<number><unit>` where unit is `s` (seconds), `m` (minutes), `h` (hours), `d` (days), or `w` (weeks).
+
+### Automated Cleanup
+
+Configure a retention policy in settings:
+
+```python
+CELERY_OUTBOX_DLQ_RETENTION = {
+    'older_than_dead': '30d',
+    'older_than_created': '90d',
+    'task_name': 'myapp.tasks.*',  # optional
+}
+```
+
+Schedule via Celery Beat:
+
+```python
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    'purge-dead-letter-nightly': {
+        'task': 'celery_outbox.purge_dead_letter',
+        'schedule': crontab(hour=3, minute=0),
+    },
+}
+```
+
+Or run the management command from cron (uses `CELERY_OUTBOX_DLQ_RETENTION` automatically):
+
+```bash
+0 3 * * * cd /app && python manage.py celery_outbox_purge_dead_letter
+```
+
 ## Delivery Guarantees
 
 **Semantics: at-least-once delivery.** Consumers must be idempotent.
+
+### Broker Configuration
+
+The at-least-once guarantee requires the broker to confirm message acceptance. Without confirmation, a broker failure (network loss, queue full, quota exceeded) can silently drop messages after the relay deletes them from the outbox.
+
+**RabbitMQ** — enable publisher confirms:
+
+```python
+BROKER_TRANSPORT_OPTIONS = {
+    'confirm_publish': True,
+}
+```
+
+**Redis** — does not support publisher confirms. Message loss is possible if Redis fails between `LPUSH` and relay cleanup. For production workloads requiring strict at-least-once delivery, use RabbitMQ with publisher confirms.
 
 | Scenario | Outcome |
 |----------|---------|

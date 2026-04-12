@@ -9,7 +9,7 @@ from types import FrameType
 import sentry_sdk
 import structlog
 from celery import Celery
-from django.db import close_old_connections, transaction
+from django.db import close_old_connections, connections, transaction
 from django.db.models import F, Q
 from django.db.models.functions import Now
 from django.dispatch import Signal
@@ -48,6 +48,15 @@ class Relay:
 
         if max_retries <= 0:
             raise ValueError('max_retries must be > 0')
+
+        db_alias = CeleryOutbox.objects.db
+        db_connection = connections[db_alias]
+        if not db_connection.features.has_select_for_update_skip_locked:
+            raise RuntimeError(
+                f'Database backend "{db_connection.vendor}" does not support '
+                f'SELECT FOR UPDATE SKIP LOCKED. '
+                f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
+            )
 
         self._app = app
         self._batch_size = batch_size

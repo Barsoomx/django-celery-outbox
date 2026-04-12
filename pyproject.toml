@@ -59,6 +59,8 @@ test = [
   "pytest>=7.0",
   "pytest-django>=4.5",
   "factory-boy>=3.3",
+  "psycopg[binary]>=3.1",
+  "mysqlclient>=2.2",
 ]
 
 [tool.setuptools]
@@ -111,8 +113,11 @@ plugins = ["mypy_django_plugin.main"]
 DJANGO_SETTINGS_MODULE = 'tests.settings'
 pythonpath = ['.']
 python_files = ['*_tests.py']
-python_classes = ['']
+python_classes = ['Test*']
 python_functions = ['test_*']
+filterwarnings = [
+    'ignore::pytest.PytestCollectionWarning',
+]
 
 [tool.django-stubs]
 django_settings_module = "tests.settings"
