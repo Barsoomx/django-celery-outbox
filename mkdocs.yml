@@ -54,6 +54,7 @@ nav:
     - Metrics: observability/metrics.md
     - Structlog: observability/structlog.md
     - Sentry: observability/sentry.md
+    - Log Sampling: observability/log-sampling.md
   - Operations:
     - Dead Letter Queue: operations/dead-letter.md
     - Admin Interface: operations/admin-interface.md
