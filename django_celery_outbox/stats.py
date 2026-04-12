@@ -1,6 +1,11 @@
 import json
 from dataclasses import dataclass
 
+from django.db.models import Sum
+from django.utils import timezone
+
+from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+
 
 @dataclass
 class QueueStats:
@@ -49,3 +54,31 @@ class QueueStats:
             return f'{minutes}m {secs}s'
 
         return f'{secs}s'
+
+
+def get_queue_stats(top_n: int = 10) -> QueueStats:
+    queue_depth = CeleryOutbox.objects.count()
+    dlq_count = CeleryOutboxDeadLetter.objects.count()
+
+    oldest = CeleryOutbox.objects.order_by('created_at').values_list('created_at', flat=True).first()
+    if oldest:
+        oldest_pending_seconds = (timezone.now() - oldest).total_seconds()
+    else:
+        oldest_pending_seconds = None
+
+    top_failing: list[dict] = []
+    if top_n > 0:
+        top_failing = list(
+            CeleryOutbox.objects
+            .values('task_name')
+            .annotate(total_retries=Sum('retries'))
+            .filter(total_retries__gt=0)
+            .order_by('-total_retries')[:top_n]
+        )
+
+    return QueueStats(
+        queue_depth=queue_depth,
+        dlq_count=dlq_count,
+        oldest_pending_seconds=oldest_pending_seconds,
+        top_failing=top_failing,
+    )
