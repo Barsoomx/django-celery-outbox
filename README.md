@@ -112,6 +112,7 @@ All settings are configured in your Django settings module.
 | `MONITORING_STATSD_PREFIX` | `'celery_outbox'` | Prefix for all StatsD metric names |
 | `MONITORING_STATSD_TAGS` | `{}` | Extra tags attached to every StatsD metric |
 | `MONITORING_METRICS_ENABLED` | `True` | Enable StatsD metrics emission |
+| `CELERY_OUTBOX_DLQ_RETENTION` | `None` | Dict with retention policy for dead letter purge. Keys: `older_than_dead`, `older_than_created`, `task_name` |
 
 ## Relay Command
 
@@ -287,6 +288,60 @@ Sentry trace context (`sentry-trace` and `baggage` headers) is automatically cap
 When a message exceeds `max_retries`, it is moved to the `celery_outbox_dead_letter` table
 and a warning is logged with `celery_outbox_max_retries_exceeded`. Messages are **never silently
 deleted**. Operators can inspect and retry dead-lettered messages via the Django admin.
+
+### Purging Old Records
+
+To prevent unbounded table growth, use the purge command:
+
+```bash
+# Delete records dead for more than 30 days
+python manage.py celery_outbox_purge_dead_letter --older-than-dead=30d
+
+# Delete records created more than 90 days ago (GDPR compliance)
+python manage.py celery_outbox_purge_dead_letter --older-than-created=90d
+
+# Combine criteria (AND logic)
+python manage.py celery_outbox_purge_dead_letter --older-than-dead=7d --older-than-created=30d
+
+# Filter by task name pattern
+python manage.py celery_outbox_purge_dead_letter --older-than-dead=30d --task-name="myapp.tasks.*"
+
+# Dry run - see what would be deleted
+python manage.py celery_outbox_purge_dead_letter --older-than-dead=30d --dry-run
+```
+
+Duration format: `<number><unit>` where unit is `s` (seconds), `m` (minutes), `h` (hours), `d` (days), or `w` (weeks).
+
+### Automated Cleanup
+
+Configure a retention policy in settings:
+
+```python
+CELERY_OUTBOX_DLQ_RETENTION = {
+    'older_than_dead': '30d',
+    'older_than_created': '90d',
+    'task_name': 'myapp.tasks.*',  # optional
+}
+```
+
+Schedule via Celery Beat:
+
+```python
+from celery.schedules import crontab
+
+CELERY_BEAT_SCHEDULE = {
+    'purge-dead-letter-nightly': {
+        'task': 'celery_outbox.purge_dead_letter',
+        'schedule': crontab(hour=3, minute=0),
+    },
+}
+```
+
+Or run the management command from cron (uses `CELERY_OUTBOX_DLQ_RETENTION` automatically):
+
+```bash
+0 3 * * * cd /app && python manage.py celery_outbox_purge_dead_letter
+```
 
 ## Delivery Guarantees
 
