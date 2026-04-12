@@ -172,9 +172,11 @@ bleeding-edge:
 | Dependency | Versions |
 |------------|----------|
 | Python     | 3.10, 3.11, 3.12 |
-| Django     | 4.2 LTS, 5.0, 5.1, 5.2 |
+| Django     | 4.2 LTS, 5.0, 5.1, 5.2 * |
 | Celery     | 5.3, 5.4, 5.5, 5.6 |
 | Database   | PostgreSQL 15+, MySQL 8.0+ |
+
+\* CI tests LTS (4.2) and latest (5.2); intermediate versions supported but not tested in every combination.
 ```
 
 ## Job Summary
@@ -194,11 +196,15 @@ bleeding-edge:
 
 ### Django 5.0/5.1 убраны из CI matrix
 
-CI тестирует LTS (4.2) + latest (5.2). Промежуточные версии остаются в classifiers.
+CI тестирует LTS (4.2) + latest (5.2). Промежуточные версии остаются в classifiers — библиотека их поддерживает, но не тестирует в каждой комбинации. Это решение принято для контроля размера matrix (issue #28 scope extension).
 
-### PostgreSQL — основная БД для Celery matrix
+### PostgreSQL — основная БД для полного Celery matrix
 
-PostgreSQL поддерживает SKIP LOCKED (ключевая фича библиотеки), поэтому полный Celery matrix только на ней. MySQL проверяет DB-совместимость без избыточных комбинаций.
+Обе БД (PostgreSQL и MySQL 8.0+) поддерживают SKIP LOCKED. PostgreSQL выбрана для полного Celery matrix как primary production database. MySQL coverage сокращена для избежания избыточных комбинаций (не для технических ограничений).
+
+### Job count trade-off
+
+Текущий CI: 24 jobs (3 Py × 4 Dj × 2 DB). После изменений: 31 job (+29%). Trade-off: больше jobs, но 4× Celery coverage вместо 1×.
 
 ### Dependabot без изменений
 
