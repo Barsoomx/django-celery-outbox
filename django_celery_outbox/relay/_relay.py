@@ -186,7 +186,8 @@ class Relay:
     def _process_message(self, msg: CeleryOutbox) -> ProcessResult:
         if msg.retries >= self._config.max_retries:
             _logger.warning('celery_outbox_max_retries_exceeded')
-            metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
+            tags = _get_task_tag(msg.task_name)
+            metrics.increment('messages.exceeded', tags=tags)
             return ProcessResult.EXCEEDED
 
         with sentry_sdk.start_span(op='celery_outbox.relay.send', name=msg.task_name) as span:
@@ -213,7 +214,8 @@ class Relay:
                     return ProcessResult.FAILED
             else:
                 span.set_status('ok')
-                metrics.increment('messages.published', tags={'task_name': msg.task_name})
+                tags = _get_task_tag(msg.task_name)
+                metrics.increment('messages.published', tags=tags)
                 self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
                 return ProcessResult.PUBLISHED
 

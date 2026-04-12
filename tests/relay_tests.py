@@ -5,6 +5,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from celery import Celery
 from django.core.exceptions import ImproperlyConfigured
+from django.test import override_settings
 
 from django_celery_outbox.factories import CeleryOutboxFactory
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
@@ -834,3 +835,47 @@ def test_exceeded_message_includes_exception_type_in_metrics(
         'messages.exceeded',
         tags={'task_name': msg.task_name, 'exception_type': 'timeout'},
     )
+
+
+@pytest.mark.django_db
+def test_published_message_uses_cardinality_control(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    with override_settings(CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=True):
+        CeleryOutbox.objects.create(
+            task_id='task-1',
+            task_name='some.task',
+            args=[],
+            kwargs={},
+            options={},
+        )
+        with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+            with patch('django_celery_outbox.relay._relay.time.sleep'):
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    f_relay._processing()
+
+    published_calls = [c for c in m_metrics.increment.call_args_list if c[0][0] == 'messages.published']
+    assert len(published_calls) == 1
+    assert published_calls[0][1].get('tags', {}) == {}
+
+
+@pytest.mark.django_db
+def test_exceeded_pre_send_uses_cardinality_control(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    with override_settings(CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=True):
+        msg = CeleryOutbox.objects.create(
+            task_id='task-1',
+            task_name='some.task',
+            retries=f_relay._config.max_retries,
+        )
+
+        with patch.object(f_relay, '_send_task') as m_send:
+            f_relay._process_messages([msg])
+
+    exceeded_calls = [c for c in m_metrics.increment.call_args_list if c[0][0] == 'messages.exceeded']
+    assert len(exceeded_calls) == 1
+    assert exceeded_calls[0][1].get('tags', {}) == {}
+    m_send.assert_not_called()
