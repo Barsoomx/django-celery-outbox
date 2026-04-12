@@ -3,9 +3,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from celery import Celery
 
-from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.factories import CeleryOutboxFactory
-from django_celery_outbox.relay import Relay
+from django_celery_outbox.relay import Relay, RelayConfig
 from django_celery_outbox.signals import (
     outbox_message_created,
     outbox_message_dead_lettered,
@@ -129,9 +128,9 @@ def test_outbox_message_dead_lettered_fires_on_exceeded(m_celery_app: MagicMock)
 
     outbox_message_dead_lettered.connect(handler)
     try:
-        with patch('django_celery_outbox.relay.Celery.send_task'):
-            with patch('django_celery_outbox.relay.time.sleep'):
-                with patch('django_celery_outbox.relay.close_old_connections'):
+        with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+            with patch('django_celery_outbox.relay._relay.time.sleep'):
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
                     relay._processing()
     finally:
         outbox_message_dead_lettered.disconnect(handler)

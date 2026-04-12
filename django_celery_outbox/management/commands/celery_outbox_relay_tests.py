@@ -3,8 +3,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import override_settings
 
-from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.management.commands.celery_outbox_relay import Command
+from django_celery_outbox.relay import RelayConfig
 
 _fake_app = object()
 

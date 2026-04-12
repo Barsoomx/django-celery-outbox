@@ -6,10 +6,9 @@ import pytest
 from celery import Celery
 from django.core.exceptions import ImproperlyConfigured
 
-from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.factories import CeleryOutboxFactory
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
-from django_celery_outbox.relay import Relay
+from django_celery_outbox.relay import Relay, RelayConfig
 
 
 @pytest.fixture()
@@ -209,7 +208,7 @@ def test_send_task_calls_celery(m_celery_app: MagicMock) -> None:
         sentry_baggage='baggage-1',
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task') as m_send:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
         relay._send_task(msg)
 
     m_send.assert_called_once()
@@ -232,7 +231,7 @@ def test_send_task_with_eta(m_celery_app: MagicMock) -> None:
         options={'eta': eta_dt.isoformat()},
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task') as m_send:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
         relay._send_task(msg)
 
     _, kwargs = m_send.call_args
@@ -249,8 +248,8 @@ def test_send_task_restores_structlog_context(m_celery_app: MagicMock) -> None:
         structlog_context=json.dumps({'request_id': 'req-1'}),
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task'):
-        with patch('django_celery_outbox.relay.structlog.contextvars.bound_contextvars') as m_bound:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._relay.structlog.contextvars.bound_contextvars') as m_bound:
             relay._send_task(msg)
 
     m_bound.assert_called_once_with(request_id='req-1')
@@ -360,9 +359,9 @@ def test_processing_full_cycle(m_celery_app: MagicMock) -> None:
         retries=3,
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task'):
-        with patch('django_celery_outbox.relay.time.sleep') as m_sleep:
-            with patch('django_celery_outbox.relay.close_old_connections'):
+    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
 
     assert not CeleryOutbox.objects.filter(pk=msg_ok.id).exists()
@@ -388,9 +387,9 @@ def test_processing_no_sleep_when_batch_full(m_celery_app: MagicMock) -> None:
             retries=0,
         )
 
-    with patch('django_celery_outbox.relay.Celery.send_task'):
-        with patch('django_celery_outbox.relay.time.sleep') as m_sleep:
-            with patch('django_celery_outbox.relay.close_old_connections'):
+    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
 
     m_sleep.assert_not_called()
@@ -410,9 +409,9 @@ def test_processing_failed_messages_retained(m_celery_app: MagicMock) -> None:
         retries=0,
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task', side_effect=RuntimeError('fail')):
-        with patch('django_celery_outbox.relay.time.sleep'):
-            with patch('django_celery_outbox.relay.close_old_connections'):
+    with patch('django_celery_outbox.relay._relay.Celery.send_task', side_effect=RuntimeError('fail')):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
 
     msg.refresh_from_db()
@@ -434,7 +433,7 @@ def test_send_task_without_sentry_context(m_celery_app: MagicMock) -> None:
         sentry_baggage=None,
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task') as m_send:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
         relay._send_task(msg)
 
     _, kwargs = m_send.call_args
@@ -453,7 +452,7 @@ def test_send_task_propagates_extra_options(m_celery_app: MagicMock) -> None:
         options={'priority': 9, 'routing_key': 'high'},
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task') as m_send:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
         relay._send_task(msg)
 
     _, kwargs = m_send.call_args
@@ -476,9 +475,9 @@ def test_processing_calls_close_old_connections(m_celery_app: MagicMock) -> None
         config=RelayConfig.init(batch_size=10, idle_time=0.01, max_retries=3),
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task'):
-        with patch('django_celery_outbox.relay.time.sleep'):
-            with patch('django_celery_outbox.relay.close_old_connections') as m_close:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections') as m_close:
                 relay._processing()
 
     assert m_close.call_count == 2
@@ -494,9 +493,9 @@ def test_processing_sets_updated_at_on_select(m_celery_app: MagicMock) -> None:
     msg = CeleryOutboxFactory.create(options={}, updated_at=None)
     before = datetime.now(timezone.utc)
 
-    with patch('django_celery_outbox.relay.Celery.send_task', side_effect=RuntimeError('fail')):
-        with patch('django_celery_outbox.relay.time.sleep'):
-            with patch('django_celery_outbox.relay.close_old_connections'):
+    with patch('django_celery_outbox.relay._relay.Celery.send_task', side_effect=RuntimeError('fail')):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
 
     msg.refresh_from_db()
@@ -515,7 +514,7 @@ def test_send_task_with_headers_none_in_options(m_celery_app: MagicMock) -> None
         options={'headers': None},
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task') as m_send:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
         relay._send_task(msg)
 
     m_send.assert_called_once()
@@ -566,10 +565,10 @@ def test_processing_logs_batch_summary(m_celery_app: MagicMock) -> None:
 
     CeleryOutboxFactory.create(options={}, retries=0)
 
-    with patch('django_celery_outbox.relay._logger') as m_logger:
-        with patch('django_celery_outbox.relay.Celery.send_task'):
-            with patch('django_celery_outbox.relay.time.sleep'):
-                with patch('django_celery_outbox.relay.close_old_connections'):
+    with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+        with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+            with patch('django_celery_outbox.relay._relay.time.sleep'):
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
                     relay._processing()
 
     m_logger.info.assert_any_call(
@@ -606,9 +605,9 @@ def test_processing_touches_liveness_file(m_celery_app: MagicMock, tmp_path: obj
         config=RelayConfig.init(batch_size=10, idle_time=0.01, max_retries=3, liveness_file=liveness_file),
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task'):
-        with patch('django_celery_outbox.relay.time.sleep'):
-            with patch('django_celery_outbox.relay.close_old_connections'):
+    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
 
     from pathlib import Path
@@ -617,13 +616,13 @@ def test_processing_touches_liveness_file(m_celery_app: MagicMock, tmp_path: obj
 
 
 @pytest.mark.django_db
-@patch('django_celery_outbox.relay.sentry_sdk')
+@patch('django_celery_outbox.relay._relay.sentry_sdk')
 def test_processing_creates_batch_span(m_sentry: MagicMock, f_relay: Relay) -> None:
     m_batch_span = MagicMock()
     m_sentry.start_span.return_value.__enter__.return_value = m_batch_span
 
-    with patch('django_celery_outbox.relay.time.sleep'):
-        with patch('django_celery_outbox.relay.close_old_connections'):
+    with patch('django_celery_outbox.relay._relay.time.sleep'):
+        with patch('django_celery_outbox.relay._relay.close_old_connections'):
             f_relay._processing()
 
     m_sentry.start_span.assert_called_with(
@@ -634,7 +633,7 @@ def test_processing_creates_batch_span(m_sentry: MagicMock, f_relay: Relay) -> N
 
 
 @pytest.mark.django_db
-@patch('django_celery_outbox.relay.sentry_sdk')
+@patch('django_celery_outbox.relay._relay.sentry_sdk')
 def test_processing_batch_span_internal_error_on_failure(
     m_sentry: MagicMock,
     f_relay: Relay,
@@ -646,16 +645,16 @@ def test_processing_batch_span_internal_error_on_failure(
         task_name='fail.task',
     )
 
-    with patch('django_celery_outbox.relay.Celery.send_task', side_effect=ConnectionError('broker down')):
-        with patch('django_celery_outbox.relay.time.sleep'):
-            with patch('django_celery_outbox.relay.close_old_connections'):
+    with patch('django_celery_outbox.relay._relay.Celery.send_task', side_effect=ConnectionError('broker down')):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 f_relay._processing()
 
     m_batch_span.set_status.assert_called_with('internal_error')
 
 
 @pytest.mark.django_db
-@patch('django_celery_outbox.relay.sentry_sdk')
+@patch('django_celery_outbox.relay._relay.sentry_sdk')
 def test_process_messages_creates_per_message_span(
     m_sentry: MagicMock,
     f_relay: Relay,
@@ -681,7 +680,7 @@ def test_process_messages_creates_per_message_span(
 
 
 @pytest.mark.django_db
-@patch('django_celery_outbox.relay.sentry_sdk')
+@patch('django_celery_outbox.relay._relay.sentry_sdk')
 def test_process_messages_span_internal_error_on_send_failure(
     m_sentry: MagicMock,
     f_relay: Relay,

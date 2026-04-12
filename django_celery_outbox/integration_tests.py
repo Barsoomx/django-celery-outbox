@@ -14,9 +14,8 @@ from django.conf import LazySettings
 from django.db import transaction
 
 from django_celery_outbox.app import OutboxCelery
-from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
-from django_celery_outbox.relay import Relay
+from django_celery_outbox.relay import Relay, RelayConfig
 
 _DUMMY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0'
 
@@ -47,7 +46,7 @@ def f_relay(f_relay_app: Celery) -> Relay:
 
 @pytest.fixture()
 def m_celery_send() -> Generator[MagicMock]:
-    with patch('django_celery_outbox.relay.Celery.send_task') as mock:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task') as mock:
         yield mock
 
 

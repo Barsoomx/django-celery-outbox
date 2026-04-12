@@ -5,8 +5,7 @@ from celery import Celery
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandParser
 
-from django_celery_outbox.config import RelayConfig
-from django_celery_outbox.relay import Relay
+from django_celery_outbox.relay import Relay, RelayConfig
 
 
 class Command(BaseCommand):

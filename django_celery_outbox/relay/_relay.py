@@ -14,8 +14,8 @@ from django.db.models.functions import Now
 from django.dispatch import Signal
 
 from django_celery_outbox import metrics
-from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.relay._config import RelayConfig
 from django_celery_outbox.serialization import deserialize_options
 from django_celery_outbox.signals import (
     outbox_message_dead_lettered,
