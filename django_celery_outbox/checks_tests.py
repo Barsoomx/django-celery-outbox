@@ -1,7 +1,5 @@
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 from django_celery_outbox.checks import check_database_supports_skip_locked
 
 
