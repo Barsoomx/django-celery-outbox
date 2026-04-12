@@ -62,6 +62,10 @@ test = [
   "psycopg[binary]>=3.1",
   "mysqlclient>=2.2",
 ]
+docs = [
+  "mkdocs>=1.5",
+  "mkdocs-material>=9.5",
+]
 
 [tool.setuptools]
 include-package-data = true

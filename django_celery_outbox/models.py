@@ -13,6 +13,8 @@ class CeleryOutbox(models.Model):
     task_name = models.CharField(max_length=255, db_index=True)
     args = models.JSONField(default=list)
     kwargs = models.JSONField(default=dict)
+    redacted_args = models.JSONField(null=True, blank=True)
+    redacted_kwargs = models.JSONField(null=True, blank=True)
     options = models.JSONField(default=dict)
 
     sentry_trace_id = models.CharField(max_length=512, null=True, blank=True)
@@ -35,6 +37,14 @@ class CeleryOutbox(models.Model):
     def __str__(self) -> str:
         return f'<CeleryOutbox id={self.id} task_name={self.task_name} task_id={self.task_id} retries={self.retries}>'
 
+    @property
+    def inspection_args(self) -> list:
+        return self.redacted_args if self.redacted_args is not None else self.args
+
+    @property
+    def inspection_kwargs(self) -> dict:
+        return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
+
 
 class CeleryOutboxDeadLetter(models.Model):
     objects = models.Manager()
@@ -47,6 +57,8 @@ class CeleryOutboxDeadLetter(models.Model):
     task_name = models.CharField(max_length=255, db_index=True)
     args = models.JSONField(default=list)
     kwargs = models.JSONField(default=dict)
+    redacted_args = models.JSONField(null=True, blank=True)
+    redacted_kwargs = models.JSONField(null=True, blank=True)
     options = models.JSONField(default=dict)
 
     sentry_trace_id = models.CharField(max_length=512, null=True, blank=True)
@@ -60,3 +72,11 @@ class CeleryOutboxDeadLetter(models.Model):
         db_table = 'celery_outbox_dead_letter'
         verbose_name = 'CeleryOutboxDeadLetter'
         verbose_name_plural = 'CeleryOutboxDeadLetter'
+
+    @property
+    def inspection_args(self) -> list:
+        return self.redacted_args if self.redacted_args is not None else self.args
+
+    @property
+    def inspection_kwargs(self) -> dict:
+        return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs

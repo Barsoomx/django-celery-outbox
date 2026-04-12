@@ -13,6 +13,9 @@ concurrency:
   group: ${{ github.ref }}-pr
   cancel-in-progress: true
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   security:
     name: Security Audit

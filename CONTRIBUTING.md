@@ -5,6 +5,20 @@ Thanks for your interest in contributing!
 
 Local development
 -----------------
+
+**With Docker (recommended):**
+
+```bash
+git clone https://github.com/Barsoomx/django-celery-outbox.git
+cd django-celery-outbox
+docker compose build
+docker compose run --rm app pytest -v
+docker compose run --rm app ruff check .
+docker compose run --rm app mypy -p django_celery_outbox
+```
+
+**Without Docker:**
+
 - Create a virtual environment: `python3 -m venv .venv && source .venv/bin/activate`
 - Install dev tools: `pip install -U pip && pip install .[dev]`
 - Run linters: `ruff check . && ruff format --check .`

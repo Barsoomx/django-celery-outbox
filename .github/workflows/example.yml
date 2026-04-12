@@ -1,0 +1,51 @@
+name: Test Example Project
+
+on:
+  push:
+    paths: ['examples/**']
+  pull_request:
+    paths: ['examples/**']
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  test-example:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start services
+        working-directory: examples/minimal_django
+        run: docker compose up -d --wait --wait-timeout 180 || (docker compose logs && exit 1)
+
+      - name: Create order
+        run: |
+          curl -f -X POST http://localhost:8000/orders/create/ \
+            -H "Content-Type: application/json" \
+            -d '{"email": "ci@test.com", "total": "1.00"}'
+
+      - name: Verify outbox processed
+        working-directory: examples/minimal_django
+        run: |
+          for i in $(seq 1 12); do
+            count=$(docker compose exec -T app python manage.py shell -c "
+          from django_celery_outbox.models import CeleryOutbox
+          print(CeleryOutbox.objects.count())
+          " | tail -1 | tr -d '[:space:]')
+            echo "Attempt $i: pending=$count"
+            if [ "$count" = "0" ]; then
+              echo "Outbox flushed successfully"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "Outbox not flushed after 60s"
+          docker compose logs relay
+          docker compose logs worker
+          exit 1
+
+      - name: Cleanup
+        working-directory: examples/minimal_django
+        if: always()
+        run: docker compose down -v

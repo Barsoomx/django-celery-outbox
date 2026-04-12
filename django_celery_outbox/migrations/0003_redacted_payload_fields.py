@@ -1,0 +1,30 @@
+from django.db import migrations, models
+
+
+class Migration(migrations.Migration):
+    dependencies = [
+        ('django_celery_outbox', '0002_schema_version'),
+    ]
+
+    operations = [
+        migrations.AddField(
+            model_name='celeryoutbox',
+            name='redacted_args',
+            field=models.JSONField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name='celeryoutbox',
+            name='redacted_kwargs',
+            field=models.JSONField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name='celeryoutboxdeadletter',
+            name='redacted_args',
+            field=models.JSONField(blank=True, null=True),
+        ),
+        migrations.AddField(
+            model_name='celeryoutboxdeadletter',
+            name='redacted_kwargs',
+            field=models.JSONField(blank=True, null=True),
+        ),
+    ]

@@ -9,15 +9,21 @@ from types import FrameType
 import sentry_sdk
 import structlog
 from celery import Celery
+from django.conf import settings
 from django.db import close_old_connections, connections, transaction
 from django.db.models import F
 from django.db.models.functions import Now
 from django.dispatch import Signal
+from django.utils import timezone
+from kombu.transport.native_delayed_delivery import (
+    declare_native_delayed_delivery_exchanges_and_queues,
+)
 
 from django_celery_outbox import metrics
+from django_celery_outbox.metrics import get_task_tag
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay._config import RelayConfig
-from django_celery_outbox.relay._message_selector import MessageSelector
+from django_celery_outbox.relay._message_selector import MessageSelector, get_pending_filter
 from django_celery_outbox.serialization import deserialize_options
 from django_celery_outbox.signals import (
     outbox_message_dead_lettered,
@@ -34,6 +40,26 @@ class ProcessResult(Enum):
     EXCEEDED = auto()
 
 
+# Order matters: subclasses before parents (ConnectionError, TimeoutError < OSError)
+_EXCEPTION_CATEGORIES: dict[type[Exception], str] = {
+    ConnectionError: 'connection',
+    TimeoutError: 'timeout',
+    OSError: 'os_error',
+}
+
+
+def _classify_exception(exc: Exception) -> str:
+    for exc_class, label in _EXCEPTION_CATEGORIES.items():
+        if isinstance(exc, exc_class):
+            return label
+
+    return 'unknown'
+
+
+def _should_log_traceback() -> bool:
+    return getattr(settings, 'CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK', True)
+
+
 class Relay:
     def __init__(
         self,
@@ -41,15 +67,6 @@ class Relay:
         config: RelayConfig,
         selector: MessageSelector | None = None,
     ) -> None:
-        db_alias = CeleryOutbox.objects.db
-        db_connection = connections[db_alias]
-        if not db_connection.features.has_select_for_update_skip_locked:
-            raise RuntimeError(
-                f'Database backend "{db_connection.vendor}" does not support '
-                f'SELECT FOR UPDATE SKIP LOCKED. '
-                f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
-            )
-
         db_alias = CeleryOutbox.objects.db
         db_connection = connections[db_alias]
         if not db_connection.features.has_select_for_update_skip_locked:
@@ -70,6 +87,7 @@ class Relay:
 
     def start(self) -> None:
         self._setup_signals()
+        self._setup_delayed_delivery()
 
         _logger.info(
             'celery_outbox_relay_started',
@@ -85,6 +103,19 @@ class Relay:
     def _setup_signals(self) -> None:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
+
+    def _setup_delayed_delivery(self) -> None:
+        queue_type = self._app.conf.broker_native_delayed_delivery_queue_type or 'quorum'
+        try:
+            with self._app.connection_for_write() as connection:
+                declare_native_delayed_delivery_exchanges_and_queues(connection, queue_type)
+                _logger.info('celery_outbox_delayed_delivery_setup', queue_type=queue_type)
+        except Exception as exc:
+            _logger.warning(
+                'celery_outbox_delayed_delivery_setup_failed',
+                exception_type=type(exc).__name__,
+                exception_message=str(exc),
+            )
 
     def _handle_signal(self, signum: int, frame: FrameType | None) -> None:
         _logger.info('celery_outbox_relay_shutdown', signal=signum)
@@ -121,6 +152,13 @@ class Relay:
         metrics.gauge('queue.depth', queue_depth)
         metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
         metrics.timing('batch.duration_ms', (time.monotonic() - start_time) * 1000)
+
+        oldest = CeleryOutbox.objects.filter(get_pending_filter()).order_by('created_at').values_list('created_at', flat=True).first()
+        if oldest:
+            age_seconds = (timezone.now() - oldest).total_seconds()
+            metrics.gauge('oldest_pending_age_seconds', age_seconds)
+        else:
+            metrics.gauge('oldest_pending_age_seconds', 0)
 
         _logger.info(
             'celery_outbox_batch_processed',
@@ -169,8 +207,14 @@ class Relay:
 
     def _process_message(self, msg: CeleryOutbox) -> ProcessResult:
         if msg.retries >= self._config.max_retries:
-            _logger.warning('celery_outbox_max_retries_exceeded')
-            metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
+            _logger.warning(
+                'celery_outbox_max_retries_exceeded',
+                exception_type='pre_exceeded',
+                exception_message='message already exceeded max retries before send attempt',
+            )
+            tags = get_task_tag(msg.task_name)
+            tags['exception_type'] = 'pre_exceeded'
+            metrics.increment('messages.exceeded', tags=tags)
             return ProcessResult.EXCEEDED
 
         with sentry_sdk.start_span(op='celery_outbox.relay.send', name=msg.task_name) as span:
@@ -179,20 +223,42 @@ class Relay:
 
             try:
                 self._send_task(msg)
-            except Exception:
+            except Exception as e:
                 span.set_status('internal_error')
-                _logger.exception('celery_outbox_send_failed')
+                exc_type = _classify_exception(e)
+
+                log_kwargs = {
+                    'exception_type': exc_type,
+                    'exception_message': str(e),
+                }
+
+                if _should_log_traceback():
+                    _logger.error('celery_outbox_send_failed', **log_kwargs, exc_info=True)
+                else:
+                    _logger.error('celery_outbox_send_failed', **log_kwargs)
+
                 if msg.retries >= self._config.max_retries - 1:
-                    _logger.warning('celery_outbox_max_retries_exceeded')
-                    metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
+                    _logger.warning(
+                        'celery_outbox_max_retries_exceeded',
+                        exception_type=exc_type,
+                        exception_message=str(e),
+                    )
+                    tags = get_task_tag(msg.task_name)
+                    tags['exception_type'] = exc_type
+                    metrics.increment('messages.exceeded', tags=tags)
                     return ProcessResult.EXCEEDED
                 else:
-                    metrics.increment('messages.failed', tags={'task_name': msg.task_name})
+                    tags = get_task_tag(msg.task_name)
+                    tags['exception_type'] = exc_type
+                    metrics.increment('messages.failed', tags=tags)
                     self._send_signal_safe(outbox_message_failed, msg.task_id, msg.task_name, retries=msg.retries)
                     return ProcessResult.FAILED
             else:
                 span.set_status('ok')
-                metrics.increment('messages.published', tags={'task_name': msg.task_name})
+                latency_ms = (time.time() - msg.created_at.timestamp()) * 1000
+                tags = get_task_tag(msg.task_name)
+                metrics.timing('send_latency_ms', latency_ms, tags=tags)
+                metrics.increment('messages.published', tags=tags)
                 self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
                 return ProcessResult.PUBLISHED
 
@@ -284,6 +350,8 @@ class Relay:
                     task_name=msg.task_name,
                     args=msg.args,
                     kwargs=msg.kwargs,
+                    redacted_args=msg.redacted_args,
+                    redacted_kwargs=msg.redacted_kwargs,
                     options=msg.options,
                     sentry_trace_id=msg.sentry_trace_id,
                     sentry_baggage=msg.sentry_baggage,

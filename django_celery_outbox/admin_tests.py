@@ -57,8 +57,8 @@ def test_readonly_fields() -> None:
         'id',
         'task_name',
         'task_id',
-        'args',
-        'kwargs',
+        'display_args',
+        'display_kwargs',
         'options',
         'retries',
         'schema_version',
@@ -205,6 +205,8 @@ def test_dead_letter_retry_selected_moves_to_outbox(f_user: 'User') -> None:
         task_name='app.tasks.retry_task',
         args=[1, 2],
         kwargs={'key': 'val'},
+        redacted_args=['[REDACTED]', 2],
+        redacted_kwargs={'key': '[REDACTED]'},
         options={'queue': 'default'},
         sentry_trace_id='trace-1',
         sentry_baggage='baggage-1',
@@ -229,6 +231,8 @@ def test_dead_letter_retry_selected_moves_to_outbox(f_user: 'User') -> None:
     assert outbox1.task_name == 'app.tasks.retry_task'
     assert outbox1.args == [1, 2]
     assert outbox1.kwargs == {'key': 'val'}
+    assert outbox1.redacted_args == ['[REDACTED]', 2]
+    assert outbox1.redacted_kwargs == {'key': '[REDACTED]'}
     assert outbox1.options == {'queue': 'default'}
     assert outbox1.sentry_trace_id == 'trace-1'
     assert outbox1.sentry_baggage == 'baggage-1'
@@ -334,3 +338,19 @@ def test_retry_selected_creates_log_entries_for_dead_letter(f_user: 'User') -> N
     log2 = logs.get(object_id=str(dead2_pk))
     assert log2.user_id == f_user.pk
     assert log2.action_flag == DELETION
+
+
+@pytest.mark.django_db
+def test_display_args_prefers_redacted_payload() -> None:
+    admin_instance: CeleryOutboxAdmin = admin.site._registry[CeleryOutbox]  # type: ignore[assignment]
+    entry = CeleryOutboxFactory.build(args=[1], redacted_args=['[REDACTED]'])
+
+    assert admin_instance.display_args(entry) == ['[REDACTED]']
+
+
+@pytest.mark.django_db
+def test_dead_letter_display_kwargs_prefers_redacted_payload() -> None:
+    admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
+    entry = CeleryOutboxDeadLetterFactory.build(kwargs={'email': 'user@example.com'}, redacted_kwargs={'email': '[REDACTED]'})
+
+    assert admin_instance.display_kwargs(entry) == {'email': '[REDACTED]'}

@@ -6,7 +6,7 @@ from django.conf import settings
 from django_celery_outbox.purge import parse_duration, purge_dead_letter
 
 
-@shared_task(name='celery_outbox.purge_dead_letter')
+@shared_task(name='django_celery_outbox.tasks.purge_dead_letter')
 def purge_dead_letter_task() -> dict[str, Any]:
     retention = getattr(settings, 'CELERY_OUTBOX_DLQ_RETENTION', None)
     if retention is None:

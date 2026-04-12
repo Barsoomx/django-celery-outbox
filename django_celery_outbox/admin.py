@@ -1,5 +1,6 @@
 from django.contrib import admin, messages
 from django.contrib.admin.models import CHANGE, DELETION, LogEntry
+from django.contrib.auth.models import AnonymousUser
 from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.db.models import QuerySet
@@ -7,6 +8,13 @@ from django.http import HttpRequest, HttpResponse
 from django.utils import timezone
 
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+
+
+def _get_log_entry_user_id(request: HttpRequest) -> int:
+    if isinstance(request.user, AnonymousUser) or request.user.pk is None:
+        raise ValueError('Admin actions require an authenticated user')
+
+    return request.user.pk
 
 
 @admin.register(CeleryOutbox)
@@ -27,8 +35,8 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
         'id',
         'task_name',
         'task_id',
-        'args',
-        'kwargs',
+        'display_args',
+        'display_kwargs',
         'options',
         'retries',
         'schema_version',
@@ -50,6 +58,14 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request: object, obj: object = None) -> bool:
         return False
 
+    @admin.display(description='args')
+    def display_args(self, obj: CeleryOutbox) -> list:
+        return obj.inspection_args
+
+    @admin.display(description='kwargs')
+    def display_kwargs(self, obj: CeleryOutbox) -> dict:
+        return obj.inspection_kwargs
+
     def changelist_view(self, request: HttpRequest, extra_context: dict | None = None) -> HttpResponse:
         extra_context = extra_context or {}
         pending_qs = CeleryOutbox.objects.filter(updated_at__isnull=True)
@@ -68,19 +84,20 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
     def reset_retries(self, request: HttpRequest, queryset: QuerySet[CeleryOutbox]) -> None:
         content_type = ContentType.objects.get_for_model(CeleryOutbox)
         entries = list(queryset.values_list('pk', 'task_id'))
+        user_id = _get_log_entry_user_id(request)
 
-        count = queryset.update(retries=0, retry_after=None, updated_at=None)
+        with transaction.atomic():
+            count = queryset.update(retries=0, retry_after=None, updated_at=None)
 
-        user_id = int(request.user.pk)  # type: ignore[arg-type]
-        for pk, task_id in entries:
-            LogEntry.objects.create(
-                user_id=user_id,
-                content_type_id=content_type.pk,
-                object_id=str(pk),
-                object_repr=f'CeleryOutbox {task_id}',
-                action_flag=CHANGE,
-                change_message='Reset retries via admin action',
-            )
+            for pk, task_id in entries:
+                LogEntry.objects.create(
+                    user_id=user_id,
+                    content_type_id=content_type.pk,
+                    object_id=str(pk),
+                    object_repr=f'CeleryOutbox {task_id}',
+                    action_flag=CHANGE,
+                    change_message='Reset retries via admin action',
+                )
 
         self.message_user(
             request,
@@ -106,8 +123,8 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         'id',
         'task_name',
         'task_id',
-        'args',
-        'kwargs',
+        'display_args',
+        'display_kwargs',
         'options',
         'retries',
         'schema_version',
@@ -129,12 +146,19 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
     def has_delete_permission(self, request: object, obj: object = None) -> bool:
         return False
 
+    @admin.display(description='args')
+    def display_args(self, obj: CeleryOutboxDeadLetter) -> list:
+        return obj.inspection_args
+
+    @admin.display(description='kwargs')
+    def display_kwargs(self, obj: CeleryOutboxDeadLetter) -> dict:
+        return obj.inspection_kwargs
+
     @admin.action(description='Retry selected dead-lettered messages')
     def retry_selected(self, request: HttpRequest, queryset: QuerySet[CeleryOutboxDeadLetter]) -> None:
         content_type = ContentType.objects.get_for_model(CeleryOutboxDeadLetter)
         dead_letter_entries = list(queryset.values_list('pk', 'task_id'))
-        user_id = int(request.user.pk)  # type: ignore[arg-type]
-
+        user_id = _get_log_entry_user_id(request)
         with transaction.atomic():
             outbox_messages = [
                 CeleryOutbox(
@@ -142,6 +166,8 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
                     task_name=dl.task_name,
                     args=dl.args,
                     kwargs=dl.kwargs,
+                    redacted_args=dl.redacted_args,
+                    redacted_kwargs=dl.redacted_kwargs,
                     options=dl.options,
                     schema_version=dl.schema_version,
                     sentry_trace_id=dl.sentry_trace_id,
