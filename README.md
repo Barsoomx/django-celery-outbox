@@ -117,6 +117,90 @@ All settings are configured in your Django settings module.
 | `MONITORING_METRICS_ENABLED` | `True` | Enable StatsD metrics emission |
 | `CELERY_OUTBOX_DLQ_RETENTION` | `None` | Dict with retention policy for dead letter purge. Keys: `older_than_dead`, `older_than_created`, `task_name` |
 
+## Security Considerations
+
+### PII in Task Arguments
+
+Task `args` and `kwargs` are stored in the database until processed.
+If your tasks receive sensitive data (emails, tokens, PII), consider:
+
+1. **Exclude sensitive tasks** from the outbox:
+   ```python
+   CELERY_OUTBOX_EXCLUDE_TASKS = {'myapp.tasks.send_sms', 'payments.*'}
+   ```
+
+2. **Redact sensitive fields** before storage:
+   ```python
+   # myapp/security.py
+   SENSITIVE_KEYS = {'email', 'phone', 'password', 'token'}
+
+   def redact_task_data(task_name: str, args: list, kwargs: dict):
+       redacted = {
+           k: '[REDACTED]' if k in SENSITIVE_KEYS else v
+           for k, v in kwargs.items()
+       }
+       return args, redacted
+
+   # settings.py
+   CELERY_OUTBOX_PII_REDACTOR = 'myapp.security.redact_task_data'
+   ```
+
+### Structlog Context Capture
+
+When `CELERY_OUTBOX_STRUCTLOG_ENABLED=True` (default), structlog context
+variables are captured and stored with each message.
+
+**Warning:** If `CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS` is not configured,
+ALL context variables are captured, which may include sensitive data like
+`user_email`, `session_id`, etc.
+
+**Recommendation:** Explicitly list safe keys:
+```python
+CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS = ['request_id', 'trace_id', 'user_id']
+```
+
+### Exception Tracebacks
+
+Exception tracebacks may contain sensitive data from local variables.
+To disable traceback logging:
+```python
+CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK = False
+```
+
+### Dead Letter Queue Retention
+
+Failed messages in the dead letter queue contain the original task data.
+Configure automatic cleanup via Celery Beat to comply with data retention
+policies (GDPR, etc.):
+
+```python
+# settings.py
+CELERY_OUTBOX_DLQ_RETENTION = {
+    'older_than_dead': '30d',
+}
+
+# celery.py
+app.conf.beat_schedule = {
+    'purge-dead-letters': {
+        'task': 'django_celery_outbox.tasks.purge_dead_letter',
+        'schedule': crontab(hour=3, minute=0),
+    },
+}
+```
+
+### Metrics Cardinality
+
+The `task_name` tag on metrics can cause cardinality explosion if you have
+many unique task names. Options:
+
+```python
+# Disable task_name tags entirely
+CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS = True
+
+# Or allowlist specific tasks (others become "other")
+CELERY_OUTBOX_MONITORED_TASKS = {'critical.task1', 'critical.task2'}
+```
+
 ## Relay Command
 
 The relay is a Django management command that runs as a long-lived daemon:
