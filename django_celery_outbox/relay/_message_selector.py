@@ -4,6 +4,7 @@ from django.db.models import Q
 from django.db.models.functions import Now
 
 from django_celery_outbox.models import CeleryOutbox
+from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_VERSION
 
 # TODO(mcproger) expose to config?
 _STALE_TIMEOUT = timedelta(minutes=5)
@@ -20,12 +21,12 @@ class MessageSelector:
         return messages
 
     def _select(self) -> list[CeleryOutbox]:
-        # TODO(mcproger): use db-backend parameter from config and patch skip method
-        # to handle non-supported DBs (sqlite)
         queryset = (
             CeleryOutbox.objects.select_for_update(skip_locked=True)
             .filter(
                 Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | Q(updated_at__lte=Now() - self._stale_timeout, retry_after__isnull=True),
+                schema_version__gte=MIN_SUPPORTED_VERSION,
+                schema_version__lte=CURRENT_SCHEMA_VERSION,
             )
             .order_by('id')[: self._batch_size]
         )

@@ -56,12 +56,6 @@ def m_close_old_connections() -> Generator[MagicMock]:
         yield mock
 
 
-@pytest.fixture(autouse=True)
-def m_close_old_connections() -> Generator[MagicMock]:
-    with patch('django_celery_outbox.relay.close_old_connections') as mock:
-        yield mock
-
-
 class _NoopTransport(sentry_sdk.transport.Transport):
     def capture_envelope(self, *args: Any, **kwargs: Any) -> None:
         pass

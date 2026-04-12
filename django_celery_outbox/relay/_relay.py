@@ -18,11 +18,7 @@ from django_celery_outbox import metrics
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay._config import RelayConfig
 from django_celery_outbox.relay._message_selector import MessageSelector
-from django_celery_outbox.serialization import (
-    CURRENT_SCHEMA_VERSION,
-    MIN_SUPPORTED_VERSION,
-    deserialize_options,
-)
+from django_celery_outbox.serialization import deserialize_options
 from django_celery_outbox.signals import (
     outbox_message_dead_lettered,
     outbox_message_failed,
