@@ -26,6 +26,15 @@ Transactional Outbox pattern for Celery tasks in Django. Instead of sending task
 - StatsD metrics for monitoring relay throughput and errors
 - Health check endpoint for load balancer / k8s probes
 
+## Database Requirements
+
+django-celery-outbox uses `SELECT FOR UPDATE SKIP LOCKED` for safe concurrent relay instances. This requires:
+
+- **PostgreSQL >= 9.5**
+- **MySQL >= 8.0.1**
+
+SQLite is **not supported** and will raise an error at startup.
+
 ## Quick Start
 
 ### 1. Install
