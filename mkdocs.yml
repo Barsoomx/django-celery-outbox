@@ -1,0 +1,71 @@
+site_name: django-celery-outbox
+site_description: Transactional Outbox pattern for Celery tasks in Django
+site_url: https://barsoomx.github.io/django-celery-outbox/
+repo_url: https://github.com/Barsoomx/django-celery-outbox
+repo_name: Barsoomx/django-celery-outbox
+edit_uri: edit/master/docs/
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+    - content.code.select
+  palette:
+    - scheme: default
+      primary: blue
+      accent: blue
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      use_pygments: true
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - tables
+  - toc:
+      permalink: true
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Concepts: concepts.md
+  - Configuration: configuration.md
+  - Usage:
+    - Basic Tasks: usage/basic-tasks.md
+    - Task Options: usage/task-options.md
+    - Excluded Tasks: usage/excluded-tasks.md
+    - Outside Transactions: usage/outside-transactions.md
+  - Relay:
+    - Overview: relay/overview.md
+    - Command Reference: relay/command-reference.md
+    - Tuning: relay/tuning.md
+    - Multiple Instances: relay/multiple-instances.md
+  - Observability:
+    - Logging Events: observability/logging-events.md
+    - Metrics: observability/metrics.md
+    - Structlog: observability/structlog.md
+    - Sentry: observability/sentry.md
+  - Operations:
+    - Dead Letter Queue: operations/dead-letter.md
+    - Admin Interface: operations/admin-interface.md
+    - Health Checks: operations/health-checks.md
+  - Deployment:
+    - Kubernetes: deployment/kubernetes.md
+    - Database Setup: deployment/database-setup.md
+  - Security: security.md
+  - Troubleshooting: troubleshooting.md
+  - Architecture: architecture.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/Barsoomx/django-celery-outbox
