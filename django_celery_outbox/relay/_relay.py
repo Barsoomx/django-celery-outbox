@@ -227,7 +227,9 @@ class Relay:
                     return ProcessResult.FAILED
             else:
                 span.set_status('ok')
+                latency_ms = (time.time() - msg.created_at.timestamp()) * 1000
                 tags = _get_task_tag(msg.task_name)
+                metrics.timing('send_latency_ms', latency_ms, tags=tags)
                 metrics.increment('messages.published', tags=tags)
                 self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
                 return ProcessResult.PUBLISHED

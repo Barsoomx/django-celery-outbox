@@ -923,3 +923,29 @@ def test_oldest_pending_age_seconds_zero_when_empty(
     gauge_calls = [c for c in m_metrics.gauge.call_args_list if c[0][0] == 'oldest_pending_age_seconds']
     assert len(gauge_calls) == 1
     assert gauge_calls[0][0][1] == 0
+
+
+@pytest.mark.django_db
+def test_send_latency_ms_emitted_on_success(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    msg = CeleryOutbox.objects.create(
+        task_id='test-id',
+        task_name='test.task',
+        args=[],
+        kwargs={},
+        options={},
+    )
+    CeleryOutbox.objects.filter(pk=msg.pk).update(
+        created_at=django_timezone.now() - timedelta(seconds=2),
+    )
+
+    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                f_relay._processing()
+
+    timing_calls = [c for c in m_metrics.timing.call_args_list if c[0][0] == 'send_latency_ms']
+    assert len(timing_calls) == 1
+    assert 1900 < timing_calls[0][0][1] < 2500
