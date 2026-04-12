@@ -25,23 +25,18 @@ Current tests run on SQLite (`tests/settings.py`), so the relay code path is eit
 
 **File:** `django_celery_outbox/checks.py`
 
-Uses multi-DB aware approach with `connections[db_alias]` and Django's built-in feature flag:
-
 ```python
 from django.core.checks import Error, register, Tags
-from django.db import connections
-
-from django_celery_outbox.models import CeleryOutbox
+from django.db import connection
 
 @register(Tags.database)
 def check_database_supports_skip_locked(app_configs, **kwargs):
     errors = []
-    db_alias = CeleryOutbox.objects.db
-    connection = connections[db_alias]
+    vendor = connection.vendor
     
-    if not connection.features.has_select_for_update_skip_locked:
+    if vendor == 'sqlite':
         errors.append(Error(
-            'Database does not support SELECT FOR UPDATE SKIP LOCKED.',
+            'SQLite does not support SELECT FOR UPDATE SKIP LOCKED.',
             hint='Use PostgreSQL >= 9.5 or MySQL >= 8.0.1 for django-celery-outbox.',
             id='celery_outbox.E001',
         ))
@@ -64,24 +59,23 @@ class DjangoCeleryOutboxConfig(AppConfig):
 
 **File:** `django_celery_outbox/relay.py`
 
-Add validation in `Relay.__init__` using multi-DB aware approach and feature flag:
+Add validation in `Relay.__init__`:
 
 ```python
-from django.db import connections
-
-from django_celery_outbox.models import CeleryOutbox
+from django.db import connection
 
 class Relay:
+    _SUPPORTED_VENDORS = frozenset({'postgresql', 'mysql'})
+    
     def __init__(self, app: Celery, ...):
         # existing validations...
         
-        db_alias = CeleryOutbox.objects.db
-        connection = connections[db_alias]
-        if not connection.features.has_select_for_update_skip_locked:
+        vendor = connection.vendor
+        if vendor not in self._SUPPORTED_VENDORS:
             raise RuntimeError(
-                f'Database backend "{connection.vendor}" does not support '
-                f'SELECT FOR UPDATE SKIP LOCKED. '
-                f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
+                f'Database backend "{vendor}" is not supported. '
+                f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1 '
+                f'for SELECT FOR UPDATE SKIP LOCKED.'
             )
         
         # rest of __init__...
@@ -120,22 +114,20 @@ if DB_ENGINE == 'postgresql':
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.postgresql',
-            'NAME': os.environ.get('DB_NAME', 'test_db'),
-            'USER': os.environ.get('DB_USER', 'test'),
-            'PASSWORD': os.environ.get('DB_PASSWORD', 'test'),
+            'NAME': 'test_db',
+            'USER': 'test',
+            'PASSWORD': 'test',
             'HOST': os.environ.get('DB_HOST', 'postgres'),
-            'PORT': os.environ.get('DB_PORT', '5432'),
         }
     }
 elif DB_ENGINE == 'mysql':
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
-            'NAME': os.environ.get('DB_NAME', 'test_db'),
-            'USER': os.environ.get('DB_USER', 'test'),
-            'PASSWORD': os.environ.get('DB_PASSWORD', 'test'),
+            'NAME': 'test_db',
+            'USER': 'test', 
+            'PASSWORD': 'test',
             'HOST': os.environ.get('DB_HOST', 'mysql'),
-            'PORT': os.environ.get('DB_PORT', '3306'),
         }
     }
 ```
@@ -196,15 +188,15 @@ SQLite is **not supported** and will raise an error at startup.
 
 **File:** `django_celery_outbox/checks_tests.py`
 
-- `test_check_returns_error_when_skip_locked_not_supported`
-- `test_check_passes_when_skip_locked_supported`
+- `test_check_returns_error_for_sqlite`
+- `test_check_passes_for_postgresql`
+- `test_check_passes_for_mysql`
 
 **File:** `django_celery_outbox/relay_tests.py` — add:
 
-- `test_relay_init_raises_when_skip_locked_not_supported`
-- `test_relay_init_accepts_when_skip_locked_supported`
-
-Tests mock `connection.features.has_select_for_update_skip_locked` rather than vendor string.
+- `test_relay_init_raises_for_unsupported_db`
+- `test_relay_init_accepts_postgresql`
+- `test_relay_init_accepts_mysql`
 
 ## Acceptance Criteria
 
