@@ -6,6 +6,7 @@
 [![Ruff](https://img.shields.io/badge/lint-ruff-46a2f1.svg)](https://github.com/astral-sh/ruff)
 [![Checked with mypy](https://www.mypy-lang.org/static/mypy_badge.svg)](https://mypy-lang.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Docs](https://img.shields.io/badge/docs-latest-blue.svg)](https://barsoomx.github.io/django-celery-outbox/)
 
 Transactional Outbox pattern for Celery tasks in Django. Instead of sending tasks directly to the message broker (where they can be lost if the database transaction rolls back), tasks are written to a database table within the same transaction as your business data. A separate relay process reads the table and sends tasks to the broker asynchronously, guaranteeing **at-least-once delivery**.
 
