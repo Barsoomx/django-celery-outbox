@@ -248,3 +248,31 @@ class TestPurgeDeadLetterTaskNamePattern:
         assert result.deleted_count == 1
         assert result.task_names == {'app.tasks.send_email': 1}
         assert CeleryOutboxDeadLetter.objects.filter(pk=no_match.pk).exists()
+
+
+@pytest.mark.django_db
+class TestPurgeDeadLetterDryRun:
+    def test_dry_run_returns_count_without_deleting(self) -> None:
+        now = timezone.now()
+        old_time = now - timedelta(days=31)
+        with patch('django.utils.timezone.now', return_value=now):
+            record = CeleryOutboxDeadLetterFactory(task_name='myapp.task')
+        CeleryOutboxDeadLetter.objects.filter(pk=record.pk).update(dead_at=old_time)
+
+        result = purge_dead_letter(older_than_dead=timedelta(days=30), dry_run=True)
+
+        assert result.deleted_count == 1
+        assert result.task_names == {'myapp.task': 1}
+        assert CeleryOutboxDeadLetter.objects.filter(pk=record.pk).exists()
+
+    def test_dry_run_false_deletes_records(self) -> None:
+        now = timezone.now()
+        old_time = now - timedelta(days=31)
+        with patch('django.utils.timezone.now', return_value=now):
+            record = CeleryOutboxDeadLetterFactory(task_name='myapp.task')
+        CeleryOutboxDeadLetter.objects.filter(pk=record.pk).update(dead_at=old_time)
+
+        result = purge_dead_letter(older_than_dead=timedelta(days=30), dry_run=False)
+
+        assert result.deleted_count == 1
+        assert not CeleryOutboxDeadLetter.objects.filter(pk=record.pk).exists()
