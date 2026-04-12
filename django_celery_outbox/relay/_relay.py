@@ -15,6 +15,7 @@ from django.db.models.functions import Now
 from django.dispatch import Signal
 
 from django_celery_outbox import metrics
+from django_celery_outbox.metrics import _get_task_tag
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay._config import RelayConfig
 from django_celery_outbox.relay._message_selector import MessageSelector
@@ -194,15 +195,20 @@ class Relay:
 
             try:
                 self._send_task(msg)
-            except Exception:
+            except Exception as e:
                 span.set_status('internal_error')
+                exc_type = _classify_exception(e)
                 _logger.exception('celery_outbox_send_failed')
                 if msg.retries >= self._config.max_retries - 1:
                     _logger.warning('celery_outbox_max_retries_exceeded')
-                    metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
+                    tags = _get_task_tag(msg.task_name)
+                    tags['exception_type'] = exc_type
+                    metrics.increment('messages.exceeded', tags=tags)
                     return ProcessResult.EXCEEDED
                 else:
-                    metrics.increment('messages.failed', tags={'task_name': msg.task_name})
+                    tags = _get_task_tag(msg.task_name)
+                    tags['exception_type'] = exc_type
+                    metrics.increment('messages.failed', tags=tags)
                     self._send_signal_safe(outbox_message_failed, msg.task_id, msg.task_name, retries=msg.retries)
                     return ProcessResult.FAILED
             else:

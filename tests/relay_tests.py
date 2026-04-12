@@ -20,6 +20,12 @@ def m_celery_app() -> MagicMock:
 
 
 @pytest.fixture()
+def m_metrics() -> MagicMock:
+    with patch('django_celery_outbox.relay._relay.metrics') as mock:
+        yield mock
+
+
+@pytest.fixture()
 def f_config() -> RelayConfig:
     return RelayConfig.init(
         batch_size=10,
@@ -788,3 +794,43 @@ def test_dead_letter_preserves_schema_version(m_celery_app: MagicMock) -> None:
 
     dead = CeleryOutboxDeadLetter.objects.get(task_id='task-1')
     assert dead.schema_version == 2
+
+
+@pytest.mark.django_db
+def test_failed_message_includes_exception_type_in_metrics(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    msg = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=0,
+    )
+
+    with patch.object(f_relay, '_send_task', side_effect=ConnectionError('broker down')):
+        f_relay._process_messages([msg])
+
+    m_metrics.increment.assert_any_call(
+        'messages.failed',
+        tags={'task_name': msg.task_name, 'exception_type': 'connection'},
+    )
+
+
+@pytest.mark.django_db
+def test_exceeded_message_includes_exception_type_in_metrics(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    msg = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=f_relay._config.max_retries - 1,
+    )
+
+    with patch.object(f_relay, '_send_task', side_effect=TimeoutError('timeout')):
+        f_relay._process_messages([msg])
+
+    m_metrics.increment.assert_any_call(
+        'messages.exceeded',
+        tags={'task_name': msg.task_name, 'exception_type': 'timeout'},
+    )
