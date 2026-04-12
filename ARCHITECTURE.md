@@ -700,6 +700,8 @@ the dead letter table. This re-enqueues them for the relay to process.
 | Business transaction rolls back | Task never created in outbox. No delivery. |
 | Relay crashes before sending to broker | Message remains in outbox with `updated_at` set. Recovered after stale timeout (5 min). |
 | Relay sends to broker, crashes before TX2 | Message re-sent after backoff. **Duplicate delivery.** |
+| Broker rejects message (queue full, quota exceeded) | Relay catches exception, message retried with backoff. Requires broker to signal rejection. |
+| Broker fails silently (no publisher confirms) | Message lost. Relay proceeds to delete from outbox. **Enable `confirm_publish` on RabbitMQ; Redis has no confirms.** |
 | Broker accepts but worker crashes | Standard Celery retry/ack behavior. Outside outbox scope. |
 | Relay max retries exceeded | Message moved to dead letter table. Operator can inspect and retry via admin. |
 

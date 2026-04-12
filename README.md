@@ -272,6 +272,20 @@ deleted**. Operators can inspect and retry dead-lettered messages via the Django
 
 **Semantics: at-least-once delivery.** Consumers must be idempotent.
 
+### Broker Configuration
+
+The at-least-once guarantee requires the broker to confirm message acceptance. Without confirmation, a broker failure (network loss, queue full, quota exceeded) can silently drop messages after the relay deletes them from the outbox.
+
+**RabbitMQ** — enable publisher confirms:
+
+```python
+BROKER_TRANSPORT_OPTIONS = {
+    'confirm_publish': True,
+}
+```
+
+**Redis** — does not support publisher confirms. Message loss is possible if Redis fails between `LPUSH` and relay cleanup. For production workloads requiring strict at-least-once delivery, use RabbitMQ with publisher confirms.
+
 | Scenario | Outcome |
 |----------|---------|
 | Business transaction rolls back | Task never created in outbox. No delivery. |
