@@ -2,7 +2,7 @@ from datetime import timedelta
 
 import pytest
 
-from django_celery_outbox.purge import parse_duration
+from django_celery_outbox.purge import parse_duration, PurgeResult
 
 
 class TestParseDuration:
@@ -46,3 +46,20 @@ class TestParseDuration:
     def test_raises_on_missing_unit(self) -> None:
         with pytest.raises(ValueError, match='Invalid duration format'):
             parse_duration('30')
+
+
+class TestPurgeResult:
+    def test_stores_deleted_count_and_task_names(self) -> None:
+        result = PurgeResult(
+            deleted_count=10,
+            task_names={'myapp.task1': 5, 'myapp.task2': 5},
+        )
+
+        assert result.deleted_count == 10
+        assert result.task_names == {'myapp.task1': 5, 'myapp.task2': 5}
+
+    def test_empty_result(self) -> None:
+        result = PurgeResult(deleted_count=0, task_names={})
+
+        assert result.deleted_count == 0
+        assert result.task_names == {}

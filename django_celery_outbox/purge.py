@@ -1,4 +1,5 @@
 import re
+from dataclasses import dataclass
 from datetime import timedelta
 
 _DURATION_PATTERN = re.compile(r'^(\d+)([smhdw])$')
@@ -9,6 +10,12 @@ _UNIT_MULTIPLIERS = {
     'd': 86400,
     'w': 604800,
 }
+
+
+@dataclass
+class PurgeResult:
+    deleted_count: int
+    task_names: dict[str, int]
 
 
 def parse_duration(value: str) -> timedelta:
