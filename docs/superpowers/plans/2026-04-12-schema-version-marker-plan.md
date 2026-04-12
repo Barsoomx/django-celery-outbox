@@ -322,7 +322,7 @@ git commit -m "feat(serialization): add versioned deserialize_options with schem
 ### Task 6: Update relay to filter by schema_version
 
 **Files:**
-- Modify: `django_celery_outbox/relay.py`
+- Modify: `django_celery_outbox/relay.py:145-156` (_select_messages)
 - Test: `django_celery_outbox/relay_tests.py`
 
 - [ ] **Step 1: Write failing test for skipping future versions**
@@ -444,7 +444,7 @@ git commit -m "feat(relay): filter messages by supported schema_version range"
 ### Task 7: Update relay _send_task to pass schema_version
 
 **Files:**
-- Modify: `django_celery_outbox/relay.py:208-231`
+- Modify: `django_celery_outbox/relay.py:217-240` (_send_task)
 
 - [ ] **Step 1: Update _send_task to pass schema_version**
 
@@ -475,7 +475,7 @@ git commit -m "feat(relay): pass schema_version to deserialize_options"
 ### Task 8: Update relay _move_to_dead_letter to preserve schema_version
 
 **Files:**
-- Modify: `django_celery_outbox/relay.py:281-314`
+- Modify: `django_celery_outbox/relay.py:290-323` (_move_to_dead_letter)
 - Test: `django_celery_outbox/relay_tests.py`
 
 - [ ] **Step 1: Write failing test**
@@ -721,7 +721,7 @@ git commit -m "feat(admin): add schema_version to list_display, list_filter, rea
 ### Task 11: Update admin retry_selected to preserve schema_version
 
 **Files:**
-- Modify: `django_celery_outbox/admin.py:111-135`
+- Modify: `django_celery_outbox/admin.py:112-135` (retry_selected)
 - Test: `django_celery_outbox/admin_tests.py`
 
 - [ ] **Step 1: Write failing test**
