@@ -22,7 +22,7 @@ services:
       retries: 30
       start_period: 30s
     command: >
-      sh -c "pip install -e /package &&
+      sh -c "pip install /package &&
              python manage.py migrate &&
              python manage.py runserver 0.0.0.0:8000"
 
@@ -40,7 +40,7 @@ services:
       - .:/app
       - ../..:/package:ro
     command: >
-      sh -c "pip install -e /package &&
+      sh -c "pip install /package &&
              python manage.py celery_outbox_relay --batch-size 10 --idle-time 1.0"
 
   worker:
@@ -57,7 +57,7 @@ services:
       - .:/app
       - ../..:/package:ro
     command: >
-      sh -c "pip install -e /package &&
+      sh -c "pip install /package &&
              celery -A minimal_django worker -l info"
 
   postgres:
