@@ -25,9 +25,7 @@ class MessageSelector:
         queryset = (
             CeleryOutbox.objects.select_for_update(skip_locked=True)
             .filter(
-                Q(updated_at__isnull=True)
-                | Q(retry_after__lte=Now())
-                | Q(updated_at__lte=Now() - self._stale_timeout, retry_after__isnull=True),
+                Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | Q(updated_at__lte=Now() - self._stale_timeout, retry_after__isnull=True),
             )
             .order_by('id')[: self._batch_size]
         )
