@@ -49,14 +49,40 @@ jobs:
         run: mypy -p django_celery_outbox --config-file=pyproject.toml
 
   test:
-    name: Python ${{ matrix.python-version }} - Django ${{ matrix.django }} - ${{ matrix.db }}
+    name: Py${{ matrix.python-version }} Dj${{ matrix.django }} Cel${{ matrix.celery }} ${{ matrix.db }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
       matrix:
         python-version: ['3.10', '3.11', '3.12']
-        django: ['4.2', '5.0', '5.1', '5.2']
-        db: ['postgresql', 'mysql']
+        django: ['4.2', '5.2']
+        celery: ['5.3', '5.4', '5.5', '5.6']
+        db: ['postgresql']
+        include:
+          - python-version: '3.10'
+            django: '4.2'
+            celery: '5.6'
+            db: 'mysql'
+          - python-version: '3.11'
+            django: '4.2'
+            celery: '5.6'
+            db: 'mysql'
+          - python-version: '3.12'
+            django: '4.2'
+            celery: '5.6'
+            db: 'mysql'
+          - python-version: '3.10'
+            django: '5.2'
+            celery: '5.6'
+            db: 'mysql'
+          - python-version: '3.11'
+            django: '5.2'
+            celery: '5.6'
+            db: 'mysql'
+          - python-version: '3.12'
+            django: '5.2'
+            celery: '5.6'
+            db: 'mysql'
 
     services:
       postgres:
@@ -110,6 +136,9 @@ jobs:
 
       - name: Install Django version
         run: pip install "Django~=${{ matrix.django }}"
+
+      - name: Install Celery version
+        run: pip install "celery~=${{ matrix.celery }}"
 
       - name: Run tests
         env:
