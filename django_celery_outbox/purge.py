@@ -4,10 +4,13 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import timedelta
 
+import structlog
 from django.db.models import QuerySet
 from django.utils import timezone
 
 from django_celery_outbox.models import CeleryOutboxDeadLetter
+
+_logger = structlog.getLogger(__name__)
 
 _DURATION_PATTERN = re.compile(r'^(\d+)([smhdw])$')
 _UNIT_MULTIPLIERS = {
@@ -49,7 +52,18 @@ def purge_dead_letter(
         regex = f'^{regex}$'
         queryset = queryset.filter(task_name__regex=regex)
 
-    return _execute_purge(queryset, dry_run)
+    result = _execute_purge(queryset, dry_run)
+
+    _logger.info(
+        'celery_outbox_dead_letter_purged',
+        deleted_count=result.deleted_count,
+        dry_run=dry_run,
+        older_than_dead=str(older_than_dead) if older_than_dead else None,
+        older_than_created=str(older_than_created) if older_than_created else None,
+        task_name_pattern=task_name_pattern,
+    )
+
+    return result
 
 
 def _execute_purge(queryset: QuerySet, dry_run: bool) -> PurgeResult:
