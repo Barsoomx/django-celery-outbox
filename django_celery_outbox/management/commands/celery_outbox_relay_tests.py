@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from django.test import override_settings
 
+from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.management.commands.celery_outbox_relay import Command
 
 _fake_app = object()
@@ -40,11 +41,13 @@ def test_handle_creates_relay_with_correct_params(
 
     m_relay_cls.assert_called_once_with(
         app=m_app,
-        batch_size=50,
-        idle_time=2.0,
-        backoff_time=60,
-        max_retries=3,
-        liveness_file='/var/run/celery-outbox-alive',
+        config=RelayConfig.init(
+            batch_size=50,
+            idle_time=2.0,
+            backoff_time=60,
+            max_retries=3,
+            liveness_file='/var/run/celery-outbox-alive',
+        ),
     )
     m_relay_cls.return_value.start.assert_called_once()
 

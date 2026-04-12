@@ -3,7 +3,6 @@ import random
 import signal
 import time
 from datetime import timedelta
-from pathlib import Path
 from types import FrameType
 
 import sentry_sdk
@@ -15,6 +14,7 @@ from django.db.models.functions import Now
 from django.dispatch import Signal
 
 from django_celery_outbox import metrics
+from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.serialization import deserialize_options
 from django_celery_outbox.signals import (
@@ -28,27 +28,7 @@ _STALE_TIMEOUT = timedelta(minutes=5)
 
 
 class Relay:
-    def __init__(
-        self,
-        app: Celery,
-        batch_size: int = 100,
-        idle_time: float = 1.0,
-        backoff_time: int = 120,
-        max_retries: int = 5,
-        liveness_file: str | None = None,
-    ) -> None:
-        if batch_size <= 0:
-            raise ValueError('batch_size must be > 0')
-
-        if idle_time < 0:
-            raise ValueError('idle_time must be >= 0')
-
-        if backoff_time <= 0:
-            raise ValueError('backoff_time must be > 0')
-
-        if max_retries <= 0:
-            raise ValueError('max_retries must be > 0')
-
+    def __init__(self, app: Celery, config: RelayConfig) -> None:
         db_alias = CeleryOutbox.objects.db
         db_connection = connections[db_alias]
         if not db_connection.features.has_select_for_update_skip_locked:
@@ -57,13 +37,8 @@ class Relay:
                 f'SELECT FOR UPDATE SKIP LOCKED. '
                 f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
             )
-
         self._app = app
-        self._batch_size = batch_size
-        self._idle_time = idle_time
-        self._backoff_time = backoff_time
-        self._max_retries = max_retries
-        self._liveness_file = Path(liveness_file) if liveness_file else None
+        self._config = config
         self._running = True
 
     def start(self) -> None:
@@ -71,10 +46,10 @@ class Relay:
 
         _logger.info(
             'celery_outbox_relay_started',
-            batch_size=self._batch_size,
-            idle_time=self._idle_time,
-            backoff_time=self._backoff_time,
-            max_retries=self._max_retries,
+            batch_size=self._config.batch_size,
+            idle_time=self._config.idle_time,
+            backoff_time=self._config.backoff_time,
+            max_retries=self._config.max_retries,
         )
 
         while self._running:
@@ -136,9 +111,9 @@ class Relay:
         self._touch_liveness()
 
         batch_total = len(published) + len(failed) + len(exceeded)
-        if batch_total < self._batch_size:
+        if batch_total < self._config.batch_size:
             _logger.debug('celery_outbox_relay_idle')
-            time.sleep(self._idle_time)
+            time.sleep(self._config.idle_time)
         else:
             _logger.debug('celery_outbox_relay_busy')
 
@@ -148,9 +123,11 @@ class Relay:
                 skip_locked=True,
             )
             .filter(
-                Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | Q(updated_at__lte=Now() - _STALE_TIMEOUT, retry_after__isnull=True),
+                Q(updated_at__isnull=True)
+                | Q(retry_after__lte=Now())
+                | Q(updated_at__lte=Now() - _STALE_TIMEOUT, retry_after__isnull=True),
             )
-            .order_by('id')[: self._batch_size]
+            .order_by('id')[: self._config.batch_size]
         )
 
         return list(queryset)
@@ -164,7 +141,7 @@ class Relay:
         exceeded: list[int] = []
 
         for msg in messages:
-            if msg.retries >= self._max_retries:
+            if msg.retries >= self._config.max_retries:
                 _logger.warning(
                     'celery_outbox_max_retries_exceeded',
                     outbox_id=msg.id,
@@ -192,7 +169,7 @@ class Relay:
                         retries=msg.retries,
                         exc_info=True,
                     )
-                    if msg.retries >= self._max_retries - 1:
+                    if msg.retries >= self._config.max_retries - 1:
                         _logger.warning(
                             'celery_outbox_max_retries_exceeded',
                             outbox_id=msg.id,
@@ -240,10 +217,10 @@ class Relay:
             )
 
     def _touch_liveness(self) -> None:
-        if self._liveness_file is None:
+        if self._config.liveness_file is None:
             return
 
-        self._liveness_file.touch()
+        self._config.liveness_file.touch()
 
     @staticmethod
     def _send_signal_safe(sig: Signal, task_id: str, task_name: str, **kwargs: object) -> None:
@@ -273,8 +250,8 @@ class Relay:
             return
 
         for msg_id, retries in failed_messages:
-            jitter = random.uniform(0, self._backoff_time * 0.1)  # noqa: S311
-            delay = timedelta(seconds=self._backoff_time * (2**retries) + jitter)
+            jitter = random.uniform(0, self._config.backoff_time * 0.1)  # noqa: S311
+            delay = timedelta(seconds=self._config.backoff_time * (2**retries) + jitter)
             CeleryOutbox.objects.filter(pk=msg_id).update(
                 retries=F('retries') + 1,
                 updated_at=Now(),

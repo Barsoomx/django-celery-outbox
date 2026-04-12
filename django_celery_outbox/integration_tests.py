@@ -14,6 +14,7 @@ from django.conf import LazySettings
 from django.db import transaction
 
 from django_celery_outbox.app import OutboxCelery
+from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay import Relay
 
@@ -32,12 +33,15 @@ def f_relay_app() -> Celery:
 
 @pytest.fixture()
 def f_relay(f_relay_app: Celery) -> Relay:
-    return Relay(
-        app=f_relay_app,
+    config = RelayConfig.init(
         batch_size=10,
         idle_time=0,
         backoff_time=120,
         max_retries=3,
+    )
+    return Relay(
+        app=f_relay_app,
+        config=config,
     )
 
 

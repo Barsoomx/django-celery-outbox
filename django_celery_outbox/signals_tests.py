@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from celery import Celery
 
+from django_celery_outbox.config import RelayConfig
 from django_celery_outbox.factories import CeleryOutboxFactory
 from django_celery_outbox.relay import Relay
 from django_celery_outbox.signals import (
@@ -22,12 +23,15 @@ def m_celery_app() -> MagicMock:
 
 @pytest.fixture()
 def f_relay(m_celery_app: MagicMock) -> Relay:
-    return Relay(
-        app=m_celery_app,
+    config = RelayConfig.init(
         batch_size=10,
         idle_time=0.01,
         backoff_time=120,
         max_retries=3,
+    )
+    return Relay(
+        app=m_celery_app,
+        config=config,
     )
 
 
@@ -109,10 +113,7 @@ def test_outbox_message_failed_fires_on_relay_failure(f_relay: Relay) -> None:
 def test_outbox_message_dead_lettered_fires_on_exceeded(m_celery_app: MagicMock) -> None:
     relay = Relay(
         app=m_celery_app,
-        batch_size=10,
-        idle_time=0.01,
-        backoff_time=120,
-        max_retries=3,
+        config=RelayConfig.init(batch_size=10, idle_time=0.01, backoff_time=120, max_retries=3),
     )
     CeleryOutboxFactory.create(
         task_id='dead-task-1',
