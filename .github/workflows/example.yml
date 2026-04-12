@@ -6,6 +6,9 @@ on:
   pull_request:
     paths: ['examples/**']
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   test-example:
     runs-on: ubuntu-latest
