@@ -18,6 +18,7 @@ class CeleryOutbox(models.Model):
     sentry_trace_id = models.CharField(max_length=512, null=True, blank=True)
     sentry_baggage = models.CharField(max_length=2048, null=True, blank=True)
     structlog_context = models.TextField(null=True, blank=True)
+    schema_version = models.SmallIntegerField(default=1)
 
     class Meta:
         db_table = 'celery_outbox'
@@ -53,6 +54,7 @@ class CeleryOutboxDeadLetter(models.Model):
     structlog_context = models.TextField(null=True, blank=True)
 
     failure_reason = models.TextField(null=True, blank=True)
+    schema_version = models.SmallIntegerField(default=1)
 
     class Meta:
         db_table = 'celery_outbox_dead_letter'
