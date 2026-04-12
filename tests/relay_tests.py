@@ -878,7 +878,9 @@ def test_exceeded_pre_send_uses_cardinality_control(
 
     exceeded_calls = [c for c in m_metrics.increment.call_args_list if c[0][0] == 'messages.exceeded']
     assert len(exceeded_calls) == 1
-    assert exceeded_calls[0][1].get('tags', {}) == {}
+    tags = exceeded_calls[0][1].get('tags', {})
+    assert 'task_name' not in tags
+    assert tags.get('exception_type') == 'pre_exceeded'
     m_send.assert_not_called()
 
 

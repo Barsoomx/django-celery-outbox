@@ -29,8 +29,7 @@ jobs:
             count=$(docker compose exec -T app python manage.py shell -c "
           from django_celery_outbox.models import CeleryOutbox
           print(CeleryOutbox.objects.count())
-          ")
-            count=$(echo "$count" | tr -d '[:space:]')
+          " | tail -1 | tr -d '[:space:]')
             echo "Attempt $i: pending=$count"
             if [ "$count" = "0" ]; then
               echo "Outbox flushed successfully"
@@ -39,6 +38,8 @@ jobs:
             sleep 5
           done
           echo "Outbox not flushed after 60s"
+          docker compose logs relay
+          docker compose logs worker
           exit 1
 
       - name: Cleanup

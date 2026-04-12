@@ -61,6 +61,11 @@ rate(celery_outbox_messages_published_total[5m])
 histogram_quantile(0.95, celery_outbox_batch_duration_ms_bucket)
 ```
 
+!!! note "StatsD Backend Compatibility"
+    The histogram queries (e.g., `histogram_quantile`) require a StatsD backend that converts timing metrics to Prometheus histograms.
+    Datadog StatsD exporter and statsd-exporter with histogram mapping support this.
+    For other backends, use `avg()` or raw timing values instead.
+
 ## Alerting
 
 Recommended alerts:

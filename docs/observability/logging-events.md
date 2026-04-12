@@ -71,7 +71,15 @@ No additional fields.
 **Level:** WARNING
 **When:** Message exceeds max retries, moved to DLQ
 
-Same fields as `celery_outbox_send_failed`.
+| Field | Type | Description |
+|-------|------|-------------|
+| exception_type | str | `pre_exceeded` if already exceeded before send, or exception category |
+| exception_message | str | Details about the exceeded condition |
+
+**Note:** Two scenarios trigger this event:
+
+1. **Pre-send exceeded:** Message was already at max retries when relay picked it up (e.g., after restart). `exception_type='pre_exceeded'`.
+2. **Post-send exceeded:** Send attempt failed on the last allowed retry. `exception_type` contains the actual exception category.
 
 ### celery_outbox_signal_error
 

@@ -196,8 +196,13 @@ class Relay:
 
     def _process_message(self, msg: CeleryOutbox) -> ProcessResult:
         if msg.retries >= self._config.max_retries:
-            _logger.warning('celery_outbox_max_retries_exceeded')
+            _logger.warning(
+                'celery_outbox_max_retries_exceeded',
+                exception_type='pre_exceeded',
+                exception_message='message already exceeded max retries before send attempt',
+            )
             tags = get_task_tag(msg.task_name)
+            tags['exception_type'] = 'pre_exceeded'
             metrics.increment('messages.exceeded', tags=tags)
             return ProcessResult.EXCEEDED
 

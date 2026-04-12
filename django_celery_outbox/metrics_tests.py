@@ -124,7 +124,7 @@ def test_is_enabled_defaults_to_true() -> None:
     assert result is True
 
 
-def testget_task_tag_returns_task_name_by_default() -> None:
+def test_get_task_tag_returns_task_name_by_default() -> None:
     with override_settings(
         CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=False,
         CELERY_OUTBOX_MONITORED_TASKS=None,
@@ -134,14 +134,14 @@ def testget_task_tag_returns_task_name_by_default() -> None:
     assert result == {'task_name': 'myapp.tasks.send_email'}
 
 
-def testget_task_tag_returns_empty_when_disabled() -> None:
+def test_get_task_tag_returns_empty_when_disabled() -> None:
     with override_settings(CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=True):
         result = get_task_tag('myapp.tasks.send_email')
 
     assert result == {}
 
 
-def testget_task_tag_returns_other_when_not_monitored() -> None:
+def test_get_task_tag_returns_other_when_not_monitored() -> None:
     with override_settings(
         CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=False,
         CELERY_OUTBOX_MONITORED_TASKS={'allowed.task'},
@@ -151,7 +151,7 @@ def testget_task_tag_returns_other_when_not_monitored() -> None:
     assert result == {'task_name': 'other'}
 
 
-def testget_task_tag_returns_task_name_when_monitored() -> None:
+def test_get_task_tag_returns_task_name_when_monitored() -> None:
     with override_settings(
         CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS=False,
         CELERY_OUTBOX_MONITORED_TASKS={'myapp.tasks.send_email'},

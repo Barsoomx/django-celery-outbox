@@ -29,9 +29,7 @@ services:
   relay:
     build: .
     depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
+      app:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minimal_django
@@ -46,9 +44,7 @@ services:
   worker:
     build: .
     depends_on:
-      postgres:
-        condition: service_healthy
-      rabbitmq:
+      app:
         condition: service_healthy
     environment:
       DATABASE_URL: postgres://postgres:postgres@postgres:5432/minimal_django
