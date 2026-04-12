@@ -3,6 +3,7 @@ import random
 import signal
 import time
 from datetime import timedelta
+from enum import Enum, auto
 from types import FrameType
 
 import sentry_sdk
@@ -25,6 +26,12 @@ from django_celery_outbox.signals import (
 )
 
 _logger = structlog.getLogger(__name__)
+
+
+class ProcessResult(Enum):
+    PUBLISHED = auto()
+    FAILED = auto()
+    EXCEEDED = auto()
 
 
 class Relay:
@@ -61,7 +68,6 @@ class Relay:
         )
 
         while self._running:
-            # TODO(mcproger) try-except here
             self._processing()
 
     def _setup_signals(self) -> None:
@@ -130,55 +136,53 @@ class Relay:
         exceeded: list[int] = []
 
         for msg in messages:
-            if msg.retries >= self._config.max_retries:
-                _logger.warning(
-                    'celery_outbox_max_retries_exceeded',
-                    outbox_id=msg.id,
-                    task_name=msg.task_name,
-                    task_id=msg.task_id,
-                    retries=msg.retries,
-                )
-                exceeded.append(msg.id)
-                metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
-                continue
+            msg_context = {
+                'outbox_id': msg.id,
+                'task_name': msg.task_name,
+                'task_id': msg.task_id,
+                'retries': msg.retries,
+            }
 
-            with sentry_sdk.start_span(op='celery_outbox.relay.send', name=msg.task_name) as span:
-                span.set_data('messaging.message.id', msg.task_id)
-                span.set_data('messaging.message.retry.count', msg.retries)
-
-                try:
-                    self._send_task(msg)
-                except Exception:
-                    span.set_status('internal_error')
-                    _logger.error(
-                        'celery_outbox_send_failed',
-                        outbox_id=msg.id,
-                        task_name=msg.task_name,
-                        task_id=msg.task_id,
-                        retries=msg.retries,
-                        exc_info=True,
-                    )
-                    if msg.retries >= self._config.max_retries - 1:
-                        _logger.warning(
-                            'celery_outbox_max_retries_exceeded',
-                            outbox_id=msg.id,
-                            task_name=msg.task_name,
-                            task_id=msg.task_id,
-                            retries=msg.retries,
-                        )
+            with structlog.contextvars.bound_contextvars(**msg_context):
+                process_result = self._process_message(msg)
+                match process_result:
+                    case ProcessResult.EXCEEDED:
                         exceeded.append(msg.id)
-                        metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
-                    else:
+                    case ProcessResult.FAILED:
                         failed.append((msg.id, msg.retries))
-                        metrics.increment('messages.failed', tags={'task_name': msg.task_name})
-                        self._send_signal_safe(outbox_message_failed, msg.task_id, msg.task_name, retries=msg.retries)
-                else:
-                    span.set_status('ok')
-                    published.append(msg.id)
-                    metrics.increment('messages.published', tags={'task_name': msg.task_name})
-                    self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
+                    case ProcessResult.PUBLISHED:
+                        published.append(msg.id)
 
         return published, failed, exceeded
+
+    def _process_message(self, msg: CeleryOutbox) -> ProcessResult:
+        if msg.retries >= self._config.max_retries:
+            _logger.warning('celery_outbox_max_retries_exceeded')
+            metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
+            return ProcessResult.EXCEEDED
+
+        with sentry_sdk.start_span(op='celery_outbox.relay.send', name=msg.task_name) as span:
+            span.set_data('messaging.message.id', msg.task_id)
+            span.set_data('messaging.message.retry.count', msg.retries)
+
+            try:
+                self._send_task(msg)
+            except Exception:
+                span.set_status('internal_error')
+                _logger.exception('celery_outbox_send_failed', exc_info=True)
+                if msg.retries >= self._config.max_retries - 1:
+                    _logger.warning('celery_outbox_max_retries_exceeded')
+                    metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
+                    return ProcessResult.EXCEEDED
+                else:
+                    metrics.increment('messages.failed', tags={'task_name': msg.task_name})
+                    self._send_signal_safe(outbox_message_failed, msg.task_id, msg.task_name, retries=msg.retries)
+                    return ProcessResult.FAILED
+            else:
+                span.set_status('ok')
+                metrics.increment('messages.published', tags={'task_name': msg.task_name})
+                self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
+                return ProcessResult.PUBLISHED
 
     def _send_task(self, msg: CeleryOutbox) -> None:
         options = deserialize_options(msg.options, self._app)
