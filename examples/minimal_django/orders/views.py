@@ -61,3 +61,8 @@ class OrderListView(View):
                 ]
             }
         )
+
+
+class HealthView(View):
+    def get(self, request: HttpRequest) -> JsonResponse:
+        return JsonResponse({'status': 'ok'})

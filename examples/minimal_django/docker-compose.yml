@@ -15,6 +15,12 @@ services:
     volumes:
       - .:/app
       - ../..:/package:ro
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:8000/orders/health/']
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
     command: >
       sh -c "pip install -e /package &&
              python manage.py migrate &&
