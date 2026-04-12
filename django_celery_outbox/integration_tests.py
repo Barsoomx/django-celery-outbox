@@ -52,7 +52,7 @@ def m_celery_send() -> Generator[MagicMock]:
 
 @pytest.fixture(autouse=True)
 def m_close_old_connections() -> Generator[MagicMock]:
-    with patch('django_celery_outbox.relay.close_old_connections') as mock:
+    with patch('django_celery_outbox.relay._relay.close_old_connections') as mock:
         yield mock
 
 
