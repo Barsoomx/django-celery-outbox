@@ -14,7 +14,7 @@ Current upgrade path is implicitly "drain queue before upgrading", which contrad
 1. **Storage**: Separate `schema_version` field (SmallIntegerField), not JSON key
 2. **Compatibility**: N-1 policy (support only previous version)
 3. **Dead letter**: Add `schema_version` to `CeleryOutboxDeadLetter` too
-4. **Unknown version**: Skip (relay takes other messages, compatible relay picks up later)
+4. **Unknown version**: Skip — both future (> CURRENT) and deprecated (< MIN_SUPPORTED) versions are skipped by relay
 
 ## Design
 
@@ -77,11 +77,20 @@ def _select_messages(self) -> list[CeleryOutbox]:
         CeleryOutbox.objects.select_for_update(skip_locked=True)
         .filter(
             Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | ...,
+            schema_version__gte=MIN_SUPPORTED_VERSION,
             schema_version__lte=CURRENT_SCHEMA_VERSION,
         )
         .order_by('id')[: self._batch_size]
     )
     return list(queryset)
+
+# Skipped messages are logged:
+_logger.warning(
+    'celery_outbox_skipped_unsupported_version',
+    schema_version=...,
+    current=CURRENT_SCHEMA_VERSION,
+    min_supported=MIN_SUPPORTED_VERSION,
+)
 
 # relay.py — _send_task
 def _send_task(self, msg: CeleryOutbox) -> None:
@@ -109,17 +118,28 @@ CeleryOutbox.objects.create(
 
 ### 5. Admin
 
-Add `schema_version` to:
+Add `schema_version` to both `CeleryOutboxAdmin` and `CeleryOutboxDeadLetterAdmin`:
 - `list_display`
+- `list_filter`
 - `readonly_fields`
+
+**CeleryOutboxDeadLetterAdmin.retry_selected action:**
+```python
+CeleryOutbox(
+    # ... existing fields ...
+    schema_version=dl.schema_version,  # preserve version on retry
+)
+```
 
 ### 6. Tests
 
 - `test_serialize_deserialize_v1_roundtrip` — basic round-trip
 - `test_deserialize_unsupported_future_version_raises` — version > current
 - `test_deserialize_below_min_version_raises` — version < min
-- `test_select_messages_skips_future_versions` — relay skips v2+
-- `test_dead_letter_preserves_schema_version` — version copied
+- `test_select_messages_skips_future_versions` — relay skips version > current
+- `test_select_messages_skips_deprecated_versions` — relay skips version < min
+- `test_dead_letter_preserves_schema_version` — version copied on move to dead letter
+- `test_retry_selected_preserves_schema_version` — admin action preserves version
 
 ### 7. Documentation
 
@@ -136,6 +156,8 @@ README section "Schema Versioning":
 - `django_celery_outbox/relay.py`
 - `django_celery_outbox/app.py`
 - `django_celery_outbox/admin.py`
+- `django_celery_outbox/factories.py`
 - `django_celery_outbox/serialization_tests.py`
 - `django_celery_outbox/relay_tests.py`
+- `django_celery_outbox/admin_tests.py`
 - `README.md`
