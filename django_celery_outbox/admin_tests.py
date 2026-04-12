@@ -248,3 +248,21 @@ def test_dead_letter_retry_selected_shows_success_message() -> None:
         '1 dead-lettered message(s) moved back to outbox.',
         messages.SUCCESS,
     )
+
+
+@pytest.mark.django_db
+def test_dead_letter_retry_selected_preserves_schema_version() -> None:
+    dead = CeleryOutboxDeadLetterFactory.create(
+        task_id='task-with-version',
+        task_name='app.tasks.versioned',
+        schema_version=2,
+    )
+
+    admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
+    queryset = CeleryOutboxDeadLetter.objects.filter(pk=dead.pk)
+    m_request = MagicMock()
+
+    admin_instance.retry_selected(m_request, queryset)
+
+    outbox = CeleryOutbox.objects.get(task_id='task-with-version')
+    assert outbox.schema_version == 2

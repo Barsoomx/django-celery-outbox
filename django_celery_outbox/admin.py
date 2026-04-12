@@ -122,6 +122,7 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
                     args=dl.args,
                     kwargs=dl.kwargs,
                     options=dl.options,
+                    schema_version=dl.schema_version,
                     sentry_trace_id=dl.sentry_trace_id,
                     sentry_baggage=dl.sentry_baggage,
                     structlog_context=dl.structlog_context,
