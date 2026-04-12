@@ -130,7 +130,8 @@ def test_outbox_message_dead_lettered_fires_on_exceeded(m_celery_app: MagicMock)
     try:
         with patch('django_celery_outbox.relay.Celery.send_task'):
             with patch('django_celery_outbox.relay.time.sleep'):
-                relay._processing()
+                with patch('django_celery_outbox.relay.close_old_connections'):
+                    relay._processing()
     finally:
         outbox_message_dead_lettered.disconnect(handler)
 

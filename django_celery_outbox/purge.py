@@ -45,6 +45,7 @@ def purge_dead_letter(
     if task_name_pattern is not None:
         regex = fnmatch.translate(task_name_pattern)
         regex = regex.removeprefix('(?s:').removesuffix(')\\Z')
+        regex = regex.replace('(?>', '(?:')
         regex = f'^{regex}$'
         queryset = queryset.filter(task_name__regex=regex)
 

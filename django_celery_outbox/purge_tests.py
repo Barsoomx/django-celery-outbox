@@ -229,3 +229,22 @@ class TestPurgeDeadLetterTaskNamePattern:
 
         assert result.deleted_count == 2
         assert CeleryOutboxDeadLetter.objects.filter(pk=no_match.pk).exists()
+
+    def test_filters_by_leading_wildcard_pattern(self) -> None:
+        now = timezone.now()
+        old_time = now - timedelta(days=31)
+        with patch('django.utils.timezone.now', return_value=now):
+            match = CeleryOutboxDeadLetterFactory(task_name='app.tasks.send_email')
+            no_match = CeleryOutboxDeadLetterFactory(task_name='app.other.process')
+        CeleryOutboxDeadLetter.objects.filter(pk__in=[match.pk, no_match.pk]).update(
+            dead_at=old_time
+        )
+
+        result = purge_dead_letter(
+            older_than_dead=timedelta(days=30),
+            task_name_pattern='*.tasks.*',
+        )
+
+        assert result.deleted_count == 1
+        assert result.task_names == {'app.tasks.send_email': 1}
+        assert CeleryOutboxDeadLetter.objects.filter(pk=no_match.pk).exists()
