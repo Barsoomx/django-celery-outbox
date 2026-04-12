@@ -23,7 +23,7 @@ MONITORING_STATSD_TAGS = {
 | `dead_letter.count` | gauge | - | Dead letter entries |
 | `oldest_pending_age_seconds` | gauge | - | Age of oldest pending message in seconds |
 | `batch.duration_ms` | timing | - | Processing time |
-| `send_latency_ms` | timing | `task_name` | Time to send message to broker |
+| `send_latency_ms` | timing | `task_name` | Time from enqueue to publish (outbox queue latency) |
 | `messages.published` | counter | `task_name` | Successfully sent |
 | `messages.failed` | counter | `task_name`, `exception_type` | Failed (will retry) |
 | `messages.exceeded` | counter | `task_name`, `exception_type` | Dead-lettered |

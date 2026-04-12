@@ -17,6 +17,25 @@ Event names and field schemas are part of the public API.
 | backoff_time | int | Base retry backoff in seconds |
 | max_retries | int | Maximum retry attempts |
 
+### celery_outbox_delayed_delivery_setup
+
+**Level:** INFO
+**When:** Relay successfully declares native delayed delivery exchanges at startup
+
+| Field | Type | Description |
+|-------|------|-------------|
+| queue_type | str | Queue type used (e.g., `quorum`) |
+
+### celery_outbox_delayed_delivery_setup_failed
+
+**Level:** WARNING
+**When:** Relay fails to declare delayed delivery exchanges (non-fatal, countdown/eta may not work)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| exception_type | str | Exception class name |
+| exception_message | str | Exception message |
+
 ### celery_outbox_relay_shutdown
 
 **Level:** INFO

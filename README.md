@@ -40,6 +40,10 @@ python manage.py celery_outbox_relay
 
 **[Full Documentation →](https://barsoomx.github.io/django-celery-outbox/)**
 
+## Security
+
+See [Security Guide](https://barsoomx.github.io/django-celery-outbox/security/) for PII handling, traceback logging, and DLQ retention.
+
 ## License
 
 MIT

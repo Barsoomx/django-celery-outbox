@@ -64,7 +64,7 @@ The relay emits these StatsD metrics:
 | `dead_letter.count` | gauge | | Dead letter entries |
 | `oldest_pending_age_seconds` | gauge | | Age of oldest pending message in seconds |
 | `batch.duration_ms` | timing | | Batch processing time |
-| `send_latency_ms` | timing | `task_name` | Per-message send latency |
+| `send_latency_ms` | timing | `task_name` | Time from enqueue to publish |
 | `messages.published` | counter | `task_name` | Successfully sent |
 | `messages.failed` | counter | `task_name`, `exception_type` | Failed (will retry) |
 | `messages.exceeded` | counter | `task_name`, `exception_type` | Moved to dead letter |
