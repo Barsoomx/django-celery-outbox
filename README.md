@@ -23,6 +23,7 @@ Transactional Outbox pattern for Celery tasks in Django. Instead of sending task
 - `countdown` is converted to absolute `eta` at intercept time, so the task runs at the correct time regardless of relay delay
 - Graceful shutdown on SIGTERM/SIGINT
 - Multi-database aware
+- Schema versioning for safe format migrations
 - StatsD metrics for monitoring relay throughput and errors
 - Health check endpoint for load balancer / k8s probes
 
@@ -415,6 +416,29 @@ docker compose run --rm app ruff format --check .
 ```bash
 docker compose run --rm app mypy -p django_celery_outbox --config-file=pyproject.toml
 ```
+
+## Schema Versioning
+
+The outbox uses a `schema_version` field to enable safe format migrations across library upgrades.
+
+### Upgrade Policy
+
+- **N-1 compatibility**: Each version supports deserializing the current and previous schema versions
+- **Rolling deployments**: Old relay instances skip messages with newer schema versions (picked up by updated relays)
+- **Deprecated versions**: Messages below minimum supported version are skipped
+
+### Behavior
+
+| Relay Version | Message Version | Action |
+|--------------|-----------------|--------|
+| 1 | 1 | Process normally |
+| 2 | 1 | Process (N-1 support) |
+| 2 | 2 | Process normally |
+| 1 | 2 | Skip (future version) |
+
+### Dead Letter Considerations
+
+Dead-lettered messages retain their original `schema_version`. Before major upgrades that drop version support, review and process dead-lettered messages or they may become unprocessable.
 
 ## License
 
