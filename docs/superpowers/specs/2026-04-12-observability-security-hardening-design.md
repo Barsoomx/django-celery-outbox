@@ -24,7 +24,7 @@ This spec combines three related issues into a cohesive observability and securi
 └─────────────────────────────────────────────────────────────────┘
 
 ┌─────────────────────────────────────────────────────────────────┐
-│                     RELAY (relay.py)                            │
+│                     RELAY (relay/_relay.py)                     │
 │  ┌─────────────┐    ┌──────────────┐    ┌───────────────────┐  │
 │  │ _processing │───►│ New Metrics  │───►│ Exception Logger  │  │
 │  │             │    │   (#24)      │    │   (#33)           │  │
@@ -49,11 +49,13 @@ This spec combines three related issues into a cohesive observability and securi
 
 **Files to modify:**
 - `django_celery_outbox/app.py` — PII redaction hook
-- `django_celery_outbox/relay.py` — new metrics, exception logging setting
+- `django_celery_outbox/relay/_relay.py` — new metrics, exception logging setting
 - `django_celery_outbox/metrics.py` — helper for cardinality control
-- `django_celery_outbox/conf.py` — new settings
 - `docs/observability/*` — 4 new documentation files
 - `README.md` — security warning section
+
+**Note:** Settings are read via `getattr(settings, 'SETTING_NAME', default)` pattern (no separate conf.py).
+Relay module was refactored into package in PR #40.
 
 ## New Settings
 
@@ -177,7 +179,7 @@ CELERY_OUTBOX_PII_REDACTOR = 'myapp.security.redact_task_data'
 ### oldest_pending_age_seconds (gauge)
 
 ```python
-# relay.py, in _processing() after existing gauge metrics
+# relay/_relay.py, in _processing() after existing gauge metrics
 
 oldest = (
     CeleryOutbox.objects
@@ -196,7 +198,7 @@ else:
 ### send_latency_ms (histogram/timing)
 
 ```python
-# relay.py, in _process_messages() after successful send
+# relay/_relay.py, in _process_messages() after successful send
 
 import time
 
@@ -215,7 +217,7 @@ metrics.increment('messages.published', tags=tags)
 ### exception_type Label
 
 ```python
-# relay.py
+# relay/_relay.py
 
 _EXCEPTION_CATEGORIES = {
     ConnectionError: 'connection',
@@ -254,6 +256,10 @@ except Exception as e:
 
 ## Exception Logging Changes
 
+**Current state:** Uses `_logger.exception()` which always includes traceback.
+
+**Change:** Replace with conditional `_logger.error()` based on setting.
+
 ### Setting
 
 ```python
@@ -263,7 +269,7 @@ CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK: bool = True
 ### Implementation
 
 ```python
-# relay.py
+# relay/_relay.py
 
 def _should_log_traceback() -> bool:
     return getattr(settings, 'CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK', True)

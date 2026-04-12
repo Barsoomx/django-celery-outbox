@@ -13,6 +13,8 @@ This spec covers the documentation site and example project for django-celery-ou
 - Realistic example project with Order processing scenario
 - Docker Compose with PostgreSQL + RabbitMQ
 
+**Note:** Current README.md (446 lines) and ARCHITECTURE.md (38KB) remain as-is until mkdocs site is fully populated. Content will be migrated incrementally.
+
 ## New Structure
 
 ```
