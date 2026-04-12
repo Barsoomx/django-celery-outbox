@@ -6,18 +6,18 @@ The relay daemon is the core component that moves tasks from the database to the
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                    PROCESSING LOOP                       │
-│                                                          │
+│                    PROCESSING LOOP                      │
+│                                                         │
 │  1. SELECT batch of messages (FOR UPDATE SKIP LOCKED)   │
-│  2. For each message:                                    │
+│  2. For each message:                                   │
 │     - Send to broker via Celery.send_task()             │
-│     - Mark as published or failed                        │
-│  3. Delete published messages                            │
-│  4. Update retry count for failed messages               │
+│     - Mark as published or failed                       │
+│  3. Delete published messages                           │
+│  4. Update retry count for failed messages              │
 │  5. Move exceeded messages to dead letter               │
-│  6. Sleep if queue was empty                             │
-│  7. Repeat                                               │
-│                                                          │
+│  6. Sleep if queue was empty                            │
+│  7. Repeat                                              │
+│                                                         │
 └─────────────────────────────────────────────────────────┘
 ```
 
