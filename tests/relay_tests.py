@@ -734,3 +734,57 @@ def test_relay_init_accepts_when_skip_locked_supported(m_celery_app: MagicMock) 
             relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=3))
 
     assert relay is not None
+
+
+@pytest.mark.django_db
+def test_select_messages_skips_future_versions(f_message_selector: MessageSelector) -> None:
+    msg_v1 = CeleryOutbox.objects.create(
+        task_id='task-v1',
+        task_name='app.task',
+        schema_version=1,
+    )
+    CeleryOutbox.objects.create(
+        task_id='task-v2',
+        task_name='app.task',
+        schema_version=2,
+    )
+
+    messages = f_message_selector.run()
+
+    assert len(messages) == 1
+    assert messages[0].id == msg_v1.id
+
+
+@pytest.mark.django_db
+def test_select_messages_skips_deprecated_versions(f_message_selector: MessageSelector) -> None:
+    CeleryOutbox.objects.create(
+        task_id='task-v0',
+        task_name='app.task',
+        schema_version=0,
+    )
+    msg_v1 = CeleryOutbox.objects.create(
+        task_id='task-v1',
+        task_name='app.task',
+        schema_version=1,
+    )
+
+    messages = f_message_selector.run()
+
+    assert len(messages) == 1
+    assert messages[0].id == msg_v1.id
+
+
+@pytest.mark.django_db
+def test_dead_letter_preserves_schema_version(m_celery_app: MagicMock) -> None:
+    msg = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='app.task',
+        retries=5,
+        schema_version=2,
+    )
+
+    relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=5))
+    relay._move_to_dead_letter([msg.id])
+
+    dead = CeleryOutboxDeadLetter.objects.get(task_id='task-1')
+    assert dead.schema_version == 2

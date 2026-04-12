@@ -9,7 +9,7 @@ from django.conf import settings
 from django.db import connections
 
 from django_celery_outbox.models import CeleryOutbox
-from django_celery_outbox.serialization import serialize_options
+from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, serialize_options
 from django_celery_outbox.signals import outbox_message_created
 from django_celery_outbox.structlog_utils import get_structlog_context_json
 
@@ -156,6 +156,7 @@ class OutboxCelery(Celery):
                 args=list(args) if args else [],
                 kwargs=dict(kwargs) if kwargs else {},
                 options=serialized_options,
+                schema_version=CURRENT_SCHEMA_VERSION,
                 sentry_trace_id=sentry_sdk.get_traceparent(),
                 sentry_baggage=sentry_sdk.get_baggage(),
                 structlog_context=get_structlog_context_json(),

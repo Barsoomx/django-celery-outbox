@@ -1,7 +1,7 @@
 # Celery Version Matrix CI Design
 
-**Issue:** [#28](https://github.com/Barsoomx/django-celery-outbox/issues/28)  
-**Date:** 2026-04-12  
+**Issue:** [#28](https://github.com/Barsoomx/django-celery-outbox/issues/28)
+**Date:** 2026-04-12
 **Status:** Approved (updated after CI PostgreSQL/MySQL integration)
 
 ## Problem

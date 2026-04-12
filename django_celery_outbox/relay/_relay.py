@@ -50,6 +50,15 @@ class Relay:
                 f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
             )
 
+        db_alias = CeleryOutbox.objects.db
+        db_connection = connections[db_alias]
+        if not db_connection.features.has_select_for_update_skip_locked:
+            raise RuntimeError(
+                f'Database backend "{db_connection.vendor}" does not support '
+                f'SELECT FOR UPDATE SKIP LOCKED. '
+                f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
+            )
+
         self._app = app
         self._config = config
         self._selector = selector or MessageSelector(
@@ -188,7 +197,7 @@ class Relay:
                 return ProcessResult.PUBLISHED
 
     def _send_task(self, msg: CeleryOutbox) -> None:
-        options = deserialize_options(msg.options, self._app)
+        options = deserialize_options(msg.options, self._app, msg.schema_version)
 
         headers = options.pop('headers', {}) or {}
         if msg.sentry_trace_id:
@@ -279,6 +288,7 @@ class Relay:
                     sentry_trace_id=msg.sentry_trace_id,
                     sentry_baggage=msg.sentry_baggage,
                     structlog_context=msg.structlog_context,
+                    schema_version=msg.schema_version,
                     failure_reason='max retries exceeded',
                 )
             )

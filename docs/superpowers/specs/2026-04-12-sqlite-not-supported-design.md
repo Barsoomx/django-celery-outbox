@@ -1,7 +1,7 @@
 # SQLite Not Supported — Design Spec
 
-**Issue:** [#17](https://github.com/Barsoomx/django-celery-outbox/issues/17)  
-**Date:** 2026-04-12  
+**Issue:** [#17](https://github.com/Barsoomx/django-celery-outbox/issues/17)
+**Date:** 2026-04-12
 **Status:** Approved
 
 ## Problem
@@ -38,14 +38,14 @@ def check_database_supports_skip_locked(app_configs, **kwargs):
     errors = []
     db_alias = CeleryOutbox.objects.db
     connection = connections[db_alias]
-    
+
     if not connection.features.has_select_for_update_skip_locked:
         errors.append(Error(
             'Database does not support SELECT FOR UPDATE SKIP LOCKED.',
             hint='Use PostgreSQL >= 9.5 or MySQL >= 8.0.1 for django-celery-outbox.',
             id='celery_outbox.E001',
         ))
-    
+
     return errors
 ```
 
@@ -55,7 +55,7 @@ def check_database_supports_skip_locked(app_configs, **kwargs):
 class DjangoCeleryOutboxConfig(AppConfig):
     name = 'django_celery_outbox'
     default_auto_field = 'django.db.models.BigAutoField'
-    
+
     def ready(self):
         from django_celery_outbox import checks  # noqa: F401
 ```
@@ -74,7 +74,7 @@ from django_celery_outbox.models import CeleryOutbox
 class Relay:
     def __init__(self, app: Celery, ...):
         # existing validations...
-        
+
         db_alias = CeleryOutbox.objects.db
         connection = connections[db_alias]
         if not connection.features.has_select_for_update_skip_locked:
@@ -83,7 +83,7 @@ class Relay:
                 f'SELECT FOR UPDATE SKIP LOCKED. '
                 f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
             )
-        
+
         # rest of __init__...
 ```
 
@@ -99,7 +99,7 @@ services:
       POSTGRES_DB: test_db
       POSTGRES_USER: test
       POSTGRES_PASSWORD: test
-    
+
   mysql:
     image: mysql:8.0
     environment:
@@ -161,7 +161,7 @@ jobs:
       matrix:
         db: [postgresql, mysql]
         python: ["3.10", "3.11", "3.12"]
-    
+
     services:
       postgres:
         image: postgres:15
@@ -169,7 +169,7 @@ jobs:
       mysql:
         image: mysql:8.0
         # conditionally enabled
-    
+
     steps:
       - run: pytest -v
         env:
@@ -183,7 +183,7 @@ jobs:
 ```markdown
 ## Database Requirements
 
-django-celery-outbox uses `SELECT FOR UPDATE SKIP LOCKED` for safe concurrent 
+django-celery-outbox uses `SELECT FOR UPDATE SKIP LOCKED` for safe concurrent
 relay instances. This requires:
 
 - **PostgreSQL >= 9.5**

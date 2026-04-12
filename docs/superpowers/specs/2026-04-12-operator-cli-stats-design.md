@@ -1,7 +1,7 @@
 # Operator CLI: celery_outbox_stats
 
-**Issue:** https://github.com/Barsoomx/django-celery-outbox/issues/27  
-**Date:** 2026-04-12  
+**Issue:** https://github.com/Barsoomx/django-celery-outbox/issues/27
+**Date:** 2026-04-12
 **Status:** Approved
 
 ## Problem
@@ -71,13 +71,13 @@ class QueueStats:
             lines.append(f'Oldest pending:  {self._format_duration(self.oldest_pending_seconds)}')
         else:
             lines.append('Oldest pending:  -')
-        
+
         if self.top_failing:
             lines.append('')
             lines.append('Top failing tasks:')
             for i, item in enumerate(self.top_failing, 1):
                 lines.append(f"  {i}. {item['task_name']} ({item['total_retries']} retries)")
-        
+
         return '\n'.join(lines)
 
     @staticmethod
@@ -95,13 +95,13 @@ class QueueStats:
 def get_queue_stats(top_n: int = 10) -> QueueStats:
     queue_depth = CeleryOutbox.objects.count()
     dlq_count = CeleryOutboxDeadLetter.objects.count()
-    
+
     oldest = CeleryOutbox.objects.order_by('created_at').values_list('created_at', flat=True).first()
     if oldest:
         oldest_pending_seconds = (timezone.now() - oldest).total_seconds()
     else:
         oldest_pending_seconds = None
-    
+
     top_failing = []
     if top_n > 0:
         top_failing = list(
@@ -111,7 +111,7 @@ def get_queue_stats(top_n: int = 10) -> QueueStats:
             .filter(total_retries__gt=0)
             .order_by('-total_retries')[:top_n]
         )
-    
+
     return QueueStats(
         queue_depth=queue_depth,
         dlq_count=dlq_count,
@@ -148,7 +148,7 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> None:
         stats = get_queue_stats(top_n=options['top'])
-        
+
         if options['format'] == 'json':
             self.stdout.write(stats.to_json())
         else:
