@@ -17,7 +17,7 @@ task_default_exchange = task_default_queue
 task_default_exchange_type = 'topic'
 task_default_routing_key = task_default_queue
 task_default_queue_type = 'quorum'
-task_create_missing_queues = False
+task_create_missing_queues = True
 task_queues = (
     Queue(
         'minimal-default',
