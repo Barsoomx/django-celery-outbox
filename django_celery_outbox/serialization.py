@@ -7,6 +7,19 @@ from celery.canvas import Signature
 
 _logger = structlog.getLogger(__name__)
 
+CURRENT_SCHEMA_VERSION = 1
+MIN_SUPPORTED_VERSION = 1
+
+
+class UnsupportedSchemaVersion(Exception):
+    def __init__(self, version: int):
+        self._version = version
+        super().__init__(f'Unsupported schema version: {version}')
+
+    @property
+    def version(self) -> int:
+        return self._version
+
 _TRANSIENT_KEYS = frozenset(
     {
         'producer',

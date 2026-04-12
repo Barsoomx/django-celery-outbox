@@ -6,6 +6,9 @@ from celery import Celery
 from celery.canvas import Signature
 
 from django_celery_outbox.serialization import (
+    CURRENT_SCHEMA_VERSION,
+    MIN_SUPPORTED_VERSION,
+    UnsupportedSchemaVersion,
     _kombu_obj_to_str,
     _signature_to_dict,
     _signatures_to_list,
@@ -540,3 +543,18 @@ def test_deserialize_options_chain_non_list_not_converted(f_app: Celery) -> None
 def test_deserialize_options_invalid_eta_raises(f_app: Celery) -> None:
     with pytest.raises(ValueError):
         deserialize_options({'eta': 'not-a-date'}, f_app)
+
+
+def test_current_schema_version_is_one() -> None:
+    assert CURRENT_SCHEMA_VERSION == 1
+
+
+def test_min_supported_version_is_one() -> None:
+    assert MIN_SUPPORTED_VERSION == 1
+
+
+def test_unsupported_schema_version_stores_version() -> None:
+    exc = UnsupportedSchemaVersion(99)
+
+    assert exc.version == 99
+    assert 'Unsupported schema version: 99' in str(exc)
