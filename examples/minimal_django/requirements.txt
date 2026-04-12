@@ -1,0 +1,4 @@
+Django>=4.2,<5.3
+celery>=5.3,<5.7
+psycopg[binary]>=3.1
+django-celery-outbox @ file:../..

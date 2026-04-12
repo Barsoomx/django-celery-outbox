@@ -1,0 +1,74 @@
+services:
+  app:
+    build: .
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DEBUG: "True"
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minimal_django
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    volumes:
+      - .:/app
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py runserver 0.0.0.0:8000"
+
+  relay:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minimal_django
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    volumes:
+      - .:/app
+    command: python manage.py celery_outbox_relay --batch-size 10 --idle-time 1.0
+
+  worker:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@postgres:5432/minimal_django
+      CELERY_BROKER_URL: amqp://guest:guest@rabbitmq:5672//
+    volumes:
+      - .:/app
+    command: celery -A minimal_django worker -l info
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: minimal_django
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    ports:
+      - "15672:15672"
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'check_running']
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres_data:
