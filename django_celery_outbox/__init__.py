@@ -1,6 +1,18 @@
-__version__ = '0.1.0'
+__version__ = '0.2.0'
+
+from typing import TYPE_CHECKING
 
 from django_celery_outbox.app import OutboxCelery
+
+if TYPE_CHECKING:
+    from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+    from django_celery_outbox.relay import Relay
+    from django_celery_outbox.signals import (
+        outbox_message_created,
+        outbox_message_dead_lettered,
+        outbox_message_failed,
+        outbox_message_sent,
+    )
 
 __all__ = [
     'OutboxCelery',
