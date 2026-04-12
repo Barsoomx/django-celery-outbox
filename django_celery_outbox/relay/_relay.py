@@ -15,6 +15,9 @@ from django.db.models import F, Q
 from django.db.models.functions import Now
 from django.dispatch import Signal
 from django.utils import timezone
+from kombu.transport.native_delayed_delivery import (
+    declare_native_delayed_delivery_exchanges_and_queues,
+)
 
 from django_celery_outbox import metrics
 from django_celery_outbox.metrics import get_task_tag
@@ -84,6 +87,7 @@ class Relay:
 
     def start(self) -> None:
         self._setup_signals()
+        self._setup_delayed_delivery()
 
         _logger.info(
             'celery_outbox_relay_started',
@@ -99,6 +103,19 @@ class Relay:
     def _setup_signals(self) -> None:
         signal.signal(signal.SIGTERM, self._handle_signal)
         signal.signal(signal.SIGINT, self._handle_signal)
+
+    def _setup_delayed_delivery(self) -> None:
+        queue_type = self._app.conf.broker_native_delayed_delivery_queue_type or 'quorum'
+        try:
+            with self._app.connection_for_write() as connection:
+                declare_native_delayed_delivery_exchanges_and_queues(connection, queue_type)
+                _logger.info('celery_outbox_delayed_delivery_setup', queue_type=queue_type)
+        except Exception as exc:
+            _logger.warning(
+                'celery_outbox_delayed_delivery_setup_failed',
+                exception_type=type(exc).__name__,
+                exception_message=str(exc),
+            )
 
     def _handle_signal(self, signum: int, frame: FrameType | None) -> None:
         _logger.info('celery_outbox_relay_shutdown', signal=signum)

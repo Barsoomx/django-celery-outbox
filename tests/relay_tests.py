@@ -999,3 +999,41 @@ def test_send_latency_ms_emitted_on_success(
     timing_calls = [c for c in m_metrics.timing.call_args_list if c[0][0] == 'send_latency_ms']
     assert len(timing_calls) == 1
     assert 1900 < timing_calls[0][0][1] < 2500
+
+
+def test_setup_delayed_delivery_calls_declare(f_relay: Relay) -> None:
+    m_connection = MagicMock()
+    m_context = MagicMock()
+    m_context.__enter__ = MagicMock(return_value=m_connection)
+    m_context.__exit__ = MagicMock(return_value=None)
+    f_relay._app.connection_for_write.return_value = m_context
+    f_relay._app.conf.broker_native_delayed_delivery_queue_type = 'quorum'
+
+    with patch('django_celery_outbox.relay._relay.declare_native_delayed_delivery_exchanges_and_queues') as m_declare:
+        f_relay._setup_delayed_delivery()
+
+    m_declare.assert_called_once_with(m_connection, 'quorum')
+
+
+def test_setup_delayed_delivery_uses_quorum_as_default(f_relay: Relay) -> None:
+    m_connection = MagicMock()
+    m_context = MagicMock()
+    m_context.__enter__ = MagicMock(return_value=m_connection)
+    m_context.__exit__ = MagicMock(return_value=None)
+    f_relay._app.connection_for_write.return_value = m_context
+    f_relay._app.conf.broker_native_delayed_delivery_queue_type = None
+
+    with patch('django_celery_outbox.relay._relay.declare_native_delayed_delivery_exchanges_and_queues') as m_declare:
+        f_relay._setup_delayed_delivery()
+
+    m_declare.assert_called_once_with(m_connection, 'quorum')
+
+
+def test_setup_delayed_delivery_logs_warning_on_failure(f_relay: Relay) -> None:
+    f_relay._app.connection_for_write.side_effect = ConnectionError('broker down')
+
+    with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+        f_relay._setup_delayed_delivery()
+
+    m_logger.warning.assert_called_once()
+    assert m_logger.warning.call_args[0][0] == 'celery_outbox_delayed_delivery_setup_failed'
