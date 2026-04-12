@@ -40,7 +40,7 @@ Migration 0002 adds field to both models with `default=1`.
 CURRENT_SCHEMA_VERSION = 1
 MIN_SUPPORTED_VERSION = 1
 
-class UnsupportedSchemaVersion(Exception):
+class UnsupportedSchemaVersionError(Exception):
     def __init__(self, version: int):
         self.version = version
         super().__init__(f'Unsupported schema version: {version}')
@@ -59,9 +59,9 @@ _DESERIALIZERS = {
 
 def deserialize_options(options: dict, app: Celery, schema_version: int) -> dict:
     if schema_version > CURRENT_SCHEMA_VERSION:
-        raise UnsupportedSchemaVersion(schema_version)
+        raise UnsupportedSchemaVersionError(schema_version)
     if schema_version < MIN_SUPPORTED_VERSION:
-        raise UnsupportedSchemaVersion(schema_version)
+        raise UnsupportedSchemaVersionError(schema_version)
     return _DESERIALIZERS[schema_version](options, app)
 
 def serialize_options(...) -> dict:

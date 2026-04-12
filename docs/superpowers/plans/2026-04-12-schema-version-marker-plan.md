@@ -16,7 +16,7 @@
 |------|---------------|
 | `models.py` | Add `schema_version` field to both models |
 | `migrations/0002_schema_version.py` | Migration for new field |
-| `serialization.py` | Version constants, UnsupportedSchemaVersion, versioned deserializers |
+| `serialization.py` | Version constants, UnsupportedSchemaVersionError, versioned deserializers |
 | `relay.py` | Filter by version range, pass version to deserialize, copy to dead letter |
 | `app.py` | Set CURRENT_SCHEMA_VERSION on create |
 | `admin.py` | Add to list_display, list_filter, readonly_fields; update retry_selected |
@@ -91,7 +91,7 @@ git commit -m "feat(migrations): add schema_version migration"
 - Modify: `django_celery_outbox/serialization.py:1-9`
 - Test: `django_celery_outbox/serialization_tests.py`
 
-- [ ] **Step 1: Write failing test for UnsupportedSchemaVersion**
+- [ ] **Step 1: Write failing test for UnsupportedSchemaVersionError**
 
 Add to `serialization_tests.py`:
 
@@ -99,7 +99,7 @@ Add to `serialization_tests.py`:
 from django_celery_outbox.serialization import (
     CURRENT_SCHEMA_VERSION,
     MIN_SUPPORTED_VERSION,
-    UnsupportedSchemaVersion,
+    UnsupportedSchemaVersionError,
     deserialize_options,
     serialize_options,
 )
@@ -114,7 +114,7 @@ def test_min_supported_version_is_one() -> None:
 
 
 def test_unsupported_schema_version_stores_version() -> None:
-    exc = UnsupportedSchemaVersion(99)
+    exc = UnsupportedSchemaVersionError(99)
 
     assert exc.version == 99
     assert 'Unsupported schema version: 99' in str(exc)
@@ -137,7 +137,7 @@ CURRENT_SCHEMA_VERSION = 1
 MIN_SUPPORTED_VERSION = 1
 
 
-class UnsupportedSchemaVersion(Exception):
+class UnsupportedSchemaVersionError(Exception):
     def __init__(self, version: int):
         self.version = version
         super().__init__(f'Unsupported schema version: {version}')
@@ -155,7 +155,7 @@ Expected: PASS
 
 ```bash
 git add django_celery_outbox/serialization.py django_celery_outbox/serialization_tests.py
-git commit -m "feat(serialization): add version constants and UnsupportedSchemaVersion"
+git commit -m "feat(serialization): add version constants and UnsupportedSchemaVersionError"
 ```
 
 ---
@@ -227,14 +227,14 @@ def test_deserialize_options_with_version_1(f_app: Celery) -> None:
 
 
 def test_deserialize_options_future_version_raises(f_app: Celery) -> None:
-    with pytest.raises(UnsupportedSchemaVersion) as exc_info:
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
         deserialize_options({}, f_app, schema_version=99)
 
     assert exc_info.value.version == 99
 
 
 def test_deserialize_options_below_min_version_raises(f_app: Celery) -> None:
-    with pytest.raises(UnsupportedSchemaVersion) as exc_info:
+    with pytest.raises(UnsupportedSchemaVersionError) as exc_info:
         deserialize_options({}, f_app, schema_version=0)
 
     assert exc_info.value.version == 0
@@ -268,10 +268,10 @@ _DESERIALIZERS: dict[int, Any] = {
 
 def deserialize_options(options: dict[str, Any], app: Celery, schema_version: int) -> dict[str, Any]:
     if schema_version > CURRENT_SCHEMA_VERSION:
-        raise UnsupportedSchemaVersion(schema_version)
+        raise UnsupportedSchemaVersionError(schema_version)
 
     if schema_version < MIN_SUPPORTED_VERSION:
-        raise UnsupportedSchemaVersion(schema_version)
+        raise UnsupportedSchemaVersionError(schema_version)
 
     return _DESERIALIZERS[schema_version](options, app)
 ```
