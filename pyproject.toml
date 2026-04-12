@@ -113,8 +113,11 @@ plugins = ["mypy_django_plugin.main"]
 DJANGO_SETTINGS_MODULE = 'tests.settings'
 pythonpath = ['.']
 python_files = ['*_tests.py']
-python_classes = ['']
+python_classes = ['Test*']
 python_functions = ['test_*']
+filterwarnings = [
+    'ignore::pytest.PytestCollectionWarning',
+]
 
 [tool.django-stubs]
 django_settings_module = "tests.settings"

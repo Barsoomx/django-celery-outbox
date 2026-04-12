@@ -1,4 +1,3 @@
-import fnmatch
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -28,6 +27,14 @@ class PurgeResult:
     task_names: dict[str, int]
 
 
+def _glob_to_regex(pattern: str) -> str:
+    regex = re.escape(pattern)
+    regex = regex.replace(r'\*', '.*')
+    regex = regex.replace(r'\?', '.')
+
+    return f'^{regex}$'
+
+
 def purge_dead_letter(
     older_than_dead: timedelta | None = None,
     older_than_created: timedelta | None = None,
@@ -46,10 +53,7 @@ def purge_dead_letter(
         queryset = queryset.filter(created_at__lt=cutoff)
 
     if task_name_pattern is not None:
-        regex = fnmatch.translate(task_name_pattern)
-        regex = regex.removeprefix('(?s:').removesuffix(')\\Z')
-        regex = regex.replace('(?>', '(?:')
-        regex = f'^{regex}$'
+        regex = _glob_to_regex(task_name_pattern)
         queryset = queryset.filter(task_name__regex=regex)
 
     result = _execute_purge(queryset, dry_run)
