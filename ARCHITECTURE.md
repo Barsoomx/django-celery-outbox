@@ -574,7 +574,7 @@ $ python manage.py celery_outbox_relay \
     │       e.g. 'myproject.celery.app'
     │       importlib.import_module() + getattr()
     │
-    └── Relay(app=..., batch_size=..., liveness_file=..., ...).start()
+    └── Relay(app=..., config=..., ...).start()
 ```
 
 ### 10. Admin (`admin.py`)

@@ -2,7 +2,26 @@ import os
 
 SECRET_KEY = 'test-secret-key'
 
-DB_ENGINE = os.environ.get('DB_ENGINE', 'postgresql')
+
+def _get_default_db_engine() -> str:
+    try:
+        import psycopg  # noqa: F401
+
+        return 'postgresql'
+    except ImportError:
+        pass
+
+    try:
+        import psycopg2  # noqa: F401
+
+        return 'postgresql'
+    except ImportError:
+        pass
+
+    return 'sqlite'
+
+
+DB_ENGINE = os.environ.get('DB_ENGINE', _get_default_db_engine())
 
 if DB_ENGINE == 'postgresql':
     DATABASES = {
@@ -24,6 +43,13 @@ elif DB_ENGINE == 'mysql':
             'PASSWORD': os.environ.get('DB_PASSWORD', 'root'),
             'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
             'PORT': os.environ.get('DB_PORT', '3306'),
+        }
+    }
+elif DB_ENGINE == 'sqlite':
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': ':memory:',
         }
     }
 else:

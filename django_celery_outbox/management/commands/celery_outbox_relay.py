@@ -5,7 +5,7 @@ from celery import Celery
 from django.conf import settings
 from django.core.management.base import BaseCommand, CommandParser
 
-from django_celery_outbox.relay import Relay
+from django_celery_outbox.relay import Relay, RelayConfig
 
 
 class Command(BaseCommand):
@@ -31,6 +31,11 @@ class Command(BaseCommand):
             default=5,
         )
         parser.add_argument(
+            '--stale-timeout-seconds',
+            type=int,
+            default=300,
+        )
+        parser.add_argument(
             '--liveness-file',
             type=str,
             default=None,
@@ -40,11 +45,7 @@ class Command(BaseCommand):
         app = self._get_celery_app()
         relay = Relay(
             app=app,
-            batch_size=options['batch_size'],
-            idle_time=options['idle_time'],
-            backoff_time=options['backoff_time'],
-            max_retries=options['max_retries'],
-            liveness_file=options['liveness_file'],
+            config=RelayConfig.from_options(options),
         )
         relay.start()
 

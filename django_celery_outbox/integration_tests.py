@@ -15,7 +15,7 @@ from django.db import transaction
 
 from django_celery_outbox.app import OutboxCelery
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
-from django_celery_outbox.relay import Relay
+from django_celery_outbox.relay import Relay, RelayConfig
 
 _DUMMY_DSN = 'https://examplePublicKey@o0.ingest.sentry.io/0'
 
@@ -32,24 +32,27 @@ def f_relay_app() -> Celery:
 
 @pytest.fixture()
 def f_relay(f_relay_app: Celery) -> Relay:
-    return Relay(
-        app=f_relay_app,
+    config = RelayConfig.init(
         batch_size=10,
         idle_time=0,
         backoff_time=120,
         max_retries=3,
     )
+    return Relay(
+        app=f_relay_app,
+        config=config,
+    )
 
 
 @pytest.fixture()
 def m_celery_send() -> Generator[MagicMock]:
-    with patch('django_celery_outbox.relay.Celery.send_task') as mock:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task') as mock:
         yield mock
 
 
 @pytest.fixture(autouse=True)
 def m_close_old_connections() -> Generator[MagicMock]:
-    with patch('django_celery_outbox.relay.close_old_connections') as mock:
+    with patch('django_celery_outbox.relay._relay.close_old_connections') as mock:
         yield mock
 
 
