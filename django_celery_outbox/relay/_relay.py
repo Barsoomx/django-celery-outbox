@@ -52,7 +52,7 @@ class Relay:
 
         self._app = app
         self._config = config
-        self._selector = MessageSelector(batch_size=config.batch_size)
+        self._selector = selector or MessageSelector(batch_size=config.batch_size)
 
         self._running = True
 
@@ -169,7 +169,7 @@ class Relay:
                 self._send_task(msg)
             except Exception:
                 span.set_status('internal_error')
-                _logger.exception('celery_outbox_send_failed', exc_info=True)
+                _logger.exception('celery_outbox_send_failed')
                 if msg.retries >= self._config.max_retries - 1:
                     _logger.warning('celery_outbox_max_retries_exceeded')
                     metrics.increment('messages.exceeded', tags={'task_name': msg.task_name})
