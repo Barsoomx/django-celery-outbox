@@ -40,3 +40,5 @@ python manage.py celery_outbox_relay [OPTIONS]
 | `CELERY_OUTBOX_STATSD_PORT` | `int` | `8125` | StatsD server port |
 | `CELERY_OUTBOX_STATSD_PREFIX` | `str` | `'celery_outbox'` | Metric name prefix |
 | `CELERY_OUTBOX_STATSD_TAGS` | `dict` | `{}` | Default tags for all metrics |
+| `CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS` | `bool` | `False` | Disable task_name tags entirely |
+| `CELERY_OUTBOX_MONITORED_TASKS` | `set[str]` | `None` | Allowlist of task names for tags (others become "other") |

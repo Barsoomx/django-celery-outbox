@@ -72,15 +72,6 @@ class Relay:
                 f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
             )
 
-        db_alias = CeleryOutbox.objects.db
-        db_connection = connections[db_alias]
-        if not db_connection.features.has_select_for_update_skip_locked:
-            raise RuntimeError(
-                f'Database backend "{db_connection.vendor}" does not support '
-                f'SELECT FOR UPDATE SKIP LOCKED. '
-                f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
-            )
-
         self._app = app
         self._config = config
         self._selector = selector or MessageSelector(
