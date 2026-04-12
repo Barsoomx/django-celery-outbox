@@ -1,3 +1,4 @@
+import fnmatch
 import re
 from collections import Counter
 from dataclasses import dataclass
@@ -40,6 +41,12 @@ def purge_dead_letter(
     if older_than_created is not None:
         cutoff = now - older_than_created
         queryset = queryset.filter(created_at__lt=cutoff)
+
+    if task_name_pattern is not None:
+        regex = fnmatch.translate(task_name_pattern)
+        regex = regex.removeprefix('(?s:').removesuffix(')\\Z')
+        regex = f'^{regex}$'
+        queryset = queryset.filter(task_name__regex=regex)
 
     return _execute_purge(queryset, dry_run)
 

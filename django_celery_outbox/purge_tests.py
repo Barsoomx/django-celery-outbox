@@ -167,3 +167,65 @@ class TestPurgeDeadLetterOlderThanCreated:
         assert not CeleryOutboxDeadLetter.objects.filter(pk=both_old.pk).exists()
         assert CeleryOutboxDeadLetter.objects.filter(pk=only_dead_old.pk).exists()
         assert CeleryOutboxDeadLetter.objects.filter(pk=only_created_old.pk).exists()
+
+
+@pytest.mark.django_db
+class TestPurgeDeadLetterTaskNamePattern:
+    def test_filters_by_exact_task_name(self) -> None:
+        now = timezone.now()
+        old_time = now - timedelta(days=31)
+        with patch('django.utils.timezone.now', return_value=now):
+            match = CeleryOutboxDeadLetterFactory(task_name='myapp.tasks.send_email')
+            no_match = CeleryOutboxDeadLetterFactory(task_name='myapp.tasks.process_payment')
+        CeleryOutboxDeadLetter.objects.filter(pk__in=[match.pk, no_match.pk]).update(
+            dead_at=old_time
+        )
+
+        result = purge_dead_letter(
+            older_than_dead=timedelta(days=30),
+            task_name_pattern='myapp.tasks.send_email',
+        )
+
+        assert result.deleted_count == 1
+        assert result.task_names == {'myapp.tasks.send_email': 1}
+        assert not CeleryOutboxDeadLetter.objects.filter(pk=match.pk).exists()
+        assert CeleryOutboxDeadLetter.objects.filter(pk=no_match.pk).exists()
+
+    def test_filters_by_wildcard_pattern(self) -> None:
+        now = timezone.now()
+        old_time = now - timedelta(days=31)
+        with patch('django.utils.timezone.now', return_value=now):
+            match1 = CeleryOutboxDeadLetterFactory(task_name='myapp.tasks.send_email')
+            match2 = CeleryOutboxDeadLetterFactory(task_name='myapp.tasks.send_sms')
+            no_match = CeleryOutboxDeadLetterFactory(task_name='other.tasks.process')
+        CeleryOutboxDeadLetter.objects.filter(
+            pk__in=[match1.pk, match2.pk, no_match.pk]
+        ).update(dead_at=old_time)
+
+        result = purge_dead_letter(
+            older_than_dead=timedelta(days=30),
+            task_name_pattern='myapp.tasks.send_*',
+        )
+
+        assert result.deleted_count == 2
+        assert result.task_names == {'myapp.tasks.send_email': 1, 'myapp.tasks.send_sms': 1}
+        assert CeleryOutboxDeadLetter.objects.filter(pk=no_match.pk).exists()
+
+    def test_filters_by_prefix_pattern(self) -> None:
+        now = timezone.now()
+        old_time = now - timedelta(days=31)
+        with patch('django.utils.timezone.now', return_value=now):
+            match1 = CeleryOutboxDeadLetterFactory(task_name='myapp.tasks.a')
+            match2 = CeleryOutboxDeadLetterFactory(task_name='myapp.other.b')
+            no_match = CeleryOutboxDeadLetterFactory(task_name='other.tasks.c')
+        CeleryOutboxDeadLetter.objects.filter(
+            pk__in=[match1.pk, match2.pk, no_match.pk]
+        ).update(dead_at=old_time)
+
+        result = purge_dead_letter(
+            older_than_dead=timedelta(days=30),
+            task_name_pattern='myapp.*',
+        )
+
+        assert result.deleted_count == 2
+        assert CeleryOutboxDeadLetter.objects.filter(pk=no_match.pk).exists()
