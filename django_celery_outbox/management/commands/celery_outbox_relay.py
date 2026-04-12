@@ -31,6 +31,11 @@ class Command(BaseCommand):
             default=5,
         )
         parser.add_argument(
+            '--stale-timeout-seconds',
+            type=int,
+            default=300,
+        )
+        parser.add_argument(
             '--liveness-file',
             type=str,
             default=None,
@@ -48,16 +53,12 @@ class Command(BaseCommand):
     def _get_celery_app() -> Celery:
         app_path = getattr(settings, 'CELERY_OUTBOX_APP', None)
         if not app_path:
-            raise ValueError(
-                'CELERY_OUTBOX_APP setting is required. Set it to dotted path of your Celery app instance, e.g. "myproject.celery.app"'
-            )
+            raise ValueError('CELERY_OUTBOX_APP setting is required. Set it to dotted path of your Celery app instance, e.g. "myproject.celery.app"')
 
         try:
             module_path, attr_name = app_path.rsplit('.', 1)
         except ValueError:
-            raise ValueError(
-                f'CELERY_OUTBOX_APP must be a dotted path (e.g. "myproject.celery.app"), got: "{app_path}"'
-            )
+            raise ValueError(f'CELERY_OUTBOX_APP must be a dotted path (e.g. "myproject.celery.app"), got: "{app_path}"')
 
         module = importlib.import_module(module_path)
         return getattr(module, attr_name)

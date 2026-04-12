@@ -36,6 +36,7 @@ def test_handle_creates_relay_with_correct_params(
         idle_time=2.0,
         backoff_time=60,
         max_retries=3,
+        stale_timeout_seconds=300,
         liveness_file='/var/run/celery-outbox-alive',
     )
 
@@ -46,6 +47,7 @@ def test_handle_creates_relay_with_correct_params(
             idle_time=2.0,
             backoff_time=60,
             max_retries=3,
+            stale_timeout_seconds=300,
             liveness_file='/var/run/celery-outbox-alive',
         ),
     )
@@ -70,10 +72,11 @@ def test_add_arguments_registers_all_params() -> None:
 
     command.add_arguments(parser)
 
-    assert parser.add_argument.call_count == 5
+    assert parser.add_argument.call_count == 6
     arg_names = [c.args[0] for c in parser.add_argument.call_args_list]
     assert '--batch-size' in arg_names
     assert '--idle-time' in arg_names
     assert '--backoff-time' in arg_names
     assert '--max-retries' in arg_names
+    assert '--stale-timeout-seconds' in arg_names
     assert '--liveness-file' in arg_names

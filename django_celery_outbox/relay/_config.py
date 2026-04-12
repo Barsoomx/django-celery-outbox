@@ -55,5 +55,6 @@ class RelayConfig:
             idle_time=float(options['idle_time']),  # type: ignore[arg-type]
             backoff_time=int(options['backoff_time']),  # type: ignore[arg-type]
             max_retries=int(options['max_retries']),  # type: ignore[arg-type]
+            stale_timeout_seconds=int(options['stale_timeout_seconds']),  # type: ignore[arg-type]
             liveness_file=str(options['liveness_file']) if options.get('liveness_file') else None,
         )

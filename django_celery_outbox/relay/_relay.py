@@ -52,7 +52,10 @@ class Relay:
 
         self._app = app
         self._config = config
-        self._selector = selector or MessageSelector(batch_size=config.batch_size)
+        self._selector = selector or MessageSelector(
+            batch_size=config.batch_size,
+            stale_timeout=timedelta(seconds=config.stale_timeout_seconds),
+        )
 
         self._running = True
 

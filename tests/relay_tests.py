@@ -563,6 +563,11 @@ def test_config_validation_zero_max_retries() -> None:
         RelayConfig.init(max_retries=0)
 
 
+def test_config_validation_zero_stale_timeout_seconds() -> None:
+    with pytest.raises(ImproperlyConfigured, match='stale_timeout_seconds must be > 0'):
+        RelayConfig.init(stale_timeout_seconds=0)
+
+
 @pytest.mark.django_db
 def test_processing_logs_batch_summary(m_celery_app: MagicMock) -> None:
     relay = Relay(
