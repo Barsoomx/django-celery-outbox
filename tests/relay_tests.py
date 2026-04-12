@@ -9,6 +9,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django_celery_outbox.factories import CeleryOutboxFactory
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay import Relay, RelayConfig
+from django_celery_outbox.relay._message_selector import MessageSelector
 
 
 @pytest.fixture()
@@ -28,27 +29,33 @@ def f_config() -> RelayConfig:
     )
 
 
+# TODO(mcproger) extract message selector tests?
+@pytest.fixture()
+def f_message_selector() -> MessageSelector:
+    return MessageSelector(batch_size=10)
+
+
 @pytest.fixture()
 def f_relay(m_celery_app: MagicMock, f_config: RelayConfig) -> Relay:
     return Relay(app=m_celery_app, config=f_config)
 
 
 @pytest.mark.django_db
-def test_select_messages_pending_without_updated_at(f_relay: Relay) -> None:
+def test_select_messages_pending_without_updated_at(f_message_selector: MessageSelector) -> None:
     msg = CeleryOutbox.objects.create(
         task_id='task-1',
         task_name='some.task',
         updated_at=None,
     )
 
-    result = f_relay._select_messages()
+    result = f_message_selector.run()
 
     assert len(result) == 1
     assert result[0].id == msg.id
 
 
 @pytest.mark.django_db
-def test_select_messages_stale_updated_at(f_relay: Relay) -> None:
+def test_select_messages_stale_updated_at(f_message_selector: MessageSelector) -> None:
     stale_time = datetime.now(timezone.utc) - timedelta(minutes=10)
     msg = CeleryOutbox.objects.create(
         task_id='task-1',
@@ -56,14 +63,14 @@ def test_select_messages_stale_updated_at(f_relay: Relay) -> None:
         updated_at=stale_time,
     )
 
-    result = f_relay._select_messages()
+    result = f_message_selector.run()
 
     assert len(result) == 1
     assert result[0].id == msg.id
 
 
 @pytest.mark.django_db
-def test_select_messages_skips_inflight(f_relay: Relay) -> None:
+def test_select_messages_skips_inflight(f_message_selector: MessageSelector) -> None:
     recent_time = datetime.now(timezone.utc) - timedelta(minutes=1)
     CeleryOutbox.objects.create(
         task_id='task-1',
@@ -71,13 +78,13 @@ def test_select_messages_skips_inflight(f_relay: Relay) -> None:
         updated_at=recent_time,
     )
 
-    result = f_relay._select_messages()
+    result = f_message_selector.run()
 
     assert len(result) == 0
 
 
 @pytest.mark.django_db
-def test_select_messages_skips_future_retry_after(f_relay: Relay) -> None:
+def test_select_messages_skips_future_retry_after(f_message_selector: MessageSelector) -> None:
     future_time = datetime.now(timezone.utc) + timedelta(seconds=300)
     CeleryOutbox.objects.create(
         task_id='task-1',
@@ -86,14 +93,14 @@ def test_select_messages_skips_future_retry_after(f_relay: Relay) -> None:
         retry_after=future_time,
     )
 
-    result = f_relay._select_messages()
+    result = f_message_selector.run()
 
     assert len(result) == 0
 
 
 @pytest.mark.django_db
-def test_select_messages_respects_batch_size(m_celery_app: MagicMock) -> None:
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(batch_size=2, max_retries=3))
+def test_select_messages_respects_batch_size() -> None:
+    selector = MessageSelector(batch_size=2)
 
     for i in range(5):
         CeleryOutbox.objects.create(
@@ -102,13 +109,13 @@ def test_select_messages_respects_batch_size(m_celery_app: MagicMock) -> None:
             updated_at=None,
         )
 
-    result = relay._select_messages()
+    result = selector.run()
 
     assert len(result) == 2
 
 
 @pytest.mark.django_db
-def test_select_messages_ordered_by_id_asc(f_relay: Relay) -> None:
+def test_select_messages_ordered_by_id_asc(f_message_selector: MessageSelector) -> None:
     msg1 = CeleryOutbox.objects.create(
         task_id='task-1',
         task_name='some.task',
@@ -125,7 +132,7 @@ def test_select_messages_ordered_by_id_asc(f_relay: Relay) -> None:
         updated_at=None,
     )
 
-    result = f_relay._select_messages()
+    result = f_message_selector.run()
 
     assert [m.id for m in result] == [msg1.id, msg2.id, msg3.id]
 

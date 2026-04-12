@@ -4,6 +4,7 @@ from pathlib import Path
 from django.core.exceptions import ImproperlyConfigured
 
 
+# TODO(mcproger): introduce db-backend/dynamically dispatch from django settings
 @dataclass(frozen=True, kw_only=True)
 class RelayConfig:
     batch_size: int

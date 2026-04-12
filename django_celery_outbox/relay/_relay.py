@@ -9,13 +9,14 @@ import sentry_sdk
 import structlog
 from celery import Celery
 from django.db import close_old_connections, connections, transaction
-from django.db.models import F, Q
+from django.db.models import F
 from django.db.models.functions import Now
 from django.dispatch import Signal
 
 from django_celery_outbox import metrics
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay._config import RelayConfig
+from django_celery_outbox.relay._message_selector import MessageSelector
 from django_celery_outbox.serialization import deserialize_options
 from django_celery_outbox.signals import (
     outbox_message_dead_lettered,
@@ -24,11 +25,15 @@ from django_celery_outbox.signals import (
 )
 
 _logger = structlog.getLogger(__name__)
-_STALE_TIMEOUT = timedelta(minutes=5)
 
 
 class Relay:
-    def __init__(self, app: Celery, config: RelayConfig) -> None:
+    def __init__(
+        self,
+        app: Celery,
+        config: RelayConfig,
+        selector: MessageSelector | None = None,
+    ) -> None:
         db_alias = CeleryOutbox.objects.db
         db_connection = connections[db_alias]
         if not db_connection.features.has_select_for_update_skip_locked:
@@ -37,8 +42,11 @@ class Relay:
                 f'SELECT FOR UPDATE SKIP LOCKED. '
                 f'django-celery-outbox requires PostgreSQL >= 9.5 or MySQL >= 8.0.1.'
             )
+
         self._app = app
         self._config = config
+        self._selector = MessageSelector(batch_size=config.batch_size)
+
         self._running = True
 
     def start(self) -> None:
@@ -53,6 +61,7 @@ class Relay:
         )
 
         while self._running:
+            # TODO(mcproger) try-except here
             self._processing()
 
     def _setup_signals(self) -> None:
@@ -69,12 +78,7 @@ class Relay:
 
         with sentry_sdk.start_span(op='queue.process', name='celery_outbox.relay.batch') as batch_span:
             with transaction.atomic():
-                messages = self._select_messages()
-                message_ids = [msg.id for msg in messages]
-                if message_ids:
-                    CeleryOutbox.objects.filter(pk__in=message_ids).update(
-                        updated_at=Now(),
-                    )
+                messages = self._selector.run()
 
             published, failed, exceeded = self._process_messages(messages)
 
@@ -116,21 +120,6 @@ class Relay:
             time.sleep(self._config.idle_time)
         else:
             _logger.debug('celery_outbox_relay_busy')
-
-    def _select_messages(self) -> list[CeleryOutbox]:
-        queryset = (
-            CeleryOutbox.objects.select_for_update(
-                skip_locked=True,
-            )
-            .filter(
-                Q(updated_at__isnull=True)
-                | Q(retry_after__lte=Now())
-                | Q(updated_at__lte=Now() - _STALE_TIMEOUT, retry_after__isnull=True),
-            )
-            .order_by('id')[: self._config.batch_size]
-        )
-
-        return list(queryset)
 
     def _process_messages(
         self,
