@@ -13,20 +13,20 @@ This guarantees **at-least-once delivery**: if the business transaction commits,
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
-│                         APPLICATION                               │
-│                                                                   │
-│   ┌─────────────┐     ┌─────────────────┐     ┌──────────────┐  │
-│   │ Django View │ ──► │ OutboxCelery    │ ──► │ CeleryOutbox │  │
-│   │ (Producer)  │     │ .send_task()    │     │ (DB Table)   │  │
-│   └─────────────┘     └─────────────────┘     └──────────────┘  │
+│                         APPLICATION                              │
+│                                                                  │
+│   ┌─────────────┐     ┌─────────────────┐     ┌──────────────┐   │
+│   │ Django View │ ──► │ OutboxCelery    │ ──► │ CeleryOutbox │   │
+│   │ (Producer)  │     │ .send_task()    │     │ (DB Table)   │   │
+│   └─────────────┘     └─────────────────┘     └──────────────┘   │
 │                                                       │          │
 │                            COMMIT ───────────────────►│          │
 └──────────────────────────────────────────────────────────────────┘
                                                         │
                                                         ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                         RELAY DAEMON                              │
-│                                                                   │
+│                         RELAY DAEMON                             │
+│                                                                  │
 │   ┌─────────────────┐     ┌─────────────────┐     ┌───────────┐  │
 │   │ MessageSelector │ ──► │ Relay           │ ──► │ Celery    │  │
 │   │ (SELECT...SKIP  │     │ ._send_task()   │     │ Broker    │  │
@@ -41,8 +41,8 @@ This guarantees **at-least-once delivery**: if the business transaction commits,
                                                         │
                                                         ▼
 ┌──────────────────────────────────────────────────────────────────┐
-│                         CELERY WORKER                             │
-│                                                                   │
+│                         CELERY WORKER                            │
+│                                                                  │
 │   ┌─────────────┐     ┌─────────────────┐                        │
 │   │ Task        │ ◄── │ Celery Worker   │                        │
 │   │ Execution   │     │ (Consumer)      │                        │
