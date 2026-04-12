@@ -292,6 +292,7 @@ class Relay:
                     sentry_trace_id=msg.sentry_trace_id,
                     sentry_baggage=msg.sentry_baggage,
                     structlog_context=msg.structlog_context,
+                    schema_version=msg.schema_version,
                     failure_reason='max retries exceeded',
                 )
             )

@@ -772,3 +772,19 @@ def test_select_messages_skips_deprecated_versions(f_relay: Relay) -> None:
 
     assert len(messages) == 1
     assert messages[0].id == msg_v1.id
+
+
+@pytest.mark.django_db
+def test_dead_letter_preserves_schema_version(m_celery_app: MagicMock) -> None:
+    msg = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='app.task',
+        retries=5,
+        schema_version=2,
+    )
+
+    relay = Relay(m_celery_app, max_retries=5)
+    relay._move_to_dead_letter([msg.id])
+
+    dead = CeleryOutboxDeadLetter.objects.get(task_id='task-1')
+    assert dead.schema_version == 2
