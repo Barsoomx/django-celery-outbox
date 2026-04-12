@@ -6,6 +6,7 @@ import pytest
 from celery import Celery
 from django.core.exceptions import ImproperlyConfigured
 from django.test import override_settings
+from django.utils import timezone as django_timezone
 
 from django_celery_outbox.factories import CeleryOutboxFactory
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
@@ -879,3 +880,46 @@ def test_exceeded_pre_send_uses_cardinality_control(
     assert len(exceeded_calls) == 1
     assert exceeded_calls[0][1].get('tags', {}) == {}
     m_send.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_oldest_pending_age_seconds_emitted(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    msg = CeleryOutbox.objects.create(
+        task_id='test-id',
+        task_name='test.task',
+        args=[],
+        kwargs={},
+        options={},
+        updated_at=django_timezone.now() - timedelta(seconds=60),
+        retry_after=None,
+    )
+    CeleryOutbox.objects.filter(pk=msg.pk).update(
+        created_at=django_timezone.now() - timedelta(seconds=60),
+    )
+
+    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                f_relay._processing()
+
+    gauge_calls = [c for c in m_metrics.gauge.call_args_list if c[0][0] == 'oldest_pending_age_seconds']
+    assert len(gauge_calls) == 1
+    assert 55 < gauge_calls[0][0][1] < 65
+
+
+@pytest.mark.django_db
+def test_oldest_pending_age_seconds_zero_when_empty(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                f_relay._processing()
+
+    gauge_calls = [c for c in m_metrics.gauge.call_args_list if c[0][0] == 'oldest_pending_age_seconds']
+    assert len(gauge_calls) == 1
+    assert gauge_calls[0][0][1] == 0

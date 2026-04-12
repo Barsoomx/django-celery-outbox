@@ -10,9 +10,10 @@ import sentry_sdk
 import structlog
 from celery import Celery
 from django.db import close_old_connections, connections, transaction
-from django.db.models import F
+from django.db.models import F, Q
 from django.db.models.functions import Now
 from django.dispatch import Signal
+from django.utils import timezone
 
 from django_celery_outbox import metrics
 from django_celery_outbox.metrics import _get_task_tag
@@ -137,6 +138,18 @@ class Relay:
         metrics.gauge('queue.depth', queue_depth)
         metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
         metrics.timing('batch.duration_ms', (time.monotonic() - start_time) * 1000)
+
+        oldest = (
+            CeleryOutbox.objects.filter(Q(retry_after__isnull=True) | Q(retry_after__lte=timezone.now()))
+            .order_by('created_at')
+            .values_list('created_at', flat=True)
+            .first()
+        )
+        if oldest:
+            age_seconds = (timezone.now() - oldest).total_seconds()
+            metrics.gauge('oldest_pending_age_seconds', age_seconds)
+        else:
+            metrics.gauge('oldest_pending_age_seconds', 0)
 
         _logger.info(
             'celery_outbox_batch_processed',
