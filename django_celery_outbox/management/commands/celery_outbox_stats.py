@@ -6,6 +6,7 @@ from django_celery_outbox.stats import get_queue_stats
 
 
 class Command(BaseCommand):
+    help = 'Display outbox queue statistics'
 
     def add_arguments(self, parser: CommandParser) -> None:
         parser.add_argument(

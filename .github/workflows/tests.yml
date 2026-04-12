@@ -24,6 +24,10 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config default-libmysqlclient-dev
       - name: Install dependencies
         run: pip install -e '.[dev,test]'
       - name: Run pip-audit
@@ -39,6 +43,10 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config default-libmysqlclient-dev
       - name: Install package with dev and test dependencies
         run: pip install -e '.[dev,test]'
       - name: Ruff check

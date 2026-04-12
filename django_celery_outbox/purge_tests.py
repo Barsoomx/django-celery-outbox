@@ -69,6 +69,16 @@ class TestPurgeResult:
         assert result.task_names == {}
 
 
+class TestPurgeDeadLetterValidation:
+    def test_raises_when_no_criteria_provided(self) -> None:
+        with pytest.raises(ValueError, match='At least one of older_than_dead or older_than_created'):
+            purge_dead_letter()
+
+    def test_raises_when_only_pattern_provided(self) -> None:
+        with pytest.raises(ValueError, match='At least one of older_than_dead or older_than_created'):
+            purge_dead_letter(task_name_pattern='myapp.*')
+
+
 @pytest.mark.django_db
 class TestPurgeDeadLetterOlderThanDead:
     def test_deletes_records_older_than_specified_dead_at(self) -> None:

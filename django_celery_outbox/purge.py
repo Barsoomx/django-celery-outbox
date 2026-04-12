@@ -1,10 +1,9 @@
 import re
-from collections import Counter
 from dataclasses import dataclass
 from datetime import timedelta
 
 import structlog
-from django.db.models import QuerySet
+from django.db.models import Count, QuerySet
 from django.utils import timezone
 
 from django_celery_outbox.models import CeleryOutboxDeadLetter
@@ -41,6 +40,9 @@ def purge_dead_letter(
     task_name_pattern: str | None = None,
     dry_run: bool = False,
 ) -> PurgeResult:
+    if older_than_dead is None and older_than_created is None:
+        raise ValueError('At least one of older_than_dead or older_than_created must be provided')
+
     queryset = CeleryOutboxDeadLetter.objects.all()
     now = timezone.now()
 
@@ -71,7 +73,8 @@ def purge_dead_letter(
 
 
 def _execute_purge(queryset: QuerySet, dry_run: bool) -> PurgeResult:
-    task_names = dict(Counter(queryset.values_list('task_name', flat=True)))
+    aggregated = queryset.values('task_name').annotate(count=Count('id'))
+    task_names = {row['task_name']: row['count'] for row in aggregated}
     deleted_count = sum(task_names.values())
 
     if not dry_run and deleted_count > 0:
