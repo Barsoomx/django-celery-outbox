@@ -20,8 +20,8 @@ elif DB_ENGINE == 'mysql':
         'default': {
             'ENGINE': 'django.db.backends.mysql',
             'NAME': os.environ.get('DB_NAME', 'test_db'),
-            'USER': os.environ.get('DB_USER', 'test'),
-            'PASSWORD': os.environ.get('DB_PASSWORD', 'test'),
+            'USER': os.environ.get('DB_USER', 'root'),
+            'PASSWORD': os.environ.get('DB_PASSWORD', 'root'),
             'HOST': os.environ.get('DB_HOST', 'mysql'),
             'PORT': os.environ.get('DB_PORT', '3306'),
         }
