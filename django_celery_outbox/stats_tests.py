@@ -125,9 +125,8 @@ def test_get_queue_stats_empty_queue() -> None:
 
 @pytest.mark.django_db
 def test_get_queue_stats_with_pending_messages() -> None:
-    from django_celery_outbox.stats import get_queue_stats
-
     from django_celery_outbox.factories import CeleryOutboxFactory
+    from django_celery_outbox.stats import get_queue_stats
 
     CeleryOutboxFactory.create_batch(5)
 
@@ -138,9 +137,8 @@ def test_get_queue_stats_with_pending_messages() -> None:
 
 @pytest.mark.django_db
 def test_get_queue_stats_with_dlq() -> None:
-    from django_celery_outbox.stats import get_queue_stats
-
     from django_celery_outbox.factories import CeleryOutboxDeadLetterFactory
+    from django_celery_outbox.stats import get_queue_stats
 
     CeleryOutboxDeadLetterFactory.create_batch(3)
 
@@ -151,12 +149,13 @@ def test_get_queue_stats_with_dlq() -> None:
 
 @pytest.mark.django_db
 def test_get_queue_stats_oldest_pending() -> None:
-    from django_celery_outbox.stats import get_queue_stats
     from datetime import timedelta
+
+    from django.utils import timezone
 
     from django_celery_outbox.factories import CeleryOutboxFactory
     from django_celery_outbox.models import CeleryOutbox
-    from django.utils import timezone
+    from django_celery_outbox.stats import get_queue_stats
 
     old_message = CeleryOutboxFactory.create()
     CeleryOutbox.objects.filter(pk=old_message.pk).update(
@@ -172,9 +171,8 @@ def test_get_queue_stats_oldest_pending() -> None:
 
 @pytest.mark.django_db
 def test_get_queue_stats_top_failing() -> None:
-    from django_celery_outbox.stats import get_queue_stats
-
     from django_celery_outbox.factories import CeleryOutboxFactory
+    from django_celery_outbox.stats import get_queue_stats
 
     CeleryOutboxFactory.create(task_name='app.tasks.high_fail', retries=10)
     CeleryOutboxFactory.create(task_name='app.tasks.high_fail', retries=5)
@@ -192,9 +190,8 @@ def test_get_queue_stats_top_failing() -> None:
 
 @pytest.mark.django_db
 def test_get_queue_stats_top_n_limits_results() -> None:
-    from django_celery_outbox.stats import get_queue_stats
-
     from django_celery_outbox.factories import CeleryOutboxFactory
+    from django_celery_outbox.stats import get_queue_stats
 
     CeleryOutboxFactory.create(task_name='app.tasks.task_a', retries=10)
     CeleryOutboxFactory.create(task_name='app.tasks.task_b', retries=5)
@@ -207,9 +204,8 @@ def test_get_queue_stats_top_n_limits_results() -> None:
 
 @pytest.mark.django_db
 def test_get_queue_stats_top_n_zero_returns_empty_list() -> None:
-    from django_celery_outbox.stats import get_queue_stats
-
     from django_celery_outbox.factories import CeleryOutboxFactory
+    from django_celery_outbox.stats import get_queue_stats
 
     CeleryOutboxFactory.create(task_name='app.tasks.task_a', retries=10)
 
