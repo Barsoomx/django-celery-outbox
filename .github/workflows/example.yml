@@ -1,0 +1,42 @@
+name: Test Example Project
+
+on:
+  push:
+    paths: ['examples/**']
+  pull_request:
+    paths: ['examples/**']
+
+jobs:
+  test-example:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Start services
+        working-directory: examples/minimal_django
+        run: docker compose up -d --wait --wait-timeout 120
+
+      - name: Wait for services
+        run: sleep 10
+
+      - name: Create order
+        run: |
+          curl -f -X POST http://localhost:8000/orders/create/ \
+            -H "Content-Type: application/json" \
+            -d '{"email": "ci@test.com", "total": "1.00"}'
+
+      - name: Verify outbox processed
+        working-directory: examples/minimal_django
+        run: |
+          sleep 5
+          docker compose exec -T app python manage.py shell -c "
+          from django_celery_outbox.models import CeleryOutbox
+          count = CeleryOutbox.objects.count()
+          print(f'Pending: {count}')
+          assert count == 0, f'Outbox not flushed: {count} pending'
+          "
+
+      - name: Cleanup
+        working-directory: examples/minimal_django
+        if: always()
+        run: docker compose down -v
