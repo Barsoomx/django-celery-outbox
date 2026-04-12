@@ -37,6 +37,10 @@ def purge_dead_letter(
         cutoff = now - older_than_dead
         queryset = queryset.filter(dead_at__lt=cutoff)
 
+    if older_than_created is not None:
+        cutoff = now - older_than_created
+        queryset = queryset.filter(created_at__lt=cutoff)
+
     return _execute_purge(queryset, dry_run)
 
 
