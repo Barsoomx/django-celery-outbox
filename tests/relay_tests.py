@@ -926,6 +926,54 @@ def test_oldest_pending_age_seconds_zero_when_empty(
 
 
 @pytest.mark.django_db
+def test_exception_logging_includes_traceback_by_default(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    CeleryOutbox.objects.create(
+        task_id='test-id',
+        task_name='test.task',
+        args=[],
+        kwargs={},
+        options={},
+    )
+
+    with override_settings(CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK=True):
+        with patch.object(f_relay, '_send_task', side_effect=ValueError('test error')):
+            with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+                f_relay._process_messages(list(CeleryOutbox.objects.all()))
+
+                error_calls = [c for c in m_logger.error.call_args_list if c[0][0] == 'celery_outbox_send_failed']
+                assert len(error_calls) == 1
+                assert error_calls[0][1].get('exc_info') is True
+
+
+@pytest.mark.django_db
+def test_exception_logging_excludes_traceback_when_disabled(
+    f_relay: Relay,
+    m_metrics: MagicMock,
+) -> None:
+    CeleryOutbox.objects.create(
+        task_id='test-id',
+        task_name='test.task',
+        args=[],
+        kwargs={},
+        options={},
+    )
+
+    with override_settings(CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK=False):
+        with patch.object(f_relay, '_send_task', side_effect=ValueError('test error')):
+            with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+                f_relay._process_messages(list(CeleryOutbox.objects.all()))
+
+                error_calls = [c for c in m_logger.error.call_args_list if c[0][0] == 'celery_outbox_send_failed']
+                assert len(error_calls) == 1
+                assert 'exc_info' not in error_calls[0][1]
+                assert error_calls[0][1]['exception_type'] == 'unknown'
+                assert error_calls[0][1]['exception_message'] == 'test error'
+
+
+@pytest.mark.django_db
 def test_send_latency_ms_emitted_on_success(
     f_relay: Relay,
     m_metrics: MagicMock,

@@ -9,6 +9,7 @@ from types import FrameType
 import sentry_sdk
 import structlog
 from celery import Celery
+from django.conf import settings
 from django.db import close_old_connections, connections, transaction
 from django.db.models import F, Q
 from django.db.models.functions import Now
@@ -49,6 +50,10 @@ def _classify_exception(exc: Exception) -> str:
             return label
 
     return 'unknown'
+
+
+def _should_log_traceback() -> bool:
+    return getattr(settings, 'CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK', True)
 
 
 class Relay:
@@ -212,7 +217,16 @@ class Relay:
             except Exception as e:
                 span.set_status('internal_error')
                 exc_type = _classify_exception(e)
-                _logger.exception('celery_outbox_send_failed')
+
+                log_kwargs = {
+                    'exception_type': exc_type,
+                    'exception_message': str(e),
+                }
+
+                if _should_log_traceback():
+                    _logger.error('celery_outbox_send_failed', **log_kwargs, exc_info=True)
+                else:
+                    _logger.error('celery_outbox_send_failed', **log_kwargs)
                 if msg.retries >= self._config.max_retries - 1:
                     _logger.warning('celery_outbox_max_retries_exceeded')
                     tags = _get_task_tag(msg.task_name)
