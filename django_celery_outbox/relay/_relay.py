@@ -34,6 +34,21 @@ class ProcessResult(Enum):
     EXCEEDED = auto()
 
 
+_EXCEPTION_CATEGORIES: dict[type[Exception], str] = {
+    ConnectionError: 'connection',
+    TimeoutError: 'timeout',
+    OSError: 'os_error',
+}
+
+
+def _classify_exception(exc: Exception) -> str:
+    for exc_class, label in _EXCEPTION_CATEGORIES.items():
+        if isinstance(exc, exc_class):
+            return label
+
+    return 'unknown'
+
+
 class Relay:
     def __init__(
         self,
