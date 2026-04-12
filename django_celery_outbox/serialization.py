@@ -20,6 +20,7 @@ class UnsupportedSchemaVersionError(Exception):
     def version(self) -> int:
         return self._version
 
+
 _TRANSIENT_KEYS = frozenset(
     {
         'producer',
