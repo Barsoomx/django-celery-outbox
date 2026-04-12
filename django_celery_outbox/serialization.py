@@ -158,7 +158,7 @@ def _serialize_kombu_keys(result: dict[str, Any], options: dict[str, Any]) -> No
                 result[key] = val
 
 
-def serialize_options(
+def _serialize_options_v1(
     options: dict[str, Any],
     countdown: float | None = None,
     eta: datetime | None = None,
@@ -180,6 +180,14 @@ def serialize_options(
         result[key] = val
 
     return result
+
+
+def serialize_options(
+    options: dict[str, Any],
+    countdown: float | None = None,
+    eta: datetime | None = None,
+) -> dict[str, Any]:
+    return _serialize_options_v1(options, countdown, eta)
 
 
 def _deserialize_signatures(result: dict[str, Any], app: Celery) -> None:
