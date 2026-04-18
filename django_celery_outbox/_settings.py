@@ -23,11 +23,9 @@ def load_celery_app_setting() -> Celery:
     try:
         module_spec = importlib.util.find_spec(module_path)
     except ModuleNotFoundError as exc:
-        if ((exc.name and module_path.startswith(f'{exc.name}.')) or exc.name == module_path):
+        if (exc.name and module_path.startswith(f'{exc.name}.')) or exc.name == module_path:
             raise ValueError(f'CELERY_OUTBOX_APP module could not be imported: "{module_path}".') from exc
-        raise ValueError(
-            f'CELERY_OUTBOX_APP "{app_path}" could not be loaded because resolving module "{module_path}" failed: {exc}'
-        ) from exc
+        raise ValueError(f'CELERY_OUTBOX_APP "{app_path}" could not be loaded because resolving module "{module_path}" failed: {exc}') from exc
 
     if module_spec is None:
         raise ValueError(f'CELERY_OUTBOX_APP module could not be imported: "{module_path}".')
@@ -35,9 +33,7 @@ def load_celery_app_setting() -> Celery:
     try:
         module = importlib.import_module(module_path)
     except ImportError as exc:
-        raise ValueError(
-            f'CELERY_OUTBOX_APP "{app_path}" could not be loaded because importing module "{module_path}" failed: {exc}'
-        ) from exc
+        raise ValueError(f'CELERY_OUTBOX_APP "{app_path}" could not be loaded because importing module "{module_path}" failed: {exc}') from exc
 
     try:
         app = getattr(module, attr_name)

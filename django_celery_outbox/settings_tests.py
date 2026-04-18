@@ -77,7 +77,11 @@ def test_load_celery_app_setting_propagates_internal_import_errors(monkeypatch: 
 
     with pytest.raises(
         ValueError,
-        match=r'CELERY_OUTBOX_APP "django_celery_outbox\.settings_tests\.valid_celery_app" could not be loaded because importing module "django_celery_outbox\.settings_tests" failed: boom',
+        match=(
+            r'CELERY_OUTBOX_APP "django_celery_outbox\.settings_tests\.valid_celery_app" '
+            r'could not be loaded because importing module '
+            r'"django_celery_outbox\.settings_tests" failed: boom'
+        ),
     ):
         load_celery_app_setting()
 
@@ -94,7 +98,12 @@ def test_load_celery_app_setting_wraps_internal_find_spec_import_errors(monkeypa
 
     with pytest.raises(
         ValueError,
-        match=r'CELERY_OUTBOX_APP "django_celery_outbox\.settings_tests\.valid_celery_app" could not be loaded because resolving module "django_celery_outbox\.settings_tests" failed: No module named \'missing_dependency\'',
+        match=(
+            r'CELERY_OUTBOX_APP "django_celery_outbox\.settings_tests\.valid_celery_app" '
+            r'could not be loaded because resolving module '
+            r'"django_celery_outbox\.settings_tests" failed: '
+            r"No module named 'missing_dependency'"
+        ),
     ):
         load_celery_app_setting()
 
