@@ -46,7 +46,7 @@ def f_relay(f_relay_app: Celery) -> Relay:
 
 @pytest.fixture()
 def m_celery_send() -> Generator[MagicMock]:
-    with patch('django_celery_outbox.relay._relay.Celery.send_task') as mock:
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task') as mock:
         yield mock
 
 

@@ -71,7 +71,7 @@ def test_outbox_message_sent_fires_on_successful_relay(f_relay: Relay) -> None:
 
     outbox_message_sent.connect(handler)
     try:
-        with patch.object(f_relay, '_send_task'):
+        with patch.object(f_relay._publisher, 'publish'):
             f_relay._process_messages([msg])
     finally:
         outbox_message_sent.disconnect(handler)
@@ -97,7 +97,7 @@ def test_outbox_message_failed_fires_on_relay_failure(f_relay: Relay) -> None:
 
     outbox_message_failed.connect(handler)
     try:
-        with patch.object(f_relay, '_send_task', side_effect=RuntimeError('broker down')):
+        with patch.object(f_relay._publisher, 'publish', side_effect=RuntimeError('broker down')):
             f_relay._process_messages([msg])
     finally:
         outbox_message_failed.disconnect(handler)
@@ -128,7 +128,7 @@ def test_outbox_message_dead_lettered_fires_on_exceeded(m_celery_app: MagicMock)
 
     outbox_message_dead_lettered.connect(handler)
     try:
-        with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
             with patch('django_celery_outbox.relay._relay.time.sleep'):
                 with patch('django_celery_outbox.relay._relay.close_old_connections'):
                     relay._processing()
@@ -156,7 +156,7 @@ def test_outbox_message_failed_not_fired_when_max_retries_exceeded(f_relay: Rela
 
     outbox_message_failed.connect(handler)
     try:
-        with patch.object(f_relay, '_send_task', side_effect=RuntimeError('fail')):
+        with patch.object(f_relay._publisher, 'publish', side_effect=RuntimeError('fail')):
             f_relay._process_messages([msg])
     finally:
         outbox_message_failed.disconnect(handler)
@@ -180,7 +180,7 @@ def test_outbox_message_sent_not_fired_on_failure(f_relay: Relay) -> None:
 
     outbox_message_sent.connect(handler)
     try:
-        with patch.object(f_relay, '_send_task', side_effect=RuntimeError('fail')):
+        with patch.object(f_relay._publisher, 'publish', side_effect=RuntimeError('fail')):
             f_relay._process_messages([msg])
     finally:
         outbox_message_sent.disconnect(handler)
