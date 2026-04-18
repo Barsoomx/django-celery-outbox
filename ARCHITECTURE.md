@@ -229,7 +229,8 @@ relay.start()
                 │   │ mutations.move_exceeded_to_dead_letter(...)     │
                 │   │   INSERT INTO celery_outbox_dead_letter         │
                 │   │   DELETE FROM celery_outbox                     │
-                │   │   _send_signal_safe(dead_lettered) per message  │
+                │   │ Relay._processing(): _send_signal_safe(...)     │
+                │   │   per loaded exceeded message after the move    │
                 │   └─────────────────────────────────────────────────┘
                 │
                 ├── gauge('queue.depth', CeleryOutbox.objects.count())
@@ -381,8 +382,12 @@ Message lifecycle:
   │   INSERT INTO celery_outbox_dead_letter   │
   │     (copies all fields + failure_reason)  │
   │   DELETE FROM celery_outbox               │
-  │   signal: outbox_message_dead_lettered    │
   └───────────────────────────────────────────┘
+      │
+      ▼
+  Relay._processing()
+    signal: outbox_message_dead_lettered
+    (per loaded exceeded message, after the move)
 ```
 
 Messages are **never silently deleted**. Failed messages that exceed retries are moved to the
@@ -477,8 +482,8 @@ This prevents user code from crashing the relay daemon.
   │  task_id, task_name,        (wrapped in _send_signal_safe)
   │  retries
   │
-  outbox_message_dead_lettered  Emitted in: relay mutation phase
-     sender=Relay               After rows move into the dead letter table
+  outbox_message_dead_lettered  Emitted in: Relay._processing()
+     sender=Relay               After RelayMutations persists the move
      task_id, task_name,        (wrapped in _send_signal_safe, per message)
      task_ids, task_names
 ```

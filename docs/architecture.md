@@ -52,8 +52,8 @@ This guarantees **at-least-once delivery**: if the business transaction commits,
 
 ## Data Flow
 
-1. **Producer** calls `task.delay()` inside `transaction.atomic()`
-2. **OutboxCelery** intercepts and writes to `CeleryOutbox` table
+1. **Producer** calls `OutboxCelery.send_task()` inside `transaction.atomic()`
+2. **OutboxCelery** serializes the call and writes to `CeleryOutbox` table
 3. **Transaction commits** — task is now visible
 4. **Relay.start()** sets up signal handlers and delayed delivery support
 5. **MessageSelector** selects pending rows with `SELECT FOR UPDATE SKIP LOCKED` and marks them in-flight
