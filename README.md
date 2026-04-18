@@ -42,37 +42,6 @@ python manage.py celery_outbox_relay
 
 **[Full Documentation →](https://barsoomx.github.io/django-celery-outbox/)**
 
-## Testing with pytest
-
-Install pytest support alongside the library:
-
-```bash
-pip install django-celery-outbox pytest pytest-django
-```
-
-Configure Django settings for your test suite, for example:
-
-```ini
-[pytest]
-DJANGO_SETTINGS_MODULE = myproject.settings
-```
-
-`drain_outbox()` uses the real relay path, so it requires the same supported database backends as the relay itself:
-
-- PostgreSQL >= 9.5
-- MySQL >= 8.0.1
-
-```python
-def test_my_code(fake_relay, assert_task_sent, drain_outbox):
-    enqueue_my_task()
-
-    msg = assert_task_sent('my.task')
-    drain_outbox()
-
-    assert len(fake_relay.calls) == 1
-    assert fake_relay.calls[0].task_id == msg.task_id
-```
-
 ## Security
 
 See [Security Guide](https://barsoomx.github.io/django-celery-outbox/security/) for PII handling, traceback logging, and DLQ retention.

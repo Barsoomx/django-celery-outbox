@@ -44,6 +44,7 @@ nav:
     - Task Options: usage/task-options.md
     - Excluded Tasks: usage/excluded-tasks.md
     - Outside Transactions: usage/outside-transactions.md
+    - Testing with pytest: usage/testing-with-pytest.md
   - Relay:
     - Overview: relay/overview.md
     - Command Reference: relay/command-reference.md
