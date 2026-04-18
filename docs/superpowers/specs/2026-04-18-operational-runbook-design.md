@@ -86,14 +86,14 @@ Caption: "Point-in-time snapshot. Not a substitute for metrics over time."
 
 **Table: Metrics for graphing and alerting**
 
-StatsD names shown with the default `MONITORING_STATSD_PREFIX = 'celery_outbox'`. Prometheus-exported names (via statsd-exporter) replace dots with underscores.
+StatsD names shown with the default `MONITORING_STATSD_PREFIX = 'celery_outbox'`. Gauge and counter metrics usually export to Prometheus by replacing dots with underscores. Timer metrics depend on exporter configuration and often appear as histogram-style series such as `_bucket`, `_sum`, and `_count`.
 
 | StatsD metric                         | Prometheus                                 | Type    | Use                                                                                |
 | ------------------------------------- | ------------------------------------------ | ------- | ---------------------------------------------------------------------------------- |
 | `celery_outbox.queue.depth`           | `celery_outbox_queue_depth`                | gauge   | Chart as time series; sawtooth is healthy, monotonic rise means queue is growing.  |
 | `celery_outbox.oldest_pending_age_seconds` | `celery_outbox_oldest_pending_age_seconds` | gauge   | Alert on crossing SLO. Suggested starting point: 60s. Operator tunes to app need. |
 | `celery_outbox.dead_letter.count`     | `celery_outbox_dead_letter_count`          | gauge   | Alert on delta after the baseline stabilizes.                                      |
-| `celery_outbox.batch.duration_ms`     | `celery_outbox_batch_duration_ms`          | timing  | Chart to see per-batch processing time. Absence of new samples = relay stalled.    |
+| `celery_outbox.batch.duration_ms`     | e.g. `celery_outbox_batch_duration_ms_bucket` | timing  | Chart to see per-batch processing time. Absence of new samples = relay stalled.    |
 
 **Log events referenced in triage** (pointer bullet list, links to `observability/logging-events.md`):
 - `celery_outbox_relay_started`
@@ -234,7 +234,7 @@ The runbook links out rather than duplicates:
 
 - Mkdocs strict build succeeds with the new file and nav entry. Run inside the project container with the `docs` extra installed: `docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'`. The project Dockerfile installs `.[dev,test]` but not `.[docs]`, so this step installs the docs tooling on the fly.
 - All internal links in the new page resolve to existing files.
-- All referenced metric names match `docs/observability/metrics.md` and the Prometheus export convention (`celery_outbox_queue_depth`, `celery_outbox_oldest_pending_age_seconds`, `celery_outbox_dead_letter_count`, `celery_outbox_batch_duration_ms`).
+- All referenced metric names match `docs/observability/metrics.md`, including the note that timer metrics may export as histogram-style Prometheus series such as `celery_outbox_batch_duration_ms_bucket`.
 - All referenced log event names exist in the current library (grep the strings in `django_celery_outbox/`).
 - All referenced management commands exist (`celery_outbox_stats`, `celery_outbox_purge_dead_letter`, `celery_outbox_relay`).
 

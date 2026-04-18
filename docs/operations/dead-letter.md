@@ -50,24 +50,27 @@ There is no built-in management command equivalent. If you need scripted replay,
 Example automation sketch:
 
 ```python
+from django.db import transaction
 from django_celery_outbox.models import CeleryOutboxDeadLetter
 from django_celery_outbox.models import CeleryOutbox
 
 dl = CeleryOutboxDeadLetter.objects.get(pk=123)
-CeleryOutbox.objects.create(
-    task_id=dl.task_id,
-    task_name=dl.task_name,
-    args=dl.args,
-    kwargs=dl.kwargs,
-    redacted_args=dl.redacted_args,
-    redacted_kwargs=dl.redacted_kwargs,
-    options=dl.options,
-    schema_version=dl.schema_version,
-    sentry_trace_id=dl.sentry_trace_id,
-    sentry_baggage=dl.sentry_baggage,
-    structlog_context=dl.structlog_context,
-)
-dl.delete()
+
+with transaction.atomic():
+    CeleryOutbox.objects.create(
+        task_id=dl.task_id,
+        task_name=dl.task_name,
+        args=dl.args,
+        kwargs=dl.kwargs,
+        redacted_args=dl.redacted_args,
+        redacted_kwargs=dl.redacted_kwargs,
+        options=dl.options,
+        schema_version=dl.schema_version,
+        sentry_trace_id=dl.sentry_trace_id,
+        sentry_baggage=dl.sentry_baggage,
+        structlog_context=dl.structlog_context,
+    )
+    dl.delete()
 ```
 
 ## Purging Old Entries

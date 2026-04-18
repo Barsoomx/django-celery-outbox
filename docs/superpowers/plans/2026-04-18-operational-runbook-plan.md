@@ -188,14 +188,14 @@ See [Health Checks](health-checks.md) for the `--liveness-file` flag details.
 
 ### Metrics for graphing and alerting
 
-StatsD names are shown with the default `MONITORING_STATSD_PREFIX = 'celery_outbox'`. Prometheus-exported names (via statsd-exporter) replace dots with underscores.
+StatsD names are shown with the default `MONITORING_STATSD_PREFIX = 'celery_outbox'`. Gauge and counter metrics usually export to Prometheus by replacing dots with underscores. Timer metrics depend on your exporter configuration and often appear as histogram-style series such as `_bucket`, `_sum`, and `_count`.
 
 | StatsD metric                               | Prometheus                                   | Type   | Use                                                                                           |
 | ------------------------------------------- | -------------------------------------------- | ------ | --------------------------------------------------------------------------------------------- |
 | `celery_outbox.queue.depth`                 | `celery_outbox_queue_depth`                  | gauge  | Chart as a time series. Sawtooth is healthy; monotonic rise means the queue is growing.       |
 | `celery_outbox.oldest_pending_age_seconds`  | `celery_outbox_oldest_pending_age_seconds`   | gauge  | Alert on crossing your SLO. Suggested starting threshold: 60s. Tune to your application.      |
 | `celery_outbox.dead_letter.count`           | `celery_outbox_dead_letter_count`            | gauge  | Alert on delta after the baseline stabilizes.                                                 |
-| `celery_outbox.batch.duration_ms`           | `celery_outbox_batch_duration_ms`            | timing | Chart per-batch processing time. Absence of new samples means the relay has stalled.          |
+| `celery_outbox.batch.duration_ms`           | e.g. `celery_outbox_batch_duration_ms_bucket` | timing | Chart per-batch processing time. Absence of new samples means the relay has stalled.          |
 
 Full catalogue: [Metrics](../observability/metrics.md).
 
