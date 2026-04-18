@@ -3,13 +3,11 @@ import random
 import signal
 import time
 from datetime import timedelta
-from enum import Enum, auto
 from types import FrameType
 
 import sentry_sdk
 import structlog
 from celery import Celery
-from django.conf import settings
 from django.db import close_old_connections, connections, transaction
 from django.db.models import F
 from django.db.models.functions import Now
@@ -24,6 +22,11 @@ from django_celery_outbox.metrics import get_task_tag
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay._config import RelayConfig
 from django_celery_outbox.relay._message_selector import MessageSelector, get_pending_filter
+from django_celery_outbox.relay._runtime import (
+    ProcessResult,
+    classify_exception,
+    should_log_traceback,
+)
 from django_celery_outbox.serialization import deserialize_options
 from django_celery_outbox.signals import (
     outbox_message_dead_lettered,
@@ -32,32 +35,6 @@ from django_celery_outbox.signals import (
 )
 
 _logger = structlog.getLogger(__name__)
-
-
-class ProcessResult(Enum):
-    PUBLISHED = auto()
-    FAILED = auto()
-    EXCEEDED = auto()
-
-
-# Order matters: subclasses before parents (ConnectionError, TimeoutError < OSError)
-_EXCEPTION_CATEGORIES: dict[type[Exception], str] = {
-    ConnectionError: 'connection',
-    TimeoutError: 'timeout',
-    OSError: 'os_error',
-}
-
-
-def _classify_exception(exc: Exception) -> str:
-    for exc_class, label in _EXCEPTION_CATEGORIES.items():
-        if isinstance(exc, exc_class):
-            return label
-
-    return 'unknown'
-
-
-def _should_log_traceback() -> bool:
-    return getattr(settings, 'CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK', True)
 
 
 class Relay:
@@ -225,14 +202,14 @@ class Relay:
                 self._send_task(msg)
             except Exception as e:
                 span.set_status('internal_error')
-                exc_type = _classify_exception(e)
+                exc_type = classify_exception(e)
 
                 log_kwargs = {
                     'exception_type': exc_type,
                     'exception_message': str(e),
                 }
 
-                if _should_log_traceback():
+                if should_log_traceback():
                     _logger.error('celery_outbox_send_failed', **log_kwargs, exc_info=True)
                 else:
                     _logger.error('celery_outbox_send_failed', **log_kwargs)
