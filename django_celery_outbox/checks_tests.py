@@ -29,11 +29,15 @@ def _mock_connection(
     connection = MagicMock()
     connection.alias = alias
     connection.features.has_select_for_update_skip_locked = skip_locked
-    connection.introspection.table_names.return_value = table_names if table_names is not None else [
-        'django_migrations',
-        'celery_outbox',
-        'celery_outbox_dead_letter',
-    ]
+    connection.introspection.table_names.return_value = (
+        table_names
+        if table_names is not None
+        else [
+            'django_migrations',
+            'celery_outbox',
+            'celery_outbox_dead_letter',
+        ]
+    )
     return connection
 
 

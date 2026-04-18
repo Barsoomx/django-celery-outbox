@@ -40,7 +40,7 @@ grep -rn 'batch.duration_ms\|batch_duration_ms' docs/observability/metrics.md
 # Log events
 grep -n 'celery_outbox_relay_started' docs/observability/logging-events.md
 grep -n 'celery_outbox_batch_processed' docs/observability/logging-events.md
-grep -n 'celery_outbox_message_failed' docs/observability/logging-events.md
+grep -n 'celery_outbox_send_failed' docs/observability/logging-events.md
 grep -n 'celery_outbox_max_retries_exceeded' docs/observability/logging-events.md
 
 # Management commands
@@ -203,7 +203,7 @@ Full catalogue: [Metrics](../observability/metrics.md).
 
 - `celery_outbox_relay_started`
 - `celery_outbox_batch_processed` — absence during steady send is a stall signal
-- `celery_outbox_message_failed`
+- `celery_outbox_send_failed`
 - `celery_outbox_max_retries_exceeded`
 
 Full catalogue: [Logging Events](../observability/logging-events.md).

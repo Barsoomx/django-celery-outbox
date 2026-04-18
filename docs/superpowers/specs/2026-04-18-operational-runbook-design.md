@@ -98,7 +98,7 @@ StatsD names shown with the default `MONITORING_STATSD_PREFIX = 'celery_outbox'`
 **Log events referenced in triage** (pointer bullet list, links to `observability/logging-events.md`):
 - `celery_outbox_relay_started`
 - `celery_outbox_batch_processed` (absence during steady send is a stall signal)
-- `celery_outbox_message_failed`
+- `celery_outbox_send_failed`
 - `celery_outbox_max_retries_exceeded`
 
 **Explicit non-goals for this section** (one line each at the end of the reference):

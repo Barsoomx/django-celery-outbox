@@ -146,11 +146,7 @@ def check_outbox_migrations_applied(
                     )
                 ]
 
-            applied = {
-                name
-                for (app_label, name) in MigrationRecorder(connection).applied_migrations()
-                if app_label == 'django_celery_outbox'
-            }
+            applied = {name for (app_label, name) in MigrationRecorder(connection).applied_migrations() if app_label == 'django_celery_outbox'}
             expected = {
                 name
                 for (app_label, name) in MigrationLoader(
