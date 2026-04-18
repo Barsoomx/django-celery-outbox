@@ -1,6 +1,7 @@
 import os
 
 SECRET_KEY = 'test-secret-key'
+CELERY_OUTBOX_APP = 'tests.celery_app.app'
 
 
 def _get_default_db_engine() -> str:

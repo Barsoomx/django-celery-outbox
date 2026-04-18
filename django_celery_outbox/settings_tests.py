@@ -1,5 +1,5 @@
-from celery import Celery
 import pytest
+from celery import Celery
 from django.test import override_settings
 
 from django_celery_outbox._settings import (
@@ -17,6 +17,7 @@ def test_load_celery_app_setting_returns_celery_instance() -> None:
     assert load_celery_app_setting() is valid_celery_app
 
 
+@override_settings(CELERY_OUTBOX_APP=None)
 def test_load_celery_app_setting_requires_value() -> None:
     with pytest.raises(ValueError, match='CELERY_OUTBOX_APP setting is required'):
         load_celery_app_setting()

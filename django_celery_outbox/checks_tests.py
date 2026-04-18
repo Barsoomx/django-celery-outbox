@@ -1,10 +1,12 @@
+import sys
 from unittest.mock import MagicMock, patch
 
-from celery import Celery
 import pytest
+from celery import Celery
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
-from django.db import DatabaseError, connections as django_connections
+from django.db import DatabaseError
+from django.db import connections as django_connections
 from django.test import override_settings
 
 from django_celery_outbox.checks import (
@@ -64,6 +66,7 @@ def test_check_database_supports_skip_locked_skips_other_database_aliases() -> N
     assert errors == []
 
 
+@override_settings(CELERY_OUTBOX_APP=None)
 def test_check_celery_outbox_app_setting_returns_missing_setting_error() -> None:
     errors = check_celery_outbox_app_setting(None)
 
@@ -137,6 +140,17 @@ def test_check_outbox_migrations_applied_returns_schema_verification_error_when_
             errors = check_outbox_migrations_applied(None)
 
     assert [error.id for error in errors] == ['celery_outbox.E006']
+
+
+def test_check_outbox_migrations_applied_skips_schema_verification_during_migrate() -> None:
+    m_connection = _mock_connection(table_names=['django_migrations'])
+
+    with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
+        with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
+            with patch.object(sys, 'argv', ['python', '-m', 'django', 'migrate']):
+                errors = check_outbox_migrations_applied(None)
+
+    assert errors == []
 
 
 def test_check_outbox_migrations_applied_converts_database_error_to_schema_verification_error() -> None:

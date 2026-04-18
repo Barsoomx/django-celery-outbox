@@ -1,7 +1,7 @@
 from unittest.mock import MagicMock, patch
 
-from celery import Celery
 import pytest
+from celery import Celery
 from django.test import override_settings
 
 from django_celery_outbox.management.commands.celery_outbox_relay import Command
@@ -24,6 +24,7 @@ def test_get_celery_app_rejects_non_celery_instance() -> None:
         Command._get_celery_app()
 
 
+@override_settings(CELERY_OUTBOX_APP=None)
 def test_get_celery_app_raises_without_setting() -> None:
     with pytest.raises(ValueError, match='CELERY_OUTBOX_APP setting is required'):
         Command._get_celery_app()

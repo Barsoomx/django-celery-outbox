@@ -1,3 +1,5 @@
+import sys
+
 from django.conf import settings
 from django.core.checks import Error, Tags, register
 from django.db import DatabaseError, connections
@@ -11,6 +13,10 @@ from django_celery_outbox._settings import (
 )
 
 _REQUIRED_OUTBOX_TABLES = frozenset({'celery_outbox', 'celery_outbox_dead_letter'})
+
+
+def _is_migrate_command() -> bool:
+    return 'migrate' in sys.argv[1:]
 
 
 def _selected_outbox_aliases(databases: object) -> list[str]:
@@ -111,6 +117,9 @@ def check_outbox_migrations_applied(
     app_configs: object,
     **kwargs: object,
 ) -> list[Error]:
+    if _is_migrate_command():
+        return []
+
     errors: list[Error] = []
 
     for db_alias in _selected_outbox_aliases(kwargs.get('databases')):
