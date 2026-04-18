@@ -28,15 +28,15 @@ This guarantees **at-least-once delivery**: if the business transaction commits,
 │                         RELAY DAEMON                             │
 │                                                                  │
 │   ┌─────────────────┐     ┌─────────────────┐     ┌───────────┐  │
-│   │ MessageSelector │ ──► │ Relay           │ ──► │ Celery    │  │
-│   │ (SELECT...SKIP  │     │ ._send_task()   │     │ Broker    │  │
-│   │  LOCKED)        │     └─────────────────┘     └───────────┘  │
-│   └─────────────────┘              │                             │
-│                                    ▼                             │
-│                          ┌─────────────────┐                     │
-│                          │ Dead Letter     │                     │
-│                          │ (on max retry)  │                     │
-│                          └─────────────────┘                     │
+│   │ MessageSelector │ ──► │ Relay           │ ──► │ Relay     │  │
+│   │ claim batch     │     │ orchestration   │     │ Publisher │  │
+│   └─────────────────┘     └─────────────────┘     └─────┬─────┘  │
+│                                    │                     │        │
+│                                    ▼                     ▼        │
+│                          ┌─────────────────┐     ┌───────────┐    │
+│                          │ RelayMutations  │     │ Celery    │    │
+│                          │ retry/delete/DL │     │ Broker    │    │
+│                          └─────────────────┘     └───────────┘    │
 └──────────────────────────────────────────────────────────────────┘
                                                         │
                                                         ▼
@@ -55,9 +55,36 @@ This guarantees **at-least-once delivery**: if the business transaction commits,
 1. **Producer** calls `task.delay()` inside `transaction.atomic()`
 2. **OutboxCelery** intercepts and writes to `CeleryOutbox` table
 3. **Transaction commits** — task is now visible
-4. **Relay** polls table with `SELECT FOR UPDATE SKIP LOCKED`
-5. **Relay** sends to broker via `Celery.send_task()`
-6. **Worker** executes task
+4. **Relay.start()** sets up signal handlers and delayed delivery support
+5. **MessageSelector** selects pending rows with `SELECT FOR UPDATE SKIP LOCKED` and marks them in-flight
+6. **RelayPublisher** restores options, tracing headers, and structlog context, then calls `Celery.send_task()`
+7. **RelayMutations** updates retries, deletes published rows, and moves exceeded rows to dead letter
+8. **Worker** executes task
+
+## Relay Processing Loop
+
+`Relay` is the public daemon class, but it delegates the batch work to internal collaborators:
+
+- `MessageSelector` owns row selection and in-flight stamping
+- `RelayPublisher` owns publish-time option restoration and raw broker send
+- `RelayMutations` owns retry, delete, and dead-letter persistence
+- `_runtime.py` owns exception classification and traceback logging policy
+
+Conceptually, each batch looks like this:
+
+```
+relay.start()
+  ├── _setup_signals()
+  ├── _setup_delayed_delivery()
+  └── while _running:
+        └── _processing()
+              ├── selector.run()
+              ├── publisher.publish(msg) for each selected message
+              ├── mutations.update_failed(failed)
+              ├── mutations.delete_published(published)
+              ├── mutations.move_exceeded_to_dead_letter(exceeded)
+              └── metrics, liveness, idle/busy decision
+```
 
 ## Database Tables
 
@@ -156,7 +183,7 @@ Example with `backoff_time=120`, `max_retries=5`:
 
 ## Context Propagation
 
-Observability context is captured at `send_task()` time and restored at relay time:
+Observability context is captured at `send_task()` time and restored by `RelayPublisher` at relay time:
 
 | Context | Captured | Restored as |
 |---------|----------|-------------|
@@ -206,11 +233,14 @@ __init__.py (lazy exports)
     │     ├── structlog_utils.py (get_structlog_context_json)
     │     └── signals.py (outbox_message_created)
     │
-    ├── relay.py (Relay)
-    │     ├── models.py (CeleryOutbox, CeleryOutboxDeadLetter)
-    │     ├── serialization.py (deserialize_options)
-    │     ├── signals.py (outbox_message_sent/failed/dead_lettered)
-    │     └── metrics.py (increment, gauge, timing)
+    ├── relay/ (Relay package)
+    │     ├── __init__.py (Relay, RelayConfig exports)
+    │     ├── _relay module (Relay orchestration loop)
+    │     ├── _config.py (RelayConfig)
+    │     ├── _message_selector.py (MessageSelector)
+    │     ├── _publisher.py (RelayPublisher)
+    │     ├── _mutations.py (RelayMutations)
+    │     └── _runtime.py (exception policy)
     │
     ├── signals.py (Django Signal instances)
     │
@@ -219,8 +249,8 @@ __init__.py (lazy exports)
     │
     ├── statsd.py (DogStatsd singleton)
     │
-    └── management/commands/celery_outbox_relay.py (Command)
-          └── relay.py (Relay)
+    └── management/commands/celery_outbox_relay (Command module)
+          └── relay (Relay, RelayConfig)
 
 admin.py (standalone, auto-registered)
     └── models.py (CeleryOutbox, CeleryOutboxDeadLetter)

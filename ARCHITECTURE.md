@@ -141,10 +141,17 @@ payload so that operators can inspect failures and retry via admin.
 - `dead_at` is auto-set when the dead letter row is created
 - `failure_reason` stores why the message was moved (e.g. `'max retries exceeded'`)
 
-### 3. Relay (`relay.py`)
+### 3. Relay (`django_celery_outbox.relay`)
 
-Daemon process that reads the outbox table and sends tasks to the broker.
-Runs as a Django management command.
+`Relay` remains the public daemon class used by the management command, but it now acts
+as an orchestration layer over smaller collaborators:
+
+- `MessageSelector` selects pending rows and marks them in-flight
+- `RelayPublisher` restores serialized options, tracing headers, and structlog context,
+  then calls raw `Celery.send_task()`
+- `RelayMutations` updates retry state, deletes published rows, and moves exceeded rows
+  to the dead letter table
+- `_runtime.py` holds exception classification and the traceback logging policy
 
 #### Processing Loop
 
@@ -152,6 +159,7 @@ Runs as a Django management command.
 relay.start()
     │
     ├── _setup_signals()    # SIGTERM/SIGINT -> _running = False
+    ├── _setup_delayed_delivery()
     ├── log 'celery_outbox_relay_started'
     │
     └── while _running:
@@ -160,19 +168,20 @@ relay.start()
                 │
                 ├── close_old_connections()
                 │
-                ├── ┌─── Transaction 1 ────────────────────────┐
-                │   │ messages = _select_messages()            │
-                │   │   SELECT ... FOR UPDATE SKIP LOCKED      │
-                │   │   WHERE updated_at IS NULL               │
-                │   │      OR retry_after <= Now()             │
-                │   │      OR (updated_at <= Now()-5min        │
-                │   │          AND retry_after IS NULL)        │
-                │   │   ORDER BY id ASC                        │
-                │   │   LIMIT batch_size                       │
-                │   │                                          │
-                │   │ UPDATE ... SET updated_at = Now()        │
-                │   │   (mark as "in progress")                │
-                │   └──────────────────────────────────────────┘
+                ├── ┌─── Transaction 1 ───────────────────────────────┐
+                │   │ messages = selector.run()                       │
+                │   │   SELECT ... FOR UPDATE SKIP LOCKED             │
+                │   │   WHERE updated_at IS NULL                      │
+                │   │      OR retry_after <= Now()                    │
+                │   │      OR (updated_at <= Now()-stale_timeout      │
+                │   │          AND retry_after IS NULL)               │
+                │   │   AND schema_version is supported               │
+                │   │   ORDER BY id ASC                               │
+                │   │   LIMIT batch_size                              │
+                │   │                                                 │
+                │   │ UPDATE ... SET updated_at = Now()               │
+                │   │   (mark as "in progress")                       │
+                │   └─────────────────────────────────────────────────┘
                 │
                 ├── _process_messages(messages)    # Network I/O
                 │       │
@@ -183,45 +192,49 @@ relay.start()
                 │       │       │              increment('messages.exceeded')
                 │       │       │       NO  ──┐
                 │       │       │             ▼
-                │       │       ├── try: _send_task(msg)
+                │       │       ├── try: publisher.publish(msg)
                 │       │       │       │
                 │       │       │       ├── deserialize_options()
-                │       │       │       ├── Restore headers (sentry-trace, baggage)
-                │       │       │       ├── Parse structlog context
+                │       │       │       ├── restore headers (sentry-trace, baggage)
+                │       │       │       ├── bind structlog context
                 │       │       │       └── Celery.send_task() -> broker
                 │       │       │
                 │       │       ├── else (Success) -> published[]
                 │       │       │       increment('messages.published')
                 │       │       │       _send_signal_safe(outbox_message_sent)
                 │       │       │
-                │       │       └── except (Failure) -> retries >= max-1?
-                │       │               YES -> exceeded[]
-                │       │                      increment('messages.exceeded')
-                │       │               NO  -> failed[]
-                │       │                      increment('messages.failed')
-                │       │                      _send_signal_safe(outbox_message_failed)
+                │       │       └── except (Failure)
+                │       │               ├── classify_exception()
+                │       │               ├── should_log_traceback()
+                │       │               └── retries >= max-1?
+                │       │                      YES -> exceeded[]
+                │       │                             increment('messages.exceeded')
+                │       │                      NO  -> failed[]
+                │       │                             increment('messages.failed')
+                │       │                             _send_signal_safe(outbox_message_failed)
                 │       │
                 │       └── return (published, failed, exceeded)
                 │
                 ├── close_old_connections()
                 │
-                ├── ┌─── Transaction 2 ────────────────────────┐
-                │   │ _update_failed(failed)                   │
-                │   │   UPDATE SET retries = retries + 1,      │
-                │   │              updated_at = Now(),         │
-                │   │              retry_after = <exp backoff> │
-                │   │                                          │
-                │   │ _delete_done(published)                  │
-                │   │   DELETE WHERE id IN (...)               │
-                │   │                                          │
-                │   │ _move_to_dead_letter(exceeded)           │
-                │   │   INSERT INTO celery_outbox_dead_letter  │
-                │   │   DELETE FROM celery_outbox              │
-                │   │   _send_signal_safe(dead_lettered)       │
-                │   └──────────────────────────────────────────┘
+                ├── ┌─── Transaction 2 ───────────────────────────────┐
+                │   │ mutations.update_failed(failed)                 │
+                │   │   UPDATE retries = retries + 1,                 │
+                │   │          updated_at = Now(),                    │
+                │   │          retry_after = <exp backoff + jitter>   │
+                │   │                                                 │
+                │   │ mutations.delete_published(published)           │
+                │   │   DELETE WHERE id IN (...)                      │
+                │   │                                                 │
+                │   │ mutations.move_exceeded_to_dead_letter(...)     │
+                │   │   INSERT INTO celery_outbox_dead_letter         │
+                │   │   DELETE FROM celery_outbox                     │
+                │   │   _send_signal_safe(dead_lettered) per message  │
+                │   └─────────────────────────────────────────────────┘
                 │
                 ├── gauge('queue.depth', CeleryOutbox.objects.count())
                 ├── gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
+                ├── gauge('oldest_pending_age_seconds', ...)
                 ├── timing('batch.duration_ms', elapsed_ms)
                 ├── log 'celery_outbox_batch_processed'
                 │
@@ -363,7 +376,7 @@ Message lifecycle:
       │
       ▼
   ┌───────────────────────────────────────────┐
-  │ _move_to_dead_letter()                    │
+  │ RelayMutations.move_exceeded_to_dead_letter() │
   │   INSERT INTO celery_outbox_dead_letter   │
   │     (copies all fields + failure_reason)  │
   │   DELETE FROM celery_outbox               │
@@ -422,7 +435,7 @@ Handles conversion between Python/Celery objects and JSON-safe dicts for databas
 The outbox captures observability context at `send_task` time and restores it at relay time.
 
 ```
-  send_task() time                              relay _send_task() time
+  send_task() time                         RelayPublisher.publish() time
 ┌───────────────────┐                         ┌───────────────────────┐
 │                   │                         │                       │
 │ sentry_sdk        │                         │ headers:              │
@@ -454,17 +467,17 @@ This prevents user code from crashing the relay daemon.
   │  sender=OutboxCelery        After CeleryOutbox.objects.create()
   │  task_id, task_name         (NOT wrapped — propagates to caller)
   │
-  outbox_message_sent           Emitted in: relay.py (_process_messages, else block)
-  │  sender=Relay               After successful _send_task()
+  outbox_message_sent           Emitted in: relay publish path
+  │  sender=Relay               After RelayPublisher.publish() succeeds
   │  task_id, task_name         (wrapped in _send_signal_safe)
   │
-  outbox_message_failed         Emitted in: relay.py (_process_messages, except block)
-  │  sender=Relay               After failed _send_task(), when retries remain
+  outbox_message_failed         Emitted in: relay publish path
+  │  sender=Relay               After publish failure, when retries remain
   │  task_id, task_name,        (wrapped in _send_signal_safe)
   │  retries
   │
-  outbox_message_dead_lettered  Emitted in: relay.py (_move_to_dead_letter)
-     sender=Relay               After bulk_create into dead letter table
+  outbox_message_dead_lettered  Emitted in: relay mutation phase
+     sender=Relay               After rows move into the dead letter table
      task_id, task_name,        (wrapped in _send_signal_safe, per message)
      task_ids, task_names
 ```
@@ -630,23 +643,21 @@ the dead letter table. This re-enqueues them for the relay to process.
                                                  │
  _processing():                                  │
    close_old_connections()                       │
-   ┌─ TX1 ──────────────────────┐                │
-   │ SELECT ... FOR UPDATE  <───┼────────────────┘
-   │   SKIP LOCKED              │
-   │   WHERE updated_at IS NULL │
-   │     OR retry_after <= Now  │
-   │     OR (stale > 5min AND   │
-   │         retry_after NULL)  │
-   │ UPDATE set updated_at=Now()│
-   │ COMMIT                     │
-   └────────────────────────────┘
+   ┌─ TX1 ─────────────────────────┐             │
+   │ selector.run()          <─────┼─────────────┘
+   │   SELECT ... FOR UPDATE       │
+   │   SKIP LOCKED                 │
+   │   UPDATE updated_at=Now()     │
+   │   COMMIT                      │
+   └───────────────────────────────┘
                 │
                 ▼
  4. Broker communication
  ───────────────────────
 
-   _send_task(msg):
+   publisher.publish(msg):
      deserialize_options()
+     restore headers + structlog
      Celery.send_task(                  ┌─────────────────┐
        name='process_order',            │                 │
        args=[42],                 ───>  │  Message Broker │
@@ -658,17 +669,13 @@ the dead letter table. This re-enqueues them for the relay to process.
  --> signal: outbox_message_sent                 │
                                                  │
    close_old_connections()                       │
-   ┌─ TX2 ──────────────────────┐                │
-   │ DELETE FROM celery_outbox  │                │
-   │   WHERE id IN (published)  │                │
-   │                            │                │
-   │ UPDATE failed: retries++,  │                │
-   │   retry_after = exp backoff│                │
-   │                            │                │
-   │ MOVE exceeded ->           │                │
-   │   celery_outbox_dead_letter│                │
-   │ COMMIT                     │                │
-   └────────────────────────────┘                │
+   ┌─ TX2 ─────────────────────────┐             │
+   │ mutations.update_failed()     │             │
+   │ mutations.delete_published()  │             │
+   │ mutations.move_exceeded_to_   │             │
+   │   dead_letter()               │             │
+   │ COMMIT                        │             │
+   └───────────────────────────────┘             │
                                                  │
  5. Celery Worker                                │
  ────────────────                                │
@@ -718,11 +725,14 @@ __init__.py (lazy exports)
     │     ├── structlog_utils.py (get_structlog_context_json)
     │     └── signals.py (outbox_message_created)
     │
-    ├── relay.py (Relay)
-    │     ├── models.py (CeleryOutbox, CeleryOutboxDeadLetter)
-    │     ├── serialization.py (deserialize_options)
-    │     ├── signals.py (outbox_message_sent/failed/dead_lettered)
-    │     └── metrics.py (increment, gauge, timing)
+    ├── relay/ (Relay package)
+    │     ├── __init__.py (Relay, RelayConfig exports)
+    │     ├── _relay module (Relay orchestration loop)
+    │     ├── _config.py (RelayConfig)
+    │     ├── _message_selector.py (MessageSelector, pending filter)
+    │     ├── _publisher.py (RelayPublisher)
+    │     ├── _mutations.py (RelayMutations)
+    │     └── _runtime.py (exception classification, traceback policy)
     │
     ├── signals.py (Django Signal instances)
     │     (no internal deps)
@@ -733,8 +743,8 @@ __init__.py (lazy exports)
     ├── statsd.py (DogStatsd singleton)
     │     (reads django.conf.settings)
     │
-    └── management/commands/celery_outbox_relay.py (Command)
-          └── relay.py (Relay)
+    └── management/commands/celery_outbox_relay (Command module)
+          └── relay (Relay, RelayConfig)
 
 admin.py (standalone, auto-registered)
     └── models.py (CeleryOutbox, CeleryOutboxDeadLetter)
@@ -745,11 +755,11 @@ admin.py (standalone, auto-registered)
 ```
 celery_outbox_pending_idx:
     Partial index on (id) WHERE updated_at IS NULL
-    Used by: _select_messages() for fresh messages
+    Used by: MessageSelector for fresh messages
 
 retry_after index:
     B-tree index on retry_after
-    Used by: _select_messages() for backoff-eligible messages
+    Used by: MessageSelector for backoff-eligible messages
 
 task_id index:
     B-tree index on task_id
