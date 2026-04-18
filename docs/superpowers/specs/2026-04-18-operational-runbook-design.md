@@ -25,7 +25,7 @@ The README's original "Health check endpoint for load balancer / k8s probes" fea
 - No `CREATE INDEX CONCURRENTLY` guidance. The `celery_outbox` table is near-empty in steady state; if it has grown enough to need concurrent indexing, the incident is "relay is down," not "the migration is slow." `CREATE INDEX CONCURRENTLY` also cannot run inside a transaction, which makes it fragile under Django migrate + Helm pre-upgrade hooks: a failed run leaves an `INVALID` index that blocks retries and requires manual `DROP INDEX` cleanup. Scope change is recorded on issue #20.
 - No partitioning guidance for the outbox table, for the same reason.
 - No backup/restore guidance specific to outbox tables. Standard Postgres backup covers `celery_outbox_dead_letter`.
-- No HTTP health endpoint documentation - only file-based liveness exists.
+- No library-shipped HTTP health endpoint. File-based liveness is the only one the package provides. An example user-built Django view is documented at `operations/health-checks.md` for load-balancer use.
 - No auto-remediation scripts. The runbook tells operators what to do, not the system.
 - No new library code. Documentation only.
 
@@ -102,7 +102,7 @@ StatsD names shown with the default `MONITORING_STATSD_PREFIX = 'celery_outbox'`
 - `celery_outbox_max_retries_exceeded`
 
 **Explicit non-goals for this section** (one line each at the end of the reference):
-- No HTTP health endpoint exists. File-based liveness only (see `operations/health-checks.md`).
+- The library does not ship an HTTP health endpoint. File-based liveness is the only one provided; see `operations/health-checks.md` for a user-built view example.
 - No auto-remediation. This page is for humans.
 
 ### 4. Incident playbook shape
@@ -151,7 +151,7 @@ Every playbook uses this fixed layout:
 - Past broker outage, now recovered -> purge old records with `python manage.py celery_outbox_purge_dead_letter --older-than-dead 7d`. Cross-ref `operations/dead-letter.md`.
 - Task name not registered on workers -> roll workers forward to include the task, or revert the producer deploy.
 - Serialization errors -> fix the producing code and redeploy.
-- **Library does not ship a re-injection tool.** If replay is needed, it is an application-level task. State this explicitly in the runbook so operators do not hunt for a command that does not exist.
+- **Re-injection is possible via the Django admin.** `CeleryOutboxDeadLetter` admin exposes the `retry_selected` action, which bulk-copies selected rows back into `celery_outbox` for another attempt. See `operations/admin-interface.md`. There is no management-command equivalent; admin or a custom management command are the supported paths.
 
 **Verify**: `celery_outbox_dead_letter_count` flat; top `failure_reason` values no longer appearing in new rows.
 
@@ -200,10 +200,10 @@ Every playbook uses this fixed layout:
 
 **Principles**:
 
-1. Rolling back code is cheap. Rolling back schema is not. `helm rollback` (or equivalent) reverts image and config, not the database. This library ships migrations forward-only.
+1. Rolling back code is cheap. Rolling back schema is not. `helm rollback` (or equivalent) reverts image and config, not the database. The library's migrations use standard reversible Django operations (add column, add table, add index), so `python manage.py migrate django_celery_outbox <previous_migration>` can roll the schema back — but destructive reverses (dropping a column that now holds data) still lose rows. Verify the reverse is safe before running it.
 2. Three scenarios, three procedures:
    - **Bad image, schema fine** -> standard rollback. Works because migrations are additive.
-   - **Bad schema, needs reversal** -> requires writing a reverse Django migration by hand. This is development work, not a runbook step. The runbook says this out loud so operators do not try to invent one during the incident.
+   - **Bad schema, needs reversal** -> run the reverse migration with `manage.py migrate django_celery_outbox <previous_migration>` *after* confirming it does not drop data you need. For non-trivial reverses (data transformations, dropping columns that have been written to) write a forward-fix migration instead.
    - **Corruption or data loss** -> out of scope. Point at standard Postgres point-in-time recovery and stop.
 3. Watch the DLQ during rollback. A rollback that triggers incompatibility (workers on old code cannot deserialize tasks produced by the newer relay) shows up as DLQ growth. Link to the DLQ-growing playbook.
 
@@ -227,7 +227,7 @@ The runbook links out rather than duplicates:
 
 ## Testing / verification
 
-- Mkdocs strict build succeeds with the new file and nav entry: `mkdocs build --strict`.
+- Mkdocs strict build succeeds with the new file and nav entry. Run inside the project container with the `docs` extra installed: `docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'`. The project Dockerfile installs `.[dev,test]` but not `.[docs]`, so this step installs the docs tooling on the fly.
 - All internal links in the new page resolve to existing files.
 - All referenced metric names match `docs/observability/metrics.md` and the Prometheus export convention (`celery_outbox_queue_depth`, `celery_outbox_oldest_pending_age_seconds`, `celery_outbox_dead_letter_count`, `celery_outbox_batch_duration_ms`).
 - All referenced log event names exist in the current library (grep the strings in `django_celery_outbox/`).

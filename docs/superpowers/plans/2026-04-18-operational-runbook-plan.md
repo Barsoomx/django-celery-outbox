@@ -6,7 +6,7 @@
 
 **Architecture:** Single new markdown page under mkdocs' `Operations:` nav group. Content derives verbatim from the approved spec (`docs/superpowers/specs/2026-04-18-operational-runbook-design.md`). Each playbook follows a fixed `Detect → Triage → Fix → Verify` shape. No library code changes; verification is `mkdocs build --strict` plus grep checks that every referenced metric name, log event, management command, and model field exists in the codebase today.
 
-**Tech Stack:** Markdown, mkdocs 1.5+, mkdocs-material 9.5+. Verification runs inside `docker compose run --rm app` because the project Docker image is the canonical Python environment in this repo. Pre-commit hook on this machine is broken (CRLF line endings from Windows-generated hook); per user instruction, all commits in this plan use `git commit --no-verify`.
+**Tech Stack:** Markdown, mkdocs 1.5+, mkdocs-material 9.5+. Verification runs inside `docker compose run --rm app`. The project image installs `.[dev,test]` at build time but not `.[docs]`, so every mkdocs run in this plan first installs the `docs` extra from the project's `pyproject.toml` in the same container invocation. Pre-commit hook on this machine is broken (CRLF line endings from Windows-generated hook); per user instruction, all commits in this plan use `git commit --no-verify`.
 
 **Scope ground rules (from spec):**
 - No `CREATE INDEX CONCURRENTLY`, partitioning, or backup/restore guidance for the outbox tables.
@@ -123,7 +123,7 @@ No other change to `mkdocs.yml`.
 - [ ] **Step 4: Verify mkdocs build --strict passes**
 
 ```bash
-docker compose run --rm app bash -c 'pip install -q mkdocs-material && mkdocs build --strict'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'
 ```
 
 Expected: exit code 0. Output ends with a line like `INFO - Documentation built in X.XX seconds`.
@@ -210,14 +210,14 @@ Full catalogue: [Logging Events](../observability/logging-events.md).
 
 ### Explicit non-goals
 
-- No HTTP health endpoint — file-based liveness only. See [Health Checks](health-checks.md).
+- The library does not ship an HTTP health endpoint. File-based liveness is the only one provided. See [Health Checks](health-checks.md) for a user-built Django view example if you need an HTTP probe.
 - No auto-remediation. This runbook tells operators what to do; it does not run on its own.
 ````
 
 - [ ] **Step 2: Verify mkdocs build**
 
 ```bash
-docker compose run --rm app bash -c 'mkdocs build --strict'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'
 ```
 
 Expected: exit code 0. Strict mode will fail if any internal link is broken. If it fails with a "contains a link to" error, the cross-reference paths above are wrong relative to `docs/operations/runbook.md`. Correct the paths and re-run.
@@ -286,7 +286,7 @@ Replace the block from `### Queue growing` through its HTML comment placeholder 
 - [ ] **Step 2: Verify mkdocs build**
 
 ```bash
-docker compose run --rm app bash -c 'mkdocs build --strict'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'
 ```
 
 Expected: exit code 0.
@@ -353,7 +353,7 @@ All four can be answered from the Django admin ([Admin Interface](admin-interfac
 - **Task name not registered on workers.** Roll workers forward to include the task, or revert the producer deploy.
 - **Serialization errors.** Fix the producing code and redeploy.
 
-**This library does not ship a re-injection tool.** If you need to replay dead-lettered messages to Celery, that is application-level work — there is no built-in command for it.
+**Replaying dead-lettered messages.** Use the Django admin: `CeleryOutboxDeadLetter` has a `retry_selected` bulk action that copies the selected rows back into `celery_outbox` for another send attempt. See [Admin Interface](admin-interface.md). There is no management-command equivalent; if you need automation, wrap the model-level `CeleryOutboxDeadLetter` → `CeleryOutbox` copy in your own command.
 
 **Verify.** `celery_outbox_dead_letter_count` flat; the top `failure_reason` values stop appearing in newly-inserted rows.
 ````
@@ -361,7 +361,7 @@ All four can be answered from the Django admin ([Admin Interface](admin-interfac
 - [ ] **Step 3: Verify mkdocs build**
 
 ```bash
-docker compose run --rm app bash -c 'mkdocs build --strict'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'
 ```
 
 Expected: exit code 0.
@@ -427,7 +427,7 @@ Replace the block from `### Relay hanging` through its HTML comment placeholder 
 - [ ] **Step 2: Verify mkdocs build**
 
 ```bash
-docker compose run --rm app bash -c 'mkdocs build --strict'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'
 ```
 
 Expected: exit code 0. Strict mode verifies the anchor link to `troubleshooting.md#database-lock-contention`.
@@ -543,7 +543,7 @@ Deployment layout references: [Kubernetes](../deployment/kubernetes.md).
 - [ ] **Step 2: Verify mkdocs build**
 
 ```bash
-docker compose run --rm app bash -c 'mkdocs build --strict'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'
 ```
 
 Expected: exit code 0.
@@ -580,10 +580,10 @@ Replace the block from `## Rollback` through its HTML comment placeholder with t
 
 ### Principles
 
-1. **Rolling back code is cheap. Rolling back schema is not.** `helm rollback` (or equivalent) reverts the container image and config; it does **not** revert the database. This library ships migrations forward-only.
+1. **Rolling back code is cheap. Rolling back schema is not.** `helm rollback` (or equivalent) reverts the container image and config; it does **not** revert the database. The library's migrations use standard reversible Django operations, so `python manage.py migrate django_celery_outbox <previous_migration>` can roll the schema back — but destructive reverses (dropping a column that now holds data) still lose rows. Verify the reverse is safe for your data before running it.
 2. **Three scenarios, three procedures.**
     - **Bad image, schema is fine** → standard rollback. Works because migrations are additive (see [Zero-downtime upgrade](#zero-downtime-upgrade)).
-    - **Bad schema, needs reversal** → requires writing a reverse Django migration by hand. This is development work, not a runbook step. Do not invent a migration during the incident.
+    - **Bad schema, needs reversal** → run `python manage.py migrate django_celery_outbox <previous_migration>` *after* confirming it will not drop data you need. For non-trivial reverses (data transforms, dropping columns that have been written to) write a forward-fix migration instead — do not invent one during the incident.
     - **Corruption or data loss** → out of scope for this runbook. Use standard Postgres point-in-time recovery.
 3. **Watch the DLQ during the rollback.** A rollback that introduces incompatibility (e.g., workers on old code cannot deserialize tasks produced by the newer relay) shows up as DLQ growth. See [Dead-letter queue growing](#dead-letter-queue-growing).
 
@@ -603,14 +603,14 @@ helm rollback <release> <revision>
 - `celery_outbox_batch_processed` log events continue.
 - `celery_outbox_dead_letter_count` does not climb.
 
-!!! warning "Schema changes cannot be rolled back by `helm rollback`"
-    If the release being rolled back introduced a schema migration you need to reverse, **stop**. `helm rollback` reverts images and config only. Write a forward-fix migration and deploy it as a normal release instead.
+!!! warning "Schema changes are not rolled back by `helm rollback`"
+    `helm rollback` reverts images and config. Schema reversals are a separate, manual decision: they are possible via `manage.py migrate django_celery_outbox <previous_migration>`, but only if the reverse does not lose data you need. For non-trivial reverses, write a forward-fix migration and deploy it as a normal release instead.
 ````
 
 - [ ] **Step 2: Verify mkdocs build**
 
 ```bash
-docker compose run --rm app bash -c 'mkdocs build --strict'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'
 ```
 
 Expected: exit code 0. The `!!! warning` admonition requires mkdocs-material, which is already a project dependency.
@@ -641,7 +641,7 @@ No new content. This task runs the verification checklist from spec §"Testing /
 - [ ] **Step 1: Mkdocs strict build**
 
 ```bash
-docker compose run --rm app bash -c 'mkdocs build --strict'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict'
 ```
 
 Expected: exit code 0 with no warnings. If warnings appear in strict mode, they are treated as errors and the build fails — fix them before continuing.
@@ -673,7 +673,7 @@ For each name printed, `ls django_celery_outbox/management/commands/<name>.py` m
 - [ ] **Step 4: Verify every relative link resolves**
 
 ```bash
-docker compose run --rm app bash -c 'mkdocs build --strict' 2>&1 | grep -iE 'warning|link' || echo 'OK — no link warnings'
+docker compose run --rm app bash -c 'pip install -q -e .[docs] && mkdocs build --strict' 2>&1 | grep -iE 'warning|link' || echo 'OK — no link warnings'
 ```
 
 Expected output: `OK — no link warnings`.
