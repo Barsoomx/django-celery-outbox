@@ -11,7 +11,6 @@ from django_celery_outbox.relay._mutations import RelayMutations
 @pytest.mark.django_db
 def test_update_failed_increments_retries_and_sets_retry_after() -> None:
     mutations = RelayMutations(backoff_time=120)
-    before = timezone.now()
     msg = CeleryOutbox.objects.create(
         task_id='task-1',
         task_name='some.task',
@@ -26,7 +25,8 @@ def test_update_failed_increments_retries_and_sets_retry_after() -> None:
     assert msg.retries == 2
     assert msg.updated_at is not None
     assert msg.retry_after is not None
-    assert msg.retry_after >= before + timedelta(seconds=239)
+    retry_delay = msg.retry_after - msg.updated_at
+    assert abs(retry_delay - timedelta(seconds=240)) < timedelta(seconds=1)
 
 
 @pytest.mark.django_db
