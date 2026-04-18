@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from typing import TypedDict, cast
 
 from django.db.models import Sum
 from django.utils import timezone
@@ -7,12 +8,17 @@ from django.utils import timezone
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 
 
+class TopFailingTask(TypedDict):
+    task_name: str
+    total_retries: int
+
+
 @dataclass
 class QueueStats:
     queue_depth: int
     dlq_count: int
     oldest_pending_seconds: float | None
-    top_failing: list[dict]
+    top_failing: list[TopFailingTask]
 
     def to_dict(self) -> dict:
         return {
@@ -66,13 +72,16 @@ def get_queue_stats(top_n: int = 10) -> QueueStats:
     else:
         oldest_pending_seconds = None
 
-    top_failing: list[dict] = []
+    top_failing: list[TopFailingTask] = []
     if top_n > 0:
-        top_failing = list(
-            CeleryOutbox.objects.values('task_name')
-            .annotate(total_retries=Sum('retries'))
-            .filter(total_retries__gt=0)
-            .order_by('-total_retries')[:top_n]
+        top_failing = cast(
+            list[TopFailingTask],
+            list(
+                CeleryOutbox.objects.values('task_name')
+                .annotate(total_retries=Sum('retries'))
+                .filter(total_retries__gt=0)
+                .order_by('-total_retries')[:top_n]
+            ),
         )
 
     return QueueStats(
