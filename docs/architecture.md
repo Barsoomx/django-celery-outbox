@@ -7,7 +7,9 @@ Instead of sending tasks directly to the broker (where they can be lost if the t
 tasks are written to a database table within the same transaction as business data.
 A separate relay process reads the table and sends tasks to the broker asynchronously.
 
-This guarantees **at-least-once delivery**: if the business transaction commits, the task will eventually be sent.
+This is designed to provide durable recovery for committed tasks: the outbox row remains available
+for relay retry or recovery until it is published or dead-lettered, but end-to-end delivery still
+depends on broker acknowledgement semantics.
 
 ## Components
 
@@ -99,8 +101,8 @@ Pending messages waiting for relay:
 | task_name | CharField(255) | Dotted task name |
 | args | JSONField | Positional arguments |
 | kwargs | JSONField | Keyword arguments |
-| redacted_args | JSONField | Redacted positional arguments for inspection |
-| redacted_kwargs | JSONField | Redacted keyword arguments for inspection |
+| redacted_args | JSONField | Optional sanitized positional arguments for inspection; falls back to original when `NULL` |
+| redacted_kwargs | JSONField | Optional sanitized keyword arguments for inspection; falls back to original when `NULL` |
 | options | JSONField | Task options (serialized) |
 | schema_version | SmallIntegerField | Serialized payload format version |
 | retries | SmallIntegerField | Current retry count |
@@ -122,8 +124,8 @@ Failed messages exceeding max retries:
 | task_name | CharField(255) | Dotted task name |
 | args | JSONField | Original arguments |
 | kwargs | JSONField | Original keyword arguments |
-| redacted_args | JSONField | Redacted positional arguments for inspection |
-| redacted_kwargs | JSONField | Redacted keyword arguments for inspection |
+| redacted_args | JSONField | Optional sanitized positional arguments for inspection; falls back to original when `NULL` |
+| redacted_kwargs | JSONField | Optional sanitized keyword arguments for inspection; falls back to original when `NULL` |
 | options | JSONField | Task options (serialized) |
 | sentry_trace_id | CharField(512) | Sentry trace propagation header |
 | sentry_baggage | CharField(2048) | Sentry baggage header |
@@ -208,9 +210,11 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 | Relay crashes before sending to broker | Message remains in outbox. Recovered after stale timeout (5 min). |
 | Relay sends to broker, crashes before TX2 | Message re-sent after stale timeout recovery. **Duplicate delivery.** |
 | Broker rejects message | Relay catches exception, message retried with backoff. |
+| Broker fails silently (no publisher confirms) | Message may still be lost after the relay deletes the outbox row. |
 | Relay max retries exceeded | Message moved to dead letter table. Operator can retry via admin. |
 
-**Delivery semantics: at-least-once.** Consumers must be idempotent.
+**Delivery semantics:** duplicate-tolerant recovery with broker-confirm caveats, not an
+unconditional end-to-end at-least-once guarantee. Consumers must be idempotent.
 
 ## Schema Versioning
 

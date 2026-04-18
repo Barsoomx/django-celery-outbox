@@ -7,7 +7,9 @@ Instead of sending tasks directly to the broker (where they can be lost if the t
 tasks are written to a database table within the same transaction as business data.
 A separate relay process reads the table and sends tasks to the broker asynchronously.
 
-This guarantees **at-least-once delivery**: if the business transaction commits, the task will eventually be sent.
+This is designed to provide durable recovery for committed tasks: the outbox row remains available
+for relay retry or recovery until it is published or dead-lettered, but end-to-end delivery still
+depends on broker acknowledgement semantics.
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -114,6 +116,8 @@ Database table storing pending tasks.
 - `updated_at = <timestamp>` means "in progress or failed"
 - `retry_after` stores the next eligible retry time (exponential backoff)
 - `retries` tracks how many times sending failed
+- `redacted_args` / `redacted_kwargs` are optional sanitized inspection copies; they are usually
+  `NULL` unless redaction is configured, and inspection falls back to the original payload when absent
 - `sentry_trace_id` and `sentry_baggage` are `CharField` (not `TextField`) with explicit `max_length`
 
 #### CeleryOutboxDeadLetter
@@ -147,6 +151,8 @@ payload so that operators can inspect failures and retry via admin.
 - `created_at` is copied from the original outbox message (not auto-generated)
 - `dead_at` is auto-set when the dead letter row is created
 - `failure_reason` stores why the message was moved (e.g. `'max retries exceeded'`)
+- `redacted_args` / `redacted_kwargs` remain optional sanitized inspection copies here as well,
+  with inspection falling back to the original payload when those fields are `NULL`
 
 ### 3. Relay (`django_celery_outbox.relay`)
 
@@ -276,7 +282,7 @@ Why not one transaction?
 Tradeoff:
 - If the process crashes between transaction 1 and 2, sent messages remain in the outbox
   and will be re-sent after stale-timeout recovery marks them pending again
-  (at-least-once delivery)
+  (duplicate-tolerant recovery, subject to broker-confirm caveats)
 - Consumers **must be idempotent**
 
 #### Database-side Now()
@@ -538,11 +544,13 @@ Tags are passed as `dict[str, str]` and converted to `['k:v']` format.
 | Metric | Type | Tags | Where |
 |--------|------|------|-------|
 | `messages.published` | increment | `task_name` | After successful send |
-| `messages.failed` | increment | `task_name` | After failed send (retries remain) |
-| `messages.exceeded` | increment | `task_name` | When max retries exceeded |
+| `messages.failed` | increment | `task_name`, `exception_type` | After failed send when retries remain |
+| `messages.exceeded` | increment | `task_name`, `exception_type` | When max retries are exceeded, including pre-send exceeded rows |
 | `queue.depth` | gauge | -- | End of each batch (total outbox count) |
 | `dead_letter.count` | gauge | -- | End of each batch (total dead letter count) |
+| `oldest_pending_age_seconds` | gauge | -- | End of each batch, or `0` when no pending rows remain |
 | `batch.duration_ms` | timing | -- | End of each batch (wall clock ms) |
+| `send_latency_ms` | timing | `task_name` | After successful send, measured from row creation time |
 
 All metrics are prefixed with the `MONITORING_STATSD_PREFIX` namespace (default: `celery_outbox`).
 
@@ -726,7 +734,8 @@ the dead letter table. This re-enqueues them for the relay to process.
 | Broker accepts but worker crashes | Standard Celery retry/ack behavior. Outside outbox scope. |
 | Relay max retries exceeded | Message moved to dead letter table. Operator can inspect and retry via admin. |
 
-**Delivery semantics: at-least-once.** Consumers must be idempotent.
+**Delivery semantics:** duplicate-tolerant recovery with broker-confirm caveats, not an
+unconditional end-to-end at-least-once guarantee. Consumers must be idempotent.
 
 ## Module Dependency Graph
 
