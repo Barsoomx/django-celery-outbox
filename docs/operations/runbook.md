@@ -150,7 +150,74 @@ All four can be answered from the Django admin ([Admin Interface](admin-interfac
 
 ## Zero-downtime upgrade
 
-<!-- filled in by Task 6 -->
+### Principles
+
+1. **The relay must never run against a schema it does not understand.** `migrate` runs *before* new relay pods start.
+2. **Migrations should be additive when possible** — add columns, add tables, add indexes. Additive changes let old and new relay versions coexist during a rolling update. For destructive changes (drop column, change type, rename), use the two-release dance: the first release stops using the field, the second release removes it. Do not collapse this into a single release.
+3. **SIGTERM must reach the relay.** The relay's graceful-shutdown path drains the current batch and exits cleanly. Whatever platform runs the relay must deliver SIGTERM and wait — not SIGKILL.
+4. **Grace period ≥ one batch duration + margin.** If the orchestrator kills the relay mid-batch, the at-least-once delivery guarantee still holds, but operators see spurious restarts and redelivered messages.
+
+### Kubernetes worked example
+
+This is a template, not a drop-in chart. Adapt to your Helm chart's values.
+
+Run migrations in a `pre-upgrade` hook, either via an `initContainer` or a one-shot `Job`:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: myapp-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: myapp:{{ .Values.image.tag }}
+          command: ["python", "manage.py", "migrate", "--noinput"]
+```
+
+Relay `Deployment`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: myapp-relay
+spec:
+  replicas: 2
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    spec:
+      terminationGracePeriodSeconds: 120   # ≥ one batch + margin
+      containers:
+        - name: relay
+          image: myapp:{{ .Values.image.tag }}
+          command: ["python", "manage.py", "celery_outbox_relay", "--liveness-file", "/tmp/relay-alive"]
+          livenessProbe:
+            exec:
+              command: ["test", "-f", "/tmp/relay-alive"]
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 3
+```
+
+Deployment layout references: [Kubernetes](../deployment/kubernetes.md).
+
+### Verification after upgrade
+
+- `--liveness-file` mtime refreshes on every new pod.
+- `celery_outbox_batch_processed` log events appear from the new pod names.
+- `celery_outbox_queue_depth` and `celery_outbox_oldest_pending_age_seconds` stay within your SLO.
 
 ## Rollback
 
