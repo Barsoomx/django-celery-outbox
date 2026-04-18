@@ -1,3 +1,4 @@
+import math
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -372,6 +373,50 @@ def test_config_validation_zero_max_retries() -> None:
 def test_config_validation_zero_stale_timeout_seconds() -> None:
     with pytest.raises(ImproperlyConfigured, match='stale_timeout_seconds must be > 0'):
         RelayConfig.init(stale_timeout_seconds=0)
+
+
+def test_config_validation_zero_send_timeout() -> None:
+    with pytest.raises(ImproperlyConfigured, match='send_timeout must be > 0 and finite'):
+        RelayConfig.init(send_timeout=0)
+
+
+def test_config_validation_zero_shutdown_timeout() -> None:
+    with pytest.raises(ImproperlyConfigured, match='shutdown_timeout must be > 0 and finite'):
+        RelayConfig.init(shutdown_timeout=0)
+
+
+def test_config_validation_zero_broker_outage_cooldown() -> None:
+    with pytest.raises(ImproperlyConfigured, match='broker_outage_cooldown must be > 0 and finite'):
+        RelayConfig.init(broker_outage_cooldown=0)
+
+
+def test_config_validation_zero_max_backoff() -> None:
+    with pytest.raises(ImproperlyConfigured, match='max_backoff must be > 0 and finite'):
+        RelayConfig.init(max_backoff=0)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_send_timeout(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='send_timeout must be > 0 and finite'):
+        RelayConfig.init(send_timeout=value)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_shutdown_timeout(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='shutdown_timeout must be > 0 and finite'):
+        RelayConfig.init(shutdown_timeout=value)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_broker_outage_cooldown(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='broker_outage_cooldown must be > 0 and finite'):
+        RelayConfig.init(broker_outage_cooldown=value)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_max_backoff(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='max_backoff must be > 0 and finite'):
+        RelayConfig.init(max_backoff=value)
 
 
 @pytest.mark.django_db

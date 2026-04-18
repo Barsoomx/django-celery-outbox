@@ -1,7 +1,13 @@
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
+
+
+def _validate_positive_finite_seconds(name: str, value: float) -> None:
+    if value <= 0 or not math.isfinite(value):
+        raise ImproperlyConfigured(f'{name} must be > 0 and finite')
 
 
 # TODO(mcproger): introduce db-backend/dynamically dispatch from django settings
@@ -12,6 +18,10 @@ class RelayConfig:
     backoff_time: int
     max_retries: int
     stale_timeout_seconds: int
+    send_timeout: float
+    shutdown_timeout: float
+    broker_outage_cooldown: float
+    max_backoff: float
     liveness_file: Path | None
 
     @classmethod
@@ -22,6 +32,10 @@ class RelayConfig:
         backoff_time: int = 120,
         max_retries: int = 5,
         stale_timeout_seconds: int = 300,
+        send_timeout: float = 10.0,
+        shutdown_timeout: float = 30.0,
+        broker_outage_cooldown: float = 30.0,
+        max_backoff: float = 3600.0,
         liveness_file: str | None = None,
     ) -> 'RelayConfig':
         if batch_size <= 0:
@@ -39,12 +53,21 @@ class RelayConfig:
         if stale_timeout_seconds <= 0:
             raise ImproperlyConfigured('stale_timeout_seconds must be > 0')
 
+        _validate_positive_finite_seconds('send_timeout', send_timeout)
+        _validate_positive_finite_seconds('shutdown_timeout', shutdown_timeout)
+        _validate_positive_finite_seconds('broker_outage_cooldown', broker_outage_cooldown)
+        _validate_positive_finite_seconds('max_backoff', max_backoff)
+
         return cls(
             batch_size=batch_size,
             idle_time=idle_time,
             backoff_time=backoff_time,
             max_retries=max_retries,
             stale_timeout_seconds=stale_timeout_seconds,
+            send_timeout=send_timeout,
+            shutdown_timeout=shutdown_timeout,
+            broker_outage_cooldown=broker_outage_cooldown,
+            max_backoff=max_backoff,
             liveness_file=Path(liveness_file) if liveness_file else None,
         )
 
@@ -56,5 +79,9 @@ class RelayConfig:
             backoff_time=int(options['backoff_time']),  # type: ignore[arg-type]
             max_retries=int(options['max_retries']),  # type: ignore[arg-type]
             stale_timeout_seconds=int(options['stale_timeout_seconds']),  # type: ignore[arg-type]
+            send_timeout=float(options['send_timeout']),  # type: ignore[arg-type]
+            shutdown_timeout=float(options['shutdown_timeout']),  # type: ignore[arg-type]
+            broker_outage_cooldown=float(options['broker_outage_cooldown']),  # type: ignore[arg-type]
+            max_backoff=float(options['max_backoff']),  # type: ignore[arg-type]
             liveness_file=str(options['liveness_file']) if options.get('liveness_file') else None,
         )
