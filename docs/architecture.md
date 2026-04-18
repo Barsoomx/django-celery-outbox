@@ -100,7 +100,8 @@ Pending messages waiting for relay:
 | args | JSONField | Positional arguments |
 | kwargs | JSONField | Keyword arguments |
 | options | JSONField | Task options (serialized) |
-| retries | IntegerField | Current retry count |
+| schema_version | SmallIntegerField | Serialized payload format version |
+| retries | SmallIntegerField | Current retry count |
 | retry_after | DateTimeField | Next retry time |
 | created_at | DateTimeField | When queued |
 | updated_at | DateTimeField | Last attempt timestamp |
@@ -120,7 +121,8 @@ Failed messages exceeding max retries:
 | args | JSONField | Original arguments |
 | kwargs | JSONField | Original keyword arguments |
 | options | JSONField | Task options (serialized) |
-| retries | IntegerField | Final retry count |
+| schema_version | SmallIntegerField | Serialized payload format version |
+| retries | SmallIntegerField | Final retry count |
 | failure_reason | TextField | Error message |
 | created_at | DateTimeField | Original queue time |
 | dead_at | DateTimeField | When moved to dead letter |

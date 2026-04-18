@@ -97,6 +97,7 @@ Database table storing pending tasks.
 │ args                 │ JSONField (list)                  │
 │ kwargs               │ JSONField (dict)                  │
 │ options              │ JSONField (dict)                  │
+│ schema_version       │ SmallIntegerField (default=1)     │
 │ sentry_trace_id      │ CharField[512] (nullable)         │
 │ sentry_baggage       │ CharField[2048] (nullable)        │
 │ structlog_context    │ TextField (nullable)              │
@@ -131,6 +132,7 @@ payload so that operators can inspect failures and retry via admin.
 │ args                 │ JSONField (list)                  │
 │ kwargs               │ JSONField (dict)                  │
 │ options              │ JSONField (dict)                  │
+│ schema_version       │ SmallIntegerField (default=1)     │
 │ sentry_trace_id      │ CharField[512] (nullable)         │
 │ sentry_baggage       │ CharField[2048] (nullable)        │
 │ structlog_context    │ TextField (nullable)              │
