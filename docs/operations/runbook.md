@@ -91,7 +91,33 @@ Full catalogue: [Logging Events](../observability/logging-events.md).
 
 ### Dead-letter queue growing
 
-<!-- filled in by Task 4 -->
+**Detect.** `celery_outbox_dead_letter_count` grows beyond your established baseline delta.
+
+**Triage:**
+
+1. **Group by `failure_reason`** — is this one error class or many?
+2. **Group by `task_name`** — is this scoped to one task or broad?
+3. **Time distribution of `dead_at`** — is this ongoing or a past spike that has already stopped?
+4. **Cross-reference** recent deploys, config changes, and broker incidents.
+
+All four can be answered from the Django admin ([Admin Interface](admin-interface.md)) or directly with SQL.
+
+**Fix** (by cause):
+
+- **Past broker outage, now recovered.** Purge old records:
+
+    ```bash
+    python manage.py celery_outbox_purge_dead_letter --older-than-dead 7d
+    ```
+
+    See [Dead Letter Queue](dead-letter.md) for the full flag surface.
+
+- **Task name not registered on workers.** Roll workers forward to include the task, or revert the producer deploy.
+- **Serialization errors.** Fix the producing code and redeploy.
+
+**Replaying dead-lettered messages.** Use the Django admin: `CeleryOutboxDeadLetter` has a `retry_selected` bulk action that copies the selected rows back into `celery_outbox` for another send attempt. See [Admin Interface](admin-interface.md). There is no management-command equivalent; if you need automation, wrap the model-level `CeleryOutboxDeadLetter` → `CeleryOutbox` copy in your own command.
+
+**Verify.** `celery_outbox_dead_letter_count` flat; the top `failure_reason` values stop appearing in newly-inserted rows.
 
 ### Relay hanging
 
