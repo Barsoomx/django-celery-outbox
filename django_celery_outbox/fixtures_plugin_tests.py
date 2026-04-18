@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ def test_build_project_wheel_uses_pip_wheel(monkeypatch: pytest.MonkeyPatch, tmp
 
     monkeypatch.setattr(subprocess, 'run', fake_run)
 
-    _build_project_wheel(wheel_dir)
+    _build_project_wheel(wheel_dir, source_root=REPO_ROOT)
 
     assert captured['args'] == (
         [
@@ -48,8 +49,29 @@ def test_build_project_wheel_uses_pip_wheel(monkeypatch: pytest.MonkeyPatch, tmp
     }
 
 
-def _build_project_wheel(wheel_dir: Path) -> Path:
+def _prepare_wheel_source(target_dir: Path) -> Path:
+    shutil.copytree(
+        REPO_ROOT,
+        target_dir,
+        ignore=shutil.ignore_patterns(
+            '.git',
+            '.mypy_cache',
+            '.pytest_cache',
+            '.ruff_cache',
+            '.venv',
+            '.venv-wsl',
+            '__pycache__',
+            'build',
+            'dist',
+            '*.egg-info',
+        ),
+    )
+    return target_dir
+
+
+def _build_project_wheel(wheel_dir: Path, *, source_root: Path | None = None) -> Path:
     wheel_dir.mkdir(parents=True, exist_ok=True)
+    build_source_root = source_root or _prepare_wheel_source(wheel_dir.parent / 'source')
 
     result = subprocess.run(  # noqa: S603
         [
@@ -60,9 +82,9 @@ def _build_project_wheel(wheel_dir: Path) -> Path:
             '--no-deps',
             '--wheel-dir',
             str(wheel_dir),
-            str(REPO_ROOT),
+            str(build_source_root),
         ],
-        cwd=REPO_ROOT,
+        cwd=build_source_root,
         capture_output=True,
         text=True,
         check=False,
@@ -155,3 +177,49 @@ def test_pytest_autoloads_plugin_without_django_setup(tmp_path: Path) -> None:
 
     assert result.returncode == 0, combined_output
     assert 'django_celery_outbox.fixtures' in combined_output
+
+
+def test_outbox_fixture_cleans_between_tests(tmp_path: Path) -> None:
+    wheel_path = _build_project_wheel(tmp_path / 'wheelhouse')
+    pytest_ini = tmp_path / 'pytest.ini'
+    pytest_ini.write_text('[pytest]\n', encoding='utf-8')
+
+    test_file = tmp_path / 'test_cleanup.py'
+    test_file.write_text(
+        'from django_celery_outbox.models import CeleryOutbox\n'
+        '\n'
+        '\n'
+        'def test_first(outbox):\n'
+        "    CeleryOutbox.objects.create(task_id='task-1', task_name='demo.task')\n"
+        '    assert outbox.objects.count() == 1\n'
+        '\n'
+        '\n'
+        'def test_second(outbox):\n'
+        '    assert outbox.objects.count() == 0\n',
+        encoding='utf-8',
+    )
+
+    env = dict(os.environ)
+    env['DB_ENGINE'] = 'sqlite'
+    env['DJANGO_SETTINGS_MODULE'] = 'tests.settings'
+    env.pop('PYTEST_DISABLE_PLUGIN_AUTOLOAD', None)
+    env = _prepend_pythonpath(REPO_ROOT, env)
+    env = _prepend_pythonpath(wheel_path, env)
+
+    result = subprocess.run(  # noqa: S603
+        [
+            sys.executable,
+            '-m',
+            'pytest',
+            '-c',
+            str(pytest_ini),
+            str(test_file),
+        ],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+        env=env,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr

@@ -6,7 +6,12 @@ from typing import TYPE_CHECKING, Any, Protocol
 import pytest
 
 if TYPE_CHECKING:
+    from collections.abc import Generator
+
     from django_celery_outbox.models import CeleryOutbox
+
+
+_UNSET = object()
 
 
 @dataclass(slots=True)
@@ -46,14 +51,82 @@ __all__ = [
 ]
 
 
+def _is_unset(value: object) -> bool:
+    return value is _UNSET or value is ...
+
+
+def _normalize_expected_args(args: object) -> object:
+    if _is_unset(args):
+        return _UNSET
+
+    if isinstance(args, tuple):
+        return list(args)
+
+    return args
+
+
+def _summarize_queued_messages(outbox_model: type[CeleryOutbox]) -> str:
+    queued_messages = [f'{msg.task_name}(task_id={msg.task_id}, args={msg.args}, kwargs={msg.kwargs})' for msg in outbox_model.objects.order_by('id')]
+
+    return '; '.join(queued_messages) if queued_messages else 'none'
+
+
 @pytest.fixture()
-def outbox() -> type[CeleryOutbox]:
-    raise NotImplementedError('outbox fixture is not implemented yet')
+def outbox(transactional_db: object) -> Generator[type[CeleryOutbox], None, None]:
+    del transactional_db
+
+    import structlog.contextvars
+
+    from django_celery_outbox.app import _get_redactor
+    from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+
+    def _reset_state() -> None:
+        _get_redactor.cache_clear()
+        structlog.contextvars.clear_contextvars()
+        CeleryOutboxDeadLetter.objects.all().delete()
+        CeleryOutbox.objects.all().delete()
+
+    _reset_state()
+
+    try:
+        yield CeleryOutbox
+    finally:
+        _reset_state()
 
 
 @pytest.fixture(name='assert_task_sent')
-def assert_task_sent_fixture() -> AssertTaskSent:
-    raise NotImplementedError('assert_task_sent fixture is not implemented yet')
+def assert_task_sent_fixture(outbox: type[CeleryOutbox]) -> AssertTaskSent:
+    def _assert_task_sent(
+        name: str,
+        *,
+        args: object = ...,
+        kwargs: object = ...,
+    ) -> CeleryOutbox:
+        queryset = outbox.objects.filter(task_name=name)
+
+        normalized_args = _normalize_expected_args(args)
+        if normalized_args is not _UNSET:
+            queryset = queryset.filter(args=normalized_args)
+
+        if not _is_unset(kwargs):
+            queryset = queryset.filter(kwargs=kwargs)
+
+        matches = list(queryset.order_by('id'))
+        queued_messages = _summarize_queued_messages(outbox)
+
+        if not matches:
+            raise AssertionError(
+                f'Expected queued task {name!r}, found none. Queued messages: {queued_messages}',
+            )
+
+        if len(matches) > 1:
+            raise AssertionError(
+                f'Expected a single queued task {name!r}, found multiple queued tasks. Queued messages: {queued_messages}',
+            )
+
+        return matches[0]
+
+    return _assert_task_sent
 
 
 @pytest.fixture()
