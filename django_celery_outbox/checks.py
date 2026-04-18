@@ -16,7 +16,17 @@ _REQUIRED_OUTBOX_TABLES = frozenset({'celery_outbox', 'celery_outbox_dead_letter
 
 
 def _is_migrate_command() -> bool:
-    return 'migrate' in sys.argv[1:]
+    if 'migrate' in sys.argv[1:]:
+        return True
+
+    frame = sys._getframe()
+    while frame is not None:
+        filename = frame.f_code.co_filename.replace('\\', '/')
+        if filename.endswith('/django/core/management/commands/migrate.py'):
+            return True
+        frame = frame.f_back
+
+    return False
 
 
 def _selected_outbox_aliases(databases: object) -> list[str]:

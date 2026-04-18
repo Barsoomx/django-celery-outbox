@@ -10,6 +10,7 @@ from django.db import connections as django_connections
 from django.test import override_settings
 
 from django_celery_outbox.checks import (
+    _is_migrate_command,
     check_celery_outbox_app_setting,
     check_celery_outbox_exclude_tasks_setting,
     check_database_supports_skip_locked,
@@ -151,6 +152,19 @@ def test_check_outbox_migrations_applied_skips_schema_verification_during_migrat
                 errors = check_outbox_migrations_applied(None)
 
     assert errors == []
+
+
+def test_is_migrate_command_detects_programmatic_migrate_from_stack() -> None:
+    migrate_frame = MagicMock()
+    migrate_frame.f_code.co_filename = '/venv/lib/python3.12/site-packages/django/core/management/commands/migrate.py'
+    migrate_frame.f_back = None
+    current_frame = MagicMock()
+    current_frame.f_code.co_filename = '/app/django_celery_outbox/checks.py'
+    current_frame.f_back = migrate_frame
+
+    with patch.object(sys, 'argv', ['pytest']):
+        with patch('django_celery_outbox.checks.sys._getframe', return_value=current_frame):
+            assert _is_migrate_command() is True
 
 
 def test_check_outbox_migrations_applied_converts_database_error_to_schema_verification_error() -> None:
