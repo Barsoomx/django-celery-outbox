@@ -117,7 +117,8 @@ Database table storing pending tasks.
 - `retry_after` stores the next eligible retry time (exponential backoff)
 - `retries` tracks how many times sending failed
 - `redacted_args` / `redacted_kwargs` are optional sanitized inspection copies; they are usually
-  `NULL` unless redaction is configured, and inspection falls back to the original payload when absent
+  `NULL` unless `CELERY_OUTBOX_PII_REDACTOR` is configured, and inspection falls back to the
+  original payload when absent
 - `sentry_trace_id` and `sentry_baggage` are `CharField` (not `TextField`) with explicit `max_length`
 
 #### CeleryOutboxDeadLetter
@@ -545,14 +546,17 @@ Tags are passed as `dict[str, str]` and converted to `['k:v']` format.
 
 | Metric | Type | Tags | Where |
 |--------|------|------|-------|
-| `messages.published` | increment | `task_name` | After successful send |
-| `messages.failed` | increment | `task_name`, `exception_type` | After failed send when retries remain |
-| `messages.exceeded` | increment | `task_name`, `exception_type` | When max retries are exceeded, including pre-send exceeded rows |
+| `messages.published` | increment | `task_name` when task-name tags are enabled, otherwise no per-task tag | After successful send |
+| `messages.failed` | increment | `task_name` when enabled, plus `exception_type` | After failed send when retries remain |
+| `messages.exceeded` | increment | `task_name` when enabled, plus `exception_type` | When max retries are exceeded, including pre-send exceeded rows |
 | `queue.depth` | gauge | -- | End of each batch (total outbox count) |
 | `dead_letter.count` | gauge | -- | End of each batch (total dead letter count) |
 | `oldest_pending_age_seconds` | gauge | -- | End of each batch, or `0` when no pending rows remain |
 | `batch.duration_ms` | timing | -- | End of each batch (wall clock ms) |
-| `send_latency_ms` | timing | `task_name` | After successful send, measured from row creation time |
+| `send_latency_ms` | timing | `task_name` when enabled | After successful send, measured from row creation time |
+
+`task_name` tags are shaped by `CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS` and
+`CELERY_OUTBOX_MONITORED_TASKS`, so some deployments collapse or suppress per-task labels.
 
 All metrics are prefixed with the `MONITORING_STATSD_PREFIX` namespace (default: `celery_outbox`).
 
@@ -716,8 +720,12 @@ the dead letter table. This re-enqueues them for the relay to process.
 |---------|---------|-------------|
 | `CELERY_OUTBOX_APP` | required | Dotted path to Celery app instance |
 | `CELERY_OUTBOX_EXCLUDE_TASKS` | `()` | Set of task names to bypass outbox |
+| `CELERY_OUTBOX_PII_REDACTOR` | `None` | Optional callable/path that stores sanitized inspection copies in `redacted_args` / `redacted_kwargs` |
 | `CELERY_OUTBOX_STRUCTLOG_ENABLED` | `True` | Enable structlog context capture |
 | `CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS` | `None` (all) | Whitelist of structlog context keys |
+| `CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK` | `True` | Include traceback in relay send-failure logs |
+| `CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS` | `False` | Disable per-task metric tags entirely |
+| `CELERY_OUTBOX_MONITORED_TASKS` | `None` | Optional allowlist for task-name metric tags; others collapse to aggregate labels |
 | `MONITORING_METRICS_ENABLED` | `True` | Enable StatsD metric emission |
 | `MONITORING_STATSD_HOST` | `'localhost'` | DogStatsD agent host |
 | `MONITORING_STATSD_PORT` | `9125` | DogStatsD agent port |
