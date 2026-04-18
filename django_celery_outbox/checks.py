@@ -55,6 +55,14 @@ def check_celery_outbox_app_setting(
                 id='celery_outbox.E003',
             )
         ]
+    except Exception as exc:
+        return [
+            Error(
+                str(exc),
+                hint='Set CELERY_OUTBOX_APP to the dotted path of your Celery app instance.',
+                id='celery_outbox.E003',
+            )
+        ]
 
     return []
 
