@@ -96,11 +96,13 @@ Database table storing pending tasks.
 │ task_name            │ CharField[255] (indexed)          │
 │ args                 │ JSONField (list)                  │
 │ kwargs               │ JSONField (dict)                  │
+│ redacted_args        │ JSONField (nullable)              │
+│ redacted_kwargs      │ JSONField (nullable)              │
 │ options              │ JSONField (dict)                  │
-│ schema_version       │ SmallIntegerField (default=1)     │
 │ sentry_trace_id      │ CharField[512] (nullable)         │
 │ sentry_baggage       │ CharField[2048] (nullable)        │
 │ structlog_context    │ TextField (nullable)              │
+│ schema_version       │ SmallIntegerField (default=1)     │
 ├──────────────────────┴───────────────────────────────────┤
 │ Indexes:                                                 │
 │   celery_outbox_pending_idx  (id) WHERE updated_at NULL  │
@@ -131,12 +133,14 @@ payload so that operators can inspect failures and retry via admin.
 │ task_name            │ CharField[255] (indexed)          │
 │ args                 │ JSONField (list)                  │
 │ kwargs               │ JSONField (dict)                  │
+│ redacted_args        │ JSONField (nullable)              │
+│ redacted_kwargs      │ JSONField (nullable)              │
 │ options              │ JSONField (dict)                  │
-│ schema_version       │ SmallIntegerField (default=1)     │
 │ sentry_trace_id      │ CharField[512] (nullable)         │
 │ sentry_baggage       │ CharField[2048] (nullable)        │
 │ structlog_context    │ TextField (nullable)              │
 │ failure_reason       │ TextField (nullable)              │
+│ schema_version       │ SmallIntegerField (default=1)     │
 └──────────────────────────────────────────────────────────┘
 ```
 

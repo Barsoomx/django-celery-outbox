@@ -99,6 +99,8 @@ Pending messages waiting for relay:
 | task_name | CharField(255) | Dotted task name |
 | args | JSONField | Positional arguments |
 | kwargs | JSONField | Keyword arguments |
+| redacted_args | JSONField | Redacted positional arguments for inspection |
+| redacted_kwargs | JSONField | Redacted keyword arguments for inspection |
 | options | JSONField | Task options (serialized) |
 | schema_version | SmallIntegerField | Serialized payload format version |
 | retries | SmallIntegerField | Current retry count |
@@ -120,7 +122,12 @@ Failed messages exceeding max retries:
 | task_name | CharField(255) | Dotted task name |
 | args | JSONField | Original arguments |
 | kwargs | JSONField | Original keyword arguments |
+| redacted_args | JSONField | Redacted positional arguments for inspection |
+| redacted_kwargs | JSONField | Redacted keyword arguments for inspection |
 | options | JSONField | Task options (serialized) |
+| sentry_trace_id | CharField(512) | Sentry trace propagation header |
+| sentry_baggage | CharField(2048) | Sentry baggage header |
+| structlog_context | TextField | Captured structlog context (JSON) |
 | schema_version | SmallIntegerField | Serialized payload format version |
 | retries | SmallIntegerField | Final retry count |
 | failure_reason | TextField | Error message |
