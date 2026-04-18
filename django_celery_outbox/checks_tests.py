@@ -57,9 +57,24 @@ def test_check_celery_outbox_app_setting_returns_missing_setting_error() -> None
     assert [error.id for error in errors] == ['celery_outbox.E002']
 
 
+@override_settings(CELERY_OUTBOX_APP='')
+def test_check_celery_outbox_app_setting_treats_empty_string_as_missing_setting() -> None:
+    errors = check_celery_outbox_app_setting(None)
+
+    assert [error.id for error in errors] == ['celery_outbox.E002']
+
+
 @override_settings(CELERY_OUTBOX_APP='django_celery_outbox.checks_tests.not_a_celery_app')
 def test_check_celery_outbox_app_setting_returns_invalid_setting_error() -> None:
     errors = check_celery_outbox_app_setting(None)
+
+    assert [error.id for error in errors] == ['celery_outbox.E003']
+
+
+@override_settings(CELERY_OUTBOX_APP='project.celery_app')
+def test_check_celery_outbox_app_setting_converts_import_error_to_invalid_setting_error() -> None:
+    with patch('django_celery_outbox.checks.load_celery_app_setting', side_effect=ImportError('boom')):
+        errors = check_celery_outbox_app_setting(None)
 
     assert [error.id for error in errors] == ['celery_outbox.E003']
 
@@ -99,6 +114,18 @@ def test_check_outbox_migrations_applied_returns_schema_verification_error_when_
     with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
         with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
             errors = check_outbox_migrations_applied(None)
+
+    assert [error.id for error in errors] == ['celery_outbox.E006']
+
+
+def test_check_outbox_migrations_applied_converts_database_error_to_schema_verification_error() -> None:
+    m_connection = _mock_connection()
+    m_connection.introspection.table_names.side_effect = RuntimeError('db unavailable')
+
+    with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
+        with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
+            with patch('django_celery_outbox.checks.DatabaseError', RuntimeError):
+                errors = check_outbox_migrations_applied(None)
 
     assert [error.id for error in errors] == ['celery_outbox.E006']
 

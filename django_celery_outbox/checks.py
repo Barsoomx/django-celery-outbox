@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.core.checks import Error, Tags, register
 from django.db import DatabaseError, connections
 from django.db.migrations.loader import MigrationLoader
@@ -26,15 +27,32 @@ def check_celery_outbox_app_setting(
     app_configs: object,
     **kwargs: object,
 ) -> list[Error]:
+    setting_value = getattr(settings, 'CELERY_OUTBOX_APP', None)
+    if setting_value in (None, ''):
+        return [
+            Error(
+                'CELERY_OUTBOX_APP setting is required.',
+                hint='Set CELERY_OUTBOX_APP to the dotted path of your Celery app instance.',
+                id='celery_outbox.E002',
+            )
+        ]
+
     try:
         load_celery_app_setting()
-    except ValueError as exc:
-        error_id = 'celery_outbox.E002' if 'setting is required' in str(exc) else 'celery_outbox.E003'
+    except ImportError as exc:
         return [
             Error(
                 str(exc),
                 hint='Set CELERY_OUTBOX_APP to the dotted path of your Celery app instance.',
-                id=error_id,
+                id='celery_outbox.E003',
+            )
+        ]
+    except ValueError as exc:
+        return [
+            Error(
+                str(exc),
+                hint='Set CELERY_OUTBOX_APP to the dotted path of your Celery app instance.',
+                id='celery_outbox.E003',
             )
         ]
 
