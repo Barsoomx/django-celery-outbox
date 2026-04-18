@@ -59,7 +59,35 @@ Full catalogue: [Logging Events](../observability/logging-events.md).
 
 ### Queue growing
 
-<!-- filled in by Task 3 -->
+**Detect.** `celery_outbox_oldest_pending_age_seconds` exceeds your SLO (suggested starting threshold: 60s). Secondary signal: `celery_outbox_queue_depth` trending up over 5-10 minutes.
+
+**Triage** (cheapest first):
+
+1. **Is the relay running?** Check the relay pod status and the `--liveness-file` mtime.
+2. **Is the broker reachable from the relay?** From inside the relay container, run `celery -A <your_celery_app> inspect ping`.
+3. **Is a single task type dominating the pending set?** Either:
+
+    ```bash
+    python manage.py celery_outbox_stats
+    ```
+
+    or, from a DB shell:
+
+    ```sql
+    SELECT task_name, COUNT(*) FROM celery_outbox GROUP BY task_name ORDER BY 2 DESC LIMIT 10;
+    ```
+
+4. **Did the app's send rate spike?** Cross-check with producer-side metrics on your service.
+5. **Is the broker itself under load?** Check the broker admin UI (CPU, consumer count, its own queue depth).
+
+**Fix** (by triage result):
+
+- Relay is down → follow [Relay hanging](#relay-hanging).
+- Broker unreachable → operations-side issue on the broker. The relay will catch up on its next poll once the broker returns.
+- One task dominates → fix the producing code, or add the task name to `CELERY_OUTBOX_EXCLUDE_TASKS` temporarily if the library is not a fit for that workload.
+- Legitimate throughput → scale relay replicas and/or increase `batch_size`. See [Relay Tuning](../relay/tuning.md).
+
+**Verify.** `celery_outbox_oldest_pending_age_seconds` trending down; `celery_outbox_queue_depth` draining.
 
 ### Dead-letter queue growing
 
