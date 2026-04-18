@@ -121,7 +121,32 @@ All four can be answered from the Django admin ([Admin Interface](admin-interfac
 
 ### Relay hanging
 
-<!-- filled in by Task 5 -->
+**Detect** — any of:
+
+- Liveness probe failing (pod restart loop).
+- `--liveness-file` mtime older than 2× the relay poll interval.
+- `celery_outbox_batch_processed` log event absent from the relay log.
+- `celery_outbox_queue_depth` flat but non-zero while the application is still producing.
+
+**Triage:**
+
+1. **Last log event and its timestamp** from the relay pod — tells you where execution stalled.
+2. **DB lock contention:**
+
+    ```sql
+    SELECT * FROM pg_locks WHERE relation = 'celery_outbox'::regclass;
+    ```
+
+3. **Broker send-ack blocking** — is the relay waiting on network I/O to the broker? Inspect the pod's network state (`ss -tnp`, or platform equivalent) from inside the container.
+4. **Multiple-replica lock contention** — see the note in [Troubleshooting › Database Lock Contention](../troubleshooting.md#database-lock-contention).
+
+**Fix:**
+
+- Lock contention across multiple relay replicas → reduce replica count or `batch_size`. See [Relay Tuning](../relay/tuning.md).
+- Broker-blocked → broker recovery; the relay resumes on its next poll.
+- Python-level hang → restart the pod. If recurring, capture a stack trace next time with `py-spy dump --pid <pid>` so it can be diagnosed.
+
+**Verify.** Liveness file is being touched again; `celery_outbox_batch_processed` log events resumed.
 
 ## Zero-downtime upgrade
 
