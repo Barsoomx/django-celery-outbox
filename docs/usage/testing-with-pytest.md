@@ -4,6 +4,8 @@
 
 When the package is installed, pytest discovers the plugin through `pytest11`. The fixtures are available without adding `pytest_plugins` in your test suite.
 
+If your test environment disables plugin autoload, for example with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, pytest will not load the plugin automatically. In that case, explicitly register `django_celery_outbox.fixtures` in your test configuration.
+
 ## Installation
 
 Install pytest support alongside the library:
