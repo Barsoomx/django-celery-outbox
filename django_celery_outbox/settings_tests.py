@@ -48,9 +48,27 @@ def test_load_celery_app_setting_wraps_import_errors() -> None:
         load_celery_app_setting()
 
 
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.settings_tests.missing_celery_app')
+def test_load_celery_app_setting_requires_attribute() -> None:
+    with pytest.raises(ValueError, match='was not found'):
+        load_celery_app_setting()
+
+
 @override_settings(CELERY_OUTBOX_APP='django_celery_outbox.settings_tests.not_a_celery_app')
 def test_load_celery_app_setting_requires_celery_instance() -> None:
     with pytest.raises(ValueError, match='must point to a Celery instance'):
+        load_celery_app_setting()
+
+
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.settings_tests.valid_celery_app')
+def test_load_celery_app_setting_propagates_internal_import_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    def raise_import_error(_: object) -> object:
+        raise ImportError('boom')
+
+    monkeypatch.setattr('django_celery_outbox._settings.importlib.util.find_spec', lambda _: object())
+    monkeypatch.setattr('django_celery_outbox._settings.importlib.import_module', raise_import_error)
+
+    with pytest.raises(ImportError, match='boom'):
         load_celery_app_setting()
 
 

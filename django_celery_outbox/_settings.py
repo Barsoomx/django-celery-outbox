@@ -3,8 +3,6 @@ import importlib
 from celery import Celery
 from django.conf import settings
 
-from django_celery_outbox.models import CeleryOutbox
-
 
 def load_celery_app_setting() -> Celery:
     app_path = getattr(settings, 'CELERY_OUTBOX_APP', None)
@@ -26,20 +24,23 @@ def load_celery_app_setting() -> Celery:
             f'(e.g. "myproject.celery_app.app"), got: "{app_path}"'
         )
 
-    try:
-        module_path, attr_name = app_path.rsplit('.', 1)
-    except ValueError as exc:
-        raise ValueError(
-            f'CELERY_OUTBOX_APP must be a dotted path '
-            f'(e.g. "myproject.celery_app.app"), got: "{app_path}"'
-        ) from exc
+    module_path, attr_name = app_path.rsplit('.', 1)
 
     try:
-        module = importlib.import_module(module_path)
-    except ImportError as exc:
+        module_spec = importlib.util.find_spec(module_path)
+    except ModuleNotFoundError as exc:
+        if exc.name and module_path.startswith(f'{exc.name}.') or exc.name == module_path:
+            raise ValueError(
+                f'CELERY_OUTBOX_APP module could not be imported: "{module_path}".'
+            ) from exc
+        raise
+
+    if module_spec is None:
         raise ValueError(
             f'CELERY_OUTBOX_APP module could not be imported: "{module_path}".'
-        ) from exc
+        )
+
+    module = importlib.import_module(module_path)
 
     try:
         app = getattr(module, attr_name)
@@ -71,4 +72,6 @@ def get_exclude_tasks_setting() -> set[str]:
 
 
 def get_outbox_db_alias() -> str:
+    from django_celery_outbox.models import CeleryOutbox
+
     return CeleryOutbox.objects.db
