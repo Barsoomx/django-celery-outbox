@@ -1,19 +1,27 @@
 from unittest.mock import MagicMock, patch
 
+from celery import Celery
 import pytest
 from django.test import override_settings
 
 from django_celery_outbox.management.commands.celery_outbox_relay import Command
 from django_celery_outbox.relay import RelayConfig
 
-_fake_app = object()
+valid_celery_app = Celery('relay-tests')
+not_a_celery_app = object()
 
 
-@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.management.commands.celery_outbox_relay_tests._fake_app')
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.management.commands.celery_outbox_relay_tests.valid_celery_app')
 def test_get_celery_app_loads_module_by_path() -> None:
     result = Command._get_celery_app()
 
-    assert result is _fake_app
+    assert result is valid_celery_app
+
+
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.management.commands.celery_outbox_relay_tests.not_a_celery_app')
+def test_get_celery_app_rejects_non_celery_instance() -> None:
+    with pytest.raises(ValueError, match='must point to a Celery instance'):
+        Command._get_celery_app()
 
 
 def test_get_celery_app_raises_without_setting() -> None:
@@ -61,8 +69,8 @@ def test_get_celery_app_invalid_path_raises() -> None:
 
 
 @override_settings(CELERY_OUTBOX_APP='nonexistent.module.app')
-def test_get_celery_app_nonexistent_module_raises() -> None:
-    with pytest.raises(ModuleNotFoundError):
+def test_get_celery_app_nonexistent_module_raises_value_error() -> None:
+    with pytest.raises(ValueError, match='module could not be imported'):
         Command._get_celery_app()
 
 
