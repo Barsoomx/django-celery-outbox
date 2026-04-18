@@ -55,8 +55,6 @@ Full catalogue: [Logging Events](../observability/logging-events.md).
 
 ## Incident playbooks
 
-<!-- filled in by Tasks 3, 4, 5 -->
-
 ### Queue growing
 
 **Detect.** `celery_outbox_oldest_pending_age_seconds` exceeds your SLO (suggested starting threshold: 60s). Secondary signal: `celery_outbox_queue_depth` trending up over 5-10 minutes.
@@ -221,4 +219,30 @@ Deployment layout references: [Kubernetes](../deployment/kubernetes.md).
 
 ## Rollback
 
-<!-- filled in by Task 7 -->
+### Principles
+
+1. **Rolling back code is cheap. Rolling back schema is not.** `helm rollback` (or equivalent) reverts the container image and config; it does **not** revert the database. The library's migrations use standard reversible Django operations, so `python manage.py migrate django_celery_outbox <previous_migration>` can roll the schema back — but destructive reverses (dropping a column that now holds data) still lose rows. Verify the reverse is safe for your data before running it.
+2. **Three scenarios, three procedures.**
+    - **Bad image, schema is fine** → standard rollback. Works because migrations are additive (see [Zero-downtime upgrade](#zero-downtime-upgrade)).
+    - **Bad schema, needs reversal** → run `python manage.py migrate django_celery_outbox <previous_migration>` *after* confirming it will not drop data you need. For non-trivial reverses (data transforms, dropping columns that have been written to) write a forward-fix migration instead — do not invent one during the incident.
+    - **Corruption or data loss** → out of scope for this runbook. Use standard Postgres point-in-time recovery.
+3. **Watch the DLQ during the rollback.** A rollback that introduces incompatibility (e.g., workers on old code cannot deserialize tasks produced by the newer relay) shows up as DLQ growth. See [Dead-letter queue growing](#dead-letter-queue-growing).
+
+### Kubernetes worked example
+
+```bash
+# List revisions
+helm history <release>
+
+# Roll back to a specific revision
+helm rollback <release> <revision>
+```
+
+**Verification after rollback:**
+
+- Relay image tag reverted on all relay pods.
+- `celery_outbox_batch_processed` log events continue.
+- `celery_outbox_dead_letter_count` does not climb.
+
+!!! warning "Schema changes are not rolled back by `helm rollback`"
+    `helm rollback` reverts images and config. Schema reversals are a separate, manual decision: they are possible via `manage.py migrate django_celery_outbox <previous_migration>`, but only if the reverse does not lose data you need. For non-trivial reverses, write a forward-fix migration and deploy it as a normal release instead.
