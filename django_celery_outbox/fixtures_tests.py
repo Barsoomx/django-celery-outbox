@@ -2,13 +2,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, cast
+from unittest.mock import patch
 
 import pytest
 import structlog.contextvars
-from django.db import transaction
+from django.db import connections, transaction
 
 from django_celery_outbox import fixtures as fixtures_module
 from django_celery_outbox.app import OutboxCelery
+from django_celery_outbox.fixtures import (
+    AssertTaskSent,
+    DrainOutbox,
+    FakeRelayRecorder,
+    RecordedRelayCall,
+)
+from django_celery_outbox.models import CeleryOutbox
 
 
 def test_outbox_fixture_starts_empty(outbox: Any) -> None:
@@ -55,6 +63,90 @@ def test_assert_task_sent_reports_ambiguous_matches(
 
     with pytest.raises(AssertionError, match='multiple queued tasks'):
         assert_task_sent('duplicate.task')
+
+
+def _enable_relay_for_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = connections[CeleryOutbox.objects.db]
+    monkeypatch.setattr(connection.features, 'has_select_for_update_skip_locked', True, raising=False)
+
+
+def test_fake_relay_records_publish_and_drain_outbox(
+    fake_relay: FakeRelayRecorder,
+    assert_task_sent: AssertTaskSent,
+    drain_outbox: DrainOutbox,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+
+    app = OutboxCelery('fixture-tests')
+
+    with transaction.atomic():
+        app.send_task(
+            'relay.task',
+            args=(1,),
+            kwargs={'flag': True},
+            task_id='relay-task-1',
+        )
+
+    message = assert_task_sent('relay.task', args=(1,), kwargs={'flag': True})
+
+    drain_outbox()
+
+    assert CeleryOutbox.objects.count() == 0
+    assert len(fake_relay.calls) == 1
+    assert fake_relay.calls[0].task_id == message.task_id
+    assert fake_relay.calls[0].name == 'relay.task'
+    assert fake_relay.calls[0].args == [1]
+    assert fake_relay.calls[0].kwargs == {'flag': True}
+
+
+def test_drain_outbox_processes_multiple_batches(
+    fake_relay: FakeRelayRecorder,
+    drain_outbox: DrainOutbox,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+
+    app = OutboxCelery('fixture-tests')
+
+    with transaction.atomic():
+        for i in range(101):
+            app.send_task('batch.task', task_id=f'batch-{i}')
+
+    drain_outbox()
+
+    assert CeleryOutbox.objects.count() == 0
+    assert len(fake_relay.calls) == 101
+
+
+def test_drain_outbox_raises_on_broker_failures(
+    drain_outbox: DrainOutbox,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+
+    app = OutboxCelery('fixture-tests')
+
+    with transaction.atomic():
+        app.send_task('failing.task', task_id='failing-task-1')
+
+    with patch(
+        'django_celery_outbox.relay._relay.Celery.send_task',
+        side_effect=RuntimeError('broker down'),
+    ):
+        with pytest.raises(AssertionError, match='could not fully drain the queue'):
+            drain_outbox()
+
+    message = CeleryOutbox.objects.get(task_id='failing-task-1')
+    assert message.retries == 1
+    assert message.retry_after is not None
+
+
+def test_fixture_types_are_importable() -> None:
+    assert AssertTaskSent is not None
+    assert DrainOutbox is not None
+    assert FakeRelayRecorder is not None
+    assert RecordedRelayCall is not None
 
 
 @dataclass(slots=True)

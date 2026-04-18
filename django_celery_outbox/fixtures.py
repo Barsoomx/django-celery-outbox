@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Protocol
+from unittest.mock import patch
 
 import pytest
 
@@ -70,6 +71,17 @@ def _summarize_queued_messages(outbox_model: type[CeleryOutbox]) -> str:
     return '; '.join(queued_messages) if queued_messages else 'none'
 
 
+def _format_remaining_rows(outbox_model: type[CeleryOutbox]) -> list[str]:
+    return [
+        (
+            f'id={msg.id} task_name={msg.task_name} task_id={msg.task_id} '
+            f'retries={msg.retries} retry_after={msg.retry_after} '
+            f'updated_at={msg.updated_at} schema_version={msg.schema_version}'
+        )
+        for msg in outbox_model.objects.order_by('id')[:10]
+    ]
+
+
 @pytest.fixture()
 def outbox(
     transactional_db: object,
@@ -133,10 +145,73 @@ def assert_task_sent_fixture(outbox: type[CeleryOutbox]) -> AssertTaskSent:
 
 
 @pytest.fixture()
-def fake_relay() -> FakeRelayRecorder:
-    raise NotImplementedError('fake_relay fixture is not implemented yet')
+def fake_relay() -> Generator[FakeRelayRecorder, None, None]:
+    recorder = FakeRelayRecorder()
+
+    def _record(
+        _app: object,
+        *,
+        name: str,
+        args: list[Any] | tuple[Any, ...] | None = None,
+        kwargs: dict[str, Any] | None = None,
+        task_id: str | None = None,
+        headers: dict[str, Any] | None = None,
+        **options: Any,
+    ) -> None:
+        recorder.calls.append(
+            RecordedRelayCall(
+                name=name,
+                args=list(args or []),
+                kwargs=dict(kwargs or {}),
+                task_id=task_id or '',
+                headers=dict(headers or {}),
+                options=dict(options),
+            )
+        )
+
+    with patch(
+        'django_celery_outbox.relay._relay.Celery.send_task',
+        side_effect=_record,
+    ):
+        yield recorder
 
 
 @pytest.fixture(name='drain_outbox')
-def drain_outbox_fixture() -> DrainOutbox:
-    raise NotImplementedError('drain_outbox fixture is not implemented yet')
+def drain_outbox_fixture(outbox: type[CeleryOutbox]) -> DrainOutbox:
+    def _drain_outbox() -> None:
+        from django_celery_outbox._settings import load_celery_app_setting
+        from django_celery_outbox.relay import Relay, RelayConfig
+
+        app = load_celery_app_setting()
+
+        while True:
+            before_count = outbox.objects.count()
+            if before_count == 0:
+                return
+
+            relay = Relay(
+                app=app,
+                config=RelayConfig.init(idle_time=0),
+            )
+
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                with patch('django_celery_outbox.relay._relay.time.sleep'):
+                    relay._processing()
+
+            after_count = outbox.objects.count()
+            if after_count == 0:
+                return
+
+            if after_count < before_count:
+                continue
+
+            remaining_rows = _format_remaining_rows(outbox)
+            raise AssertionError(
+                'drain_outbox() could not fully drain the queue. '
+                f'Rows before={before_count}, after={after_count}. '
+                'Likely causes: future retry_after, in-flight rows, '
+                'unsupported schema version, or broker send failures. '
+                f'Remaining rows: {remaining_rows}'
+            )
+
+    return _drain_outbox
