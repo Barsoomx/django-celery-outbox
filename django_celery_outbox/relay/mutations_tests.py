@@ -1,5 +1,5 @@
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -50,20 +50,33 @@ def test_update_failed_noops_for_empty_list() -> None:
     assert msg.retry_after is None
 
 
-def test_update_failed_groups_ids_by_retry_count() -> None:
+@pytest.mark.django_db
+def test_update_failed_applies_per_message_jitter_for_same_retry_count() -> None:
     mutations = RelayMutations(backoff_time=120)
+    msg1 = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=0,
+        updated_at=None,
+    )
+    msg2 = CeleryOutbox.objects.create(
+        task_id='task-2',
+        task_name='some.task',
+        retries=0,
+        updated_at=None,
+    )
 
-    with patch('django_celery_outbox.relay._mutations.CeleryOutbox.objects.filter') as m_filter:
-        m_queryset = MagicMock()
-        m_filter.return_value = m_queryset
+    with patch('django_celery_outbox.relay._mutations.random.uniform', side_effect=[0, 12]):
+        mutations.update_failed([(msg1.id, 0), (msg2.id, 0)])
 
-        with patch('django_celery_outbox.relay._mutations.random.uniform', return_value=0):
-            mutations.update_failed([(1, 0), (2, 0), (3, 2)])
+    msg1.refresh_from_db()
+    msg2.refresh_from_db()
 
-    assert m_filter.call_count == 2
-    m_filter.assert_any_call(pk__in=[1, 2])
-    m_filter.assert_any_call(pk__in=[3])
-    assert m_queryset.update.call_count == 2
+    assert msg1.retries == 1
+    assert msg2.retries == 1
+    assert msg1.retry_after is not None
+    assert msg2.retry_after is not None
+    assert msg2.retry_after > msg1.retry_after + timedelta(seconds=11)
 
 
 @pytest.mark.django_db

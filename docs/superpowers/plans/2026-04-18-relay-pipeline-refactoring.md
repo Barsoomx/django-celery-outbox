@@ -417,7 +417,7 @@ Create `django_celery_outbox/relay/mutations_tests.py`:
 
 ```python
 from datetime import timedelta
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 from django.utils import timezone
@@ -447,20 +447,33 @@ def test_update_failed_increments_retries_and_sets_retry_after() -> None:
     assert msg.retry_after >= before + timedelta(seconds=239)
 
 
-def test_update_failed_groups_ids_by_retry_count() -> None:
+@pytest.mark.django_db
+def test_update_failed_applies_per_message_jitter_for_same_retry_count() -> None:
     mutations = RelayMutations(backoff_time=120)
+    msg1 = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=0,
+        updated_at=None,
+    )
+    msg2 = CeleryOutbox.objects.create(
+        task_id='task-2',
+        task_name='some.task',
+        retries=0,
+        updated_at=None,
+    )
 
-    with patch('django_celery_outbox.relay._mutations.CeleryOutbox.objects.filter') as m_filter:
-        m_queryset = MagicMock()
-        m_filter.return_value = m_queryset
+    with patch('django_celery_outbox.relay._mutations.random.uniform', side_effect=[0, 12]):
+        mutations.update_failed([(msg1.id, 0), (msg2.id, 0)])
 
-        with patch('django_celery_outbox.relay._mutations.random.uniform', return_value=0):
-            mutations.update_failed([(1, 0), (2, 0), (3, 2)])
+    msg1.refresh_from_db()
+    msg2.refresh_from_db()
 
-    assert m_filter.call_count == 2
-    m_filter.assert_any_call(pk__in=[1, 2])
-    m_filter.assert_any_call(pk__in=[3])
-    assert m_queryset.update.call_count == 2
+    assert msg1.retries == 1
+    assert msg2.retries == 1
+    assert msg1.retry_after is not None
+    assert msg2.retry_after is not None
+    assert msg2.retry_after > msg1.retry_after + timedelta(seconds=11)
 
 
 @pytest.mark.django_db
@@ -539,7 +552,7 @@ Create `django_celery_outbox/relay/_mutations.py`:
 import random
 from datetime import timedelta
 
-from django.db.models import F
+from django.db.models import Case, DateTimeField, DurationField, ExpressionWrapper, F, Value, When
 from django.db.models.functions import Now
 
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
@@ -553,18 +566,28 @@ class RelayMutations:
         if not failed_messages:
             return
 
-        grouped_ids: dict[int, list[int]] = {}
-        for msg_id, retries in failed_messages:
-            grouped_ids.setdefault(retries, []).append(msg_id)
+        retry_after_cases: list[When] = []
+        message_ids: list[int] = []
 
-        for retries, message_ids in grouped_ids.items():
+        for msg_id, retries in failed_messages:
             jitter = random.uniform(0, self._backoff_time * 0.1)  # noqa: S311
             delay = timedelta(seconds=self._backoff_time * (2**retries) + jitter)
-            CeleryOutbox.objects.filter(pk__in=message_ids).update(
-                retries=F('retries') + 1,
-                updated_at=Now(),
-                retry_after=Now() + delay,
+            message_ids.append(msg_id)
+            retry_after_cases.append(
+                When(
+                    pk=msg_id,
+                    then=ExpressionWrapper(
+                        Now() + Value(delay, output_field=DurationField()),
+                        output_field=DateTimeField(),
+                    ),
+                )
             )
+
+        CeleryOutbox.objects.filter(pk__in=message_ids).update(
+            retries=F('retries') + 1,
+            updated_at=Now(),
+            retry_after=Case(*retry_after_cases, output_field=DateTimeField()),
+        )
 
     def delete_published(self, message_ids: list[int]) -> None:
         if not message_ids:

@@ -1,7 +1,7 @@
 import random
 from datetime import timedelta
 
-from django.db.models import F
+from django.db.models import Case, DateTimeField, DurationField, ExpressionWrapper, F, Value, When
 from django.db.models.functions import Now
 
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
@@ -15,18 +15,28 @@ class RelayMutations:
         if not failed_messages:
             return
 
-        grouped_ids: dict[int, list[int]] = {}
-        for msg_id, retries in failed_messages:
-            grouped_ids.setdefault(retries, []).append(msg_id)
+        retry_after_cases: list[When] = []
+        message_ids: list[int] = []
 
-        for retries, message_ids in grouped_ids.items():
+        for msg_id, retries in failed_messages:
             jitter = random.uniform(0, self._backoff_time * 0.1)  # noqa: S311
             delay = timedelta(seconds=self._backoff_time * (2**retries) + jitter)
-            CeleryOutbox.objects.filter(pk__in=message_ids).update(
-                retries=F('retries') + 1,
-                updated_at=Now(),
-                retry_after=Now() + delay,
+            message_ids.append(msg_id)
+            retry_after_cases.append(
+                When(
+                    pk=msg_id,
+                    then=ExpressionWrapper(
+                        Now() + Value(delay, output_field=DurationField()),
+                        output_field=DateTimeField(),
+                    ),
+                )
             )
+
+        CeleryOutbox.objects.filter(pk__in=message_ids).update(
+            retries=F('retries') + 1,
+            updated_at=Now(),
+            retry_after=Case(*retry_after_cases, output_field=DateTimeField()),
+        )
 
     def delete_published(self, message_ids: list[int]) -> None:
         if not message_ids:
