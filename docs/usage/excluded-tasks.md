@@ -18,6 +18,8 @@ CELERY_OUTBOX_EXCLUDE_TASKS = {
 }
 ```
 
+`CELERY_OUTBOX_EXCLUDE_TASKS` must be a `set`, `frozenset`, `list`, or `tuple` of task-name strings. Bare strings such as `'myapp.tasks.send_push_notification'` are invalid and now fail in `python manage.py check` and at runtime.
+
 ## Behavior
 
 Excluded tasks are sent directly to the broker using the original `Celery.send_task()`:
