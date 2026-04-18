@@ -106,6 +106,15 @@ django_celery_outbox/relay/
 - восстановить `structlog` context, если он есть
 - вызвать raw `Celery.send_task(...)`, обходя override `OutboxCelery.send_task`
 
+Явный контракт publish helper:
+
+- `deserialize_options()` вызывается с `(msg.options, app, msg.schema_version)`
+- `headers=None` из options нормализуется в пустой `dict`
+- существующие `headers` сохраняются, затем поверх них накладываются `sentry-trace` и `baggage`
+- `eta` извлекается из options и передаётся отдельным аргументом `Celery.send_task(...)`
+- остальные options прокидываются без потерь
+- `structlog_context` интерпретируется только как JSON object; пустые, malformed и non-object payloads трактуются как пустой context, чтобы relay не падал на плохих данных
+
 Ожидаемый результат:
 
 - `Relay` больше не знает детали восстановления headers/context/options
@@ -122,6 +131,13 @@ django_celery_outbox/relay/
 - обновить failed сообщения с backoff и increment retries
 - перенести exceeded сообщения в `CeleryOutboxDeadLetter`
 - при необходимости сгруппировать retry updates так, чтобы не вводить N+1
+
+Явный контракт между `Relay` и `_mutations.py`:
+
+- `update_failed()` принимает `list[tuple[int, int]]`, где элементы имеют форму `(message_id, retries_before_increment)`
+- `delete_published()` принимает `list[int]` идентификаторов успешно отправленных сообщений
+- `move_exceeded_to_dead_letter()` принимает `list[CeleryOutbox]` уже загруженных сообщений, чтобы не делать дополнительный `SELECT`
+- `Relay` сохраняет эти же loaded `CeleryOutbox` instances до конца mutation phase и использует их для `outbox_message_dead_lettered` signal payload без повторного чтения из БД
 
 Ожидаемый результат:
 
@@ -143,6 +159,8 @@ django_celery_outbox/relay/
 Ограничение:
 
 `_runtime.py` не должен становиться новым "складом утилит". Если helper не относится к runtime-policy relay, он остаётся в своём исходном модуле.
+
+`_runtime.py` является обязательной частью итоговой структуры этого рефакторинга, а не опциональным улучшением.
 
 ### `_relay.py`
 
@@ -180,11 +198,17 @@ django_celery_outbox/relay/
 - raw `Celery.send_task` вызывается так же, как сейчас
 - broad exception на broker boundary остаётся допустимым
 - исключения по-прежнему классифицируются для логов/метрик
-- `structlog` / sentry context propagation не меняется семантически
+- `structlog` / sentry context propagation не меняется для валидного object-payload; malformed и non-object context payload нормализуются в пустой context
 
 ### 3. Mutation phase
 
 После обработки сообщений `Relay` передаёт результат батча в `_mutations.py`.
+
+Внутренний результат publish phase фиксируется явно:
+
+- `published`: `list[int]`
+- `failed`: `list[tuple[int, int]]`
+- `exceeded`: `list[CeleryOutbox]`
 
 Инварианты:
 
@@ -203,6 +227,8 @@ django_celery_outbox/relay/
 - batch logging
 - liveness touch
 - idle/busy decision
+- batch Sentry span (`op='queue.process'`, `name='celery_outbox.relay.batch'`)
+- per-message Sentry send span (`op='celery_outbox.relay.send'`, `name=task_name`) с текущими status/data semantics
 
 ## Поведенческие инварианты
 
@@ -215,6 +241,7 @@ django_celery_outbox/relay/
 5. `schema_version` filtering и десериализация продолжают работать как сейчас.
 6. Management command `celery_outbox_relay` сохраняет текущие аргументы и точку входа.
 7. `metrics.py` и `statsd.py` не меняют публичную форму ради этого рефакторинга.
+8. Sentry batch span и per-message send span сохраняют текущую форму и статусную семантику.
 
 ## Testing Strategy
 
@@ -230,7 +257,8 @@ django_celery_outbox/relay/
 ### Что остаётся
 
 - существующие e2e/integration сценарии остаются главным защитным контуром от регрессий
-- текущий multi-DB baseline сохраняется
+- baseline поддерживаемых backend-ов сохраняется: PostgreSQL + MySQL остаются обязательными verification targets в CI
+- helper-level unit tests могут быть backend-agnostic, но relay acceptance/integration coverage опирается только на поддерживаемые backend-ы с `has_select_for_update_skip_locked=True`
 - нет отдельного benchmark-suite с жёсткими wall-time утверждениями
 
 ### Что проверяем
@@ -240,6 +268,7 @@ django_celery_outbox/relay/
   - удаляет published
   - обновляет failed без N+1-pattern
   - переносит exceeded в dead letter
+- dead-letter path сохраняет payload fields, `schema_version` и совместимость signal payload
 - `Relay` правильно координирует helpers и сохраняет текущие side effects
 - регрессионные кейсы на robustness и exception handling остаются покрыты
 
@@ -248,7 +277,8 @@ django_celery_outbox/relay/
 В рамках PR обновляются только документы, которые реально описывают внутреннее устройство relay:
 
 - `ARCHITECTURE.md`
-- при необходимости короткие комментарии/README-фрагменты, если они описывают старую структуру relay
+- `docs/architecture.md`
+- любой doc-файл, где ещё остались ссылки на `_send_task`, `relay.py` как монолитный модуль, старый helper-based flow или старый module graph
 
 В эту спеку не включаются отдельные doc-only инициативы и не дублируются уже принятые/реализованные design docs.
 
@@ -286,7 +316,7 @@ django_celery_outbox/relay/
 - `relay/_relay.py` заметно уменьшается и превращается в orchestration layer
 - publish path вынесен в отдельный внутренний модуль
 - batch DB mutations вынесены в отдельный внутренний модуль
-- runtime-policy helpers вынесены из `_relay.py`, если это действительно уменьшает сложность
+- runtime-policy helpers вынесены в обязательный `_runtime.py`
 - публичный API, settings, signals, CLI flags и миграционная история не меняются
 - существующие tests остаются зелёными
 - добавлены targeted tests на новые internal seams
