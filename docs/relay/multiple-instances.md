@@ -43,9 +43,22 @@ spec:
           livenessProbe:
             exec:
               command:
-                - test
-                - -f
-                - /tmp/alive
+                - python
+                - -c
+                - |
+                  import os
+                  import sys
+                  import time
+
+                  path = "/tmp/alive"
+                  max_age_seconds = 90
+
+                  try:
+                      stale_for = time.time() - os.path.getmtime(path)
+                  except FileNotFoundError:
+                      sys.exit(1)
+
+                  sys.exit(0 if stale_for < max_age_seconds else 1)
             initialDelaySeconds: 10
             periodSeconds: 30
 ```

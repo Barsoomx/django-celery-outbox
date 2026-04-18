@@ -75,6 +75,11 @@ Task was sent outside `transaction.atomic()`. Either:
 If using many relay instances, you may see lock waits. Reduce instances or batch size.
 
 ```sql
--- PostgreSQL: check for locks
+-- PostgreSQL
 SELECT * FROM pg_locks WHERE relation = 'celery_outbox'::regclass;
+
+-- MySQL 8
+SELECT *
+FROM performance_schema.data_locks
+WHERE OBJECT_NAME = 'celery_outbox';
 ```

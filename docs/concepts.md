@@ -59,4 +59,4 @@ Management command (`celery_outbox_relay`) that:
 
 ### Dead Letter Queue
 
-Messages that exceed `max_retries` are moved to `CeleryOutboxDeadLetter` for manual inspection and replay.
+Messages that exceed `max_retries` are moved to `CeleryOutboxDeadLetter` for inspection and optional replay via the Django admin `retry_selected` action or your own automation.

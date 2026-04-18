@@ -117,8 +117,8 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         'created_at',
         'dead_at',
     ]
-    list_filter = ['task_name', 'dead_at', 'schema_version']
-    search_fields = ['task_id', 'task_name']
+    list_filter = ['task_name', 'failure_reason', 'dead_at', 'schema_version']
+    search_fields = ['task_id', 'task_name', 'failure_reason']
     readonly_fields = [
         'id',
         'task_name',

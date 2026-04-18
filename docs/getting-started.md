@@ -96,7 +96,13 @@ CELERY_OUTBOX_APP = 'myproject.celery_app.app'
 python manage.py migrate
 ```
 
-### 7. Start the relay
+### 7. Run configuration checks
+
+```bash
+python manage.py check
+```
+
+### 8. Start the relay
 
 ```bash
 python manage.py celery_outbox_relay

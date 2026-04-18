@@ -35,6 +35,7 @@ app = OutboxCelery('myproject')
 
 ```bash
 python manage.py migrate
+python manage.py check
 python manage.py celery_outbox_relay
 ```
 

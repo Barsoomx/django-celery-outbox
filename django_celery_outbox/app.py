@@ -12,6 +12,7 @@ from django.conf import settings
 from django.db import connections
 from django.utils.module_loading import import_string
 
+from django_celery_outbox._settings import get_exclude_tasks_setting
 from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, serialize_options
 from django_celery_outbox.signals import outbox_message_created
 from django_celery_outbox.structlog_utils import get_structlog_context_json
@@ -106,7 +107,7 @@ class OutboxCelery(Celery):
         task_type: Any | None = None,
         **options: Any,
     ) -> AsyncResult:
-        exclude_tasks = set(getattr(settings, 'CELERY_OUTBOX_EXCLUDE_TASKS', ()))
+        exclude_tasks = get_exclude_tasks_setting()
         if name in exclude_tasks:
             return super().send_task(
                 name,

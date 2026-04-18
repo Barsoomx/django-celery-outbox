@@ -68,3 +68,5 @@ venv.bak/
 .pre-commit-cache
 .ruff_cache/
 .claude
+AGENTS.md
+.venv-wsl

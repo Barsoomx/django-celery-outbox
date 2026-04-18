@@ -12,7 +12,7 @@ All settings are prefixed with `CELERY_OUTBOX_`.
 
 | Setting | Type | Default | Description |
 |---------|------|---------|-------------|
-| `CELERY_OUTBOX_EXCLUDE_TASKS` | `set[str]` | `set()` | Task names to bypass the outbox (sent directly to broker) |
+| `CELERY_OUTBOX_EXCLUDE_TASKS` | `set[str] \| frozenset[str] \| list[str] \| tuple[str, ...]` | `set()` | Task names to bypass the outbox (sent directly to broker). Invalid values fail in `python manage.py check` and at runtime. |
 | `CELERY_OUTBOX_STRUCTLOG_ENABLED` | `bool` | `True` | Enable structlog context propagation |
 | `CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS` | `list[str] \| None` | `None` | structlog keys to capture. `None` captures all keys |
 | `CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK` | `bool` | `True` | Include full traceback in exception logs |

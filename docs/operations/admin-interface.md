@@ -1,6 +1,6 @@
 # Admin Interface
 
-django-celery-outbox includes read-only Django Admin views.
+django-celery-outbox includes read-only object views in Django Admin plus a small set of operator bulk actions.
 
 ## Setup
 
@@ -25,8 +25,17 @@ Lists pending messages:
 | Task Name | Celery task name |
 | Task ID | Celery task UUID |
 | Retries | Current retry count |
+| Schema Version | Payload schema version |
 | Created At | When queued |
-| Retry After | Next retry time (if failed) |
+| Updated At | Last retry/update timestamp |
+
+Available filters: `task_name`, `retries`, `schema_version`
+
+Search fields: `task_id`, `task_name`
+
+Bulk action:
+
+- `reset_retries` resets `retries`, `retry_after`, and `updated_at` for the selected rows.
 
 ### Dead Letter Queue
 
@@ -38,15 +47,24 @@ Lists failed messages:
 | Task Name | Celery task name |
 | Task ID | Celery task UUID |
 | Retries | Final retry count |
-| Failure Reason | Why it failed |
+| Schema Version | Payload schema version |
 | Created At | When originally queued |
+| Dead At | When moved to dead letter |
 
-## Read-Only
+Available filters: `task_name`, `failure_reason`, `dead_at`, `schema_version`
 
-Admin views are read-only by design. Modifying outbox entries could cause:
+Search fields: `task_id`, `task_name`, `failure_reason`
+
+Bulk action:
+
+- `retry_selected` copies the selected dead-letter rows back into `celery_outbox` for another send attempt and removes them from the dead-letter table.
+
+## Read-Only Record Views
+
+The admin does not allow add/change/delete from object detail pages. That is deliberate: direct editing of outbox rows could cause:
 
 - Duplicate task execution
 - Lost tasks
 - Inconsistent state
 
-Use management commands for operations.
+Operational changes are exposed only through the dedicated bulk actions above.

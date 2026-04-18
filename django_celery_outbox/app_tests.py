@@ -222,6 +222,24 @@ def test_send_task_retries_zero_not_in_options(f_app: OutboxCelery) -> None:
 
 
 @pytest.mark.django_db
+def test_send_task_invalid_exclude_tasks_string_raises(f_app: OutboxCelery) -> None:
+    with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS='my.excluded.task'):
+        with pytest.raises(TypeError, match='CELERY_OUTBOX_EXCLUDE_TASKS'):
+            f_app.send_task('my.excluded.task')
+
+    assert CeleryOutbox.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_send_task_invalid_exclude_tasks_member_type_raises(f_app: OutboxCelery) -> None:
+    with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS=('my.excluded.task', 1)):
+        with pytest.raises(TypeError, match='must contain only strings'):
+            f_app.send_task('my.excluded.task')
+
+    assert CeleryOutbox.objects.count() == 0
+
+
+@pytest.mark.django_db
 @patch('django_celery_outbox.app.sentry_sdk')
 def test_send_task_saves_sentry_context(m_sentry: MagicMock, f_app: OutboxCelery) -> None:
     m_sentry.get_traceparent.return_value = 'test-trace-id'
@@ -262,8 +280,7 @@ def test_send_task_saves_structlog_context(m_get_structlog: MagicMock, f_app: Ou
 @pytest.mark.django_db
 @patch.object(Celery, 'send_task', return_value=MagicMock(spec=AsyncResult))
 def test_send_task_excluded_calls_super(m_super_send: MagicMock, f_app: OutboxCelery) -> None:
-    with patch('django_celery_outbox.app.settings') as m_settings:
-        m_settings.CELERY_OUTBOX_EXCLUDE_TASKS = {'my.excluded.task'}
+    with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS={'my.excluded.task'}):
         f_app.send_task('my.excluded.task', args=(1,), kwargs={'a': 1})
 
     m_super_send.assert_called_once()
@@ -277,8 +294,7 @@ def test_send_task_excluded_calls_super(m_super_send: MagicMock, f_app: OutboxCe
 @pytest.mark.django_db
 @patch.object(Celery, 'send_task', return_value=MagicMock(spec=AsyncResult))
 def test_send_task_excluded_does_not_create_outbox(m_super_send: MagicMock, f_app: OutboxCelery) -> None:
-    with patch('django_celery_outbox.app.settings') as m_settings:
-        m_settings.CELERY_OUTBOX_EXCLUDE_TASKS = {'my.excluded.task'}
+    with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS={'my.excluded.task'}):
         f_app.send_task('my.excluded.task')
 
     assert CeleryOutbox.objects.count() == 0
@@ -286,9 +302,7 @@ def test_send_task_excluded_does_not_create_outbox(m_super_send: MagicMock, f_ap
 
 @pytest.mark.django_db
 def test_send_task_not_excluded_creates_outbox(f_app: OutboxCelery) -> None:
-    with patch('django_celery_outbox.app.settings') as m_settings:
-        m_settings.CELERY_OUTBOX_EXCLUDE_TASKS = {'other.task'}
-        m_settings.CELERY_OUTBOX_PII_REDACTOR = None
+    with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS={'other.task'}, CELERY_OUTBOX_PII_REDACTOR=None):
         f_app.send_task('my.task')
 
     assert CeleryOutbox.objects.count() == 1
@@ -304,8 +318,7 @@ def test_send_task_no_exclude_setting_creates_outbox(f_app: OutboxCelery) -> Non
 @pytest.mark.django_db
 @patch.object(Celery, 'send_task', return_value=MagicMock(spec=AsyncResult))
 def test_send_task_excluded_passes_all_params(m_super_send: MagicMock, f_app: OutboxCelery) -> None:
-    with patch('django_celery_outbox.app.settings') as m_settings:
-        m_settings.CELERY_OUTBOX_EXCLUDE_TASKS = {'my.excluded.task'}
+    with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS={'my.excluded.task'}):
         f_app.send_task(
             'my.excluded.task',
             args=(1, 2),
@@ -392,8 +405,7 @@ def test_send_task_no_warning_inside_atomic(f_app: OutboxCelery) -> None:
 @pytest.mark.django_db
 @patch.object(Celery, 'send_task', return_value=MagicMock(spec=AsyncResult))
 def test_send_task_exclude_tasks_as_list(m_super_send: MagicMock, f_app: OutboxCelery) -> None:
-    with patch('django_celery_outbox.app.settings') as m_settings:
-        m_settings.CELERY_OUTBOX_EXCLUDE_TASKS = ['my.excluded.task']
+    with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS=['my.excluded.task']):
         f_app.send_task('my.excluded.task')
 
     m_super_send.assert_called_once()
