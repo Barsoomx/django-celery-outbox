@@ -1,25 +1,67 @@
 from __future__ import annotations
 
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
+
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
-def _get_uv_executable() -> str:
-    uv_executable = shutil.which('uv')
+def test_build_project_wheel_uses_pip_wheel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    wheel_dir = tmp_path / 'wheelhouse'
+    captured: dict[str, Any] = {}
 
-    assert uv_executable is not None, 'uv must be available to build smoke-test wheels'
+    def fake_run(*args: Any, **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        captured['args'] = args
+        captured['kwargs'] = kwargs
 
-    return uv_executable
+        wheel_dir.mkdir(exist_ok=True)
+        (wheel_dir / 'django_celery_outbox-0.2.0-py3-none-any.whl').write_text('', encoding='utf-8')
+
+        return subprocess.CompletedProcess(args[0], 0, stdout='', stderr='')
+
+    monkeypatch.setattr(subprocess, 'run', fake_run)
+
+    _build_project_wheel(wheel_dir)
+
+    assert captured['args'] == (
+        [
+            sys.executable,
+            '-m',
+            'pip',
+            'wheel',
+            '--no-deps',
+            '--wheel-dir',
+            str(wheel_dir),
+            str(REPO_ROOT),
+        ],
+    )
+    assert captured['kwargs'] == {
+        'cwd': REPO_ROOT,
+        'capture_output': True,
+        'text': True,
+        'check': False,
+    }
 
 
 def _build_project_wheel(wheel_dir: Path) -> Path:
+    wheel_dir.mkdir(parents=True, exist_ok=True)
+
     result = subprocess.run(  # noqa: S603
-        [_get_uv_executable(), 'build', '--wheel', '--out-dir', str(wheel_dir)],
+        [
+            sys.executable,
+            '-m',
+            'pip',
+            'wheel',
+            '--no-deps',
+            '--wheel-dir',
+            str(wheel_dir),
+            str(REPO_ROOT),
+        ],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
