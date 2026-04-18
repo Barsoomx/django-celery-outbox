@@ -130,7 +130,7 @@ Failed messages exceeding max retries:
 | structlog_context | TextField | Captured structlog context (JSON) |
 | schema_version | SmallIntegerField | Serialized payload format version |
 | retries | SmallIntegerField | Final retry count |
-| failure_reason | TextField | Error message |
+| failure_reason | TextField | Dead-letter reason string, e.g. `max retries exceeded` |
 | created_at | DateTimeField | Original queue time |
 | dead_at | DateTimeField | When moved to dead letter |
 
