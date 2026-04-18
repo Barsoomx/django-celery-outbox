@@ -69,3 +69,4 @@ venv.bak/
 .ruff_cache/
 .claude
 AGENTS.md
+.venv-wsl
