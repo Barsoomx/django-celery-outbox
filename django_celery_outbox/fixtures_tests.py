@@ -131,7 +131,7 @@ def test_drain_outbox_raises_on_broker_failures(
         app.send_task('failing.task', task_id='failing-task-1')
 
     with patch(
-        'django_celery_outbox.relay._relay.Celery.send_task',
+        'django_celery_outbox.relay._publisher.Celery.send_task',
         side_effect=RuntimeError('broker down'),
     ):
         with pytest.raises(AssertionError, match='could not fully drain the queue'):

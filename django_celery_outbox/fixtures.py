@@ -170,7 +170,7 @@ def fake_relay() -> Generator[FakeRelayRecorder, None, None]:
         )
 
     with patch(
-        'django_celery_outbox.relay._relay.Celery.send_task',
+        'django_celery_outbox.relay._publisher.Celery.send_task',
         side_effect=_record,
     ):
         yield recorder

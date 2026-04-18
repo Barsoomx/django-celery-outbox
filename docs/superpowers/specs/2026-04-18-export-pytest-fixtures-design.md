@@ -16,7 +16,7 @@ The repository already contains the raw building blocks for this:
 
 - `OutboxCelery.send_task()` writes outbox rows in production code
 - `Relay._processing()` is already used in tests as a synchronous one-shot relay pass
-- raw broker publication is already isolated behind `django_celery_outbox.relay._relay.Celery.send_task`
+- raw broker publication is already isolated behind `django_celery_outbox.relay._publisher.Celery.send_task` via `RelayPublisher`
 
 What is missing is a supported, packaged pytest surface for library users.
 
@@ -113,7 +113,7 @@ record relay publications without sending anything to a real broker.
 
 Semantics:
 
-- patches raw broker publication at `django_celery_outbox.relay._relay.Celery.send_task`
+- patches raw broker publication at `django_celery_outbox.relay._publisher.Celery.send_task`
 - does not patch `OutboxCelery.send_task()`
 - records every publication attempt in a typed recorder object
 - does not interfere with normal relay bookkeeping, so successfully relayed rows are still deleted from the outbox
