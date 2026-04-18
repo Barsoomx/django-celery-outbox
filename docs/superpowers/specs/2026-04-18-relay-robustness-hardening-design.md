@@ -18,19 +18,19 @@ Issue `#21` identifies five relay reliability gaps:
 Since the issue was opened, the repository changed:
 
 - `stale_timeout_seconds` is already implemented in `RelayConfig`, `MessageSelector`, and `celery_outbox_relay --stale-timeout-seconds`
-- relay internals are being actively decomposed under the approved relay-pipeline refactor
-- only `_runtime.py` has landed so far, while `_publisher.py` and `_mutations.py` are planned but not yet merged
+- the relay hot path has now been split into `_publisher.py`, `_mutations.py`, `_runtime.py`, and a thinner `_relay.py`
+- the package now exports pytest fixtures that use `Relay._processing()` as a synchronous one-shot relay seam
 
-That changes the design target. The task is no longer "patch the monolithic relay hot path directly". It is "design a follow-on reliability layer that lands after the current relay split without fighting it".
+That changes the design target. The task is no longer "patch the monolithic relay hot path directly". It is "design a follow-on reliability layer on top of the landed relay split without fighting it".
 
 ## Goals
 
 - Add explicit relay-level knobs for publish timeout, shutdown timeout, broker outage cooldown, and capped message retry backoff.
 - Prevent temporary broker outages from consuming per-message retries and flooding the dead letter queue.
 - Keep relay shutdown semantics realistic for Python + Kombu network I/O.
-- Preserve existing at-least-once delivery semantics.
+- Preserve the current duplicate-tolerant recovery model and broker-confirm caveat.
 - Keep the public surface narrow and compatible with the current management-command-driven relay configuration model.
-- Align the design with the target relay structure from the approved relay refactor.
+- Align the design with the current relay collaborator structure produced by the approved relay refactor.
 
 ## Non-Goals
 
@@ -39,15 +39,17 @@ That changes the design target. The task is no longer "patch the monolithic rela
 - No Django settings API for relay runtime knobs in this change.
 - No forced interruption of an already-running `send_task()` system call.
 - No redesign of `MessageSelector` or replacement of `stale_timeout_seconds`.
-- No attempt to implement this work on top of the current partially-refactored hot path before the relay split lands.
+- No attempt to collapse the relay collaborators back into a monolithic `_relay.py`.
 
 ## Constraints
 
 - Public `Relay`, `RelayConfig`, management command entry point, settings names, signals, and migration history must remain compatible.
 - The relay remains safe for multiple replicas via `SELECT FOR UPDATE SKIP LOCKED`.
 - Liveness touching remains batch-based.
-- Existing at-least-once semantics and duplicate-delivery caveat remain true.
+- Existing duplicate-tolerant recovery semantics and broker-confirm caveat remain true.
 - Any cooldown sleep must happen outside database transactions.
+- Exported pytest fixtures must remain viable: `Relay._processing()` stays usable as the synchronous one-shot drain seam, and fake broker interception must continue to work at the raw `Celery.send_task` publish boundary.
+- `drain_outbox()` currently creates a fresh `Relay` for each synchronous pass. The reliability design must therefore treat breaker/cooldown state as daemon-process state, not a persisted cross-pass test-helper state.
 
 ## Options Considered
 
@@ -63,7 +65,7 @@ Pros:
 
 Cons:
 
-- Depends on the relay split landing first
+- Adds one more internal collaborator to a path that was only recently split
 
 ### 2. Dedicated policy layer
 
@@ -97,7 +99,7 @@ Cons:
 
 Choose option 2, as a follow-on to option 1's sequencing.
 
-This feature set will be designed against the target relay structure, not the current monolith. The implementation will land only after the relay hot path is split into `_publisher.py`, `_mutations.py`, and a thinner `_relay.py`.
+This feature set is now designed against the current relay structure, not the old monolith. The implementation plan should target the already-landed `_publisher.py`, `_mutations.py`, `_runtime.py`, and orchestration-only `_relay.py` directly.
 
 Internally, the new behavior will live in `django_celery_outbox/relay/_policy.py`. The breaker is process-local and in-memory only. Public configuration is still exposed only through `RelayConfig` and management-command flags.
 
@@ -143,7 +145,7 @@ The first version keeps the breaker threshold internal to reduce API surface. Re
 
 ## Target Internal Architecture
 
-After the relay refactor lands, the relevant internal structure becomes:
+The current internal structure relevant to this work is:
 
 ```text
 django_celery_outbox/relay/
@@ -301,6 +303,16 @@ If the breaker opens in the middle of a selected batch:
 
 This differs intentionally from the shutdown path. Broker outage gets an explicit controlled re-entry via `retry_after`, not stale-timeout recovery.
 
+### 6. Interaction with exported pytest helpers
+
+The public `drain_outbox()` helper remains a strict "flush now or fail" API:
+
+- it may keep constructing a fresh `Relay` for each synchronous pass
+- it is not required to preserve breaker/cooldown state across passes
+- any no-progress state caused by outage deferral, future `retry_after`, unsupported schema version, or shutdown-aborted rows should still surface as helper failure rather than implicit waiting
+
+This preserves the helper's current contract: deterministic synchronous flushing in the happy path, loud failure when the queue cannot be drained immediately.
+
 ## Signals And Logging
 
 Existing public signals remain, but their emission semantics become more explicit:
@@ -368,12 +380,13 @@ Broker outage uses a separate cooldown:
 
 ## Delivery Guarantees
 
-At-least-once delivery remains unchanged.
+Delivery semantics remain unchanged from the current architecture docs: duplicate-tolerant recovery with broker-confirm caveats, not an unconditional end-to-end at-least-once guarantee.
 
 The docs must explicitly state:
 
 - a publish timeout or transport outage does not prove the broker rejected the message
 - if the message actually reached the broker before timeout / disconnect surfaced, a later retry can duplicate delivery
+- if the broker accepts a publish without confirms or fails silently, the relay can still delete the outbox row without a true end-to-end acknowledgement
 - consumers must remain idempotent
 
 This is not a regression introduced by the new design; it is an explicit restatement of existing outbox semantics at the publish boundary.
@@ -445,6 +458,7 @@ Update these files in the implementation phase:
 - `docs/operations/health-checks.md`
 - `docs/architecture.md`
 - `ARCHITECTURE.md`
+- `README.md` if top-level guarantee/config wording is surfaced there
 
 Specific documentation corrections required:
 
@@ -456,10 +470,11 @@ Specific documentation corrections required:
 
 ## Sequencing
 
-This work should be implemented only after the relay-pipeline refactor lands the target seams:
+This work should be implemented against the current split relay structure:
 
 - `_publisher.py`
 - `_mutations.py`
-- thinner orchestration-only `_relay.py`
+- `_runtime.py`
+- orchestration-only `_relay.py`
 
-Writing this spec now is intentional so the parallel relay refactor can preserve the seams needed by the reliability layer. Implementing against the current transitional state is explicitly out of scope.
+The original intent of this spec was to avoid colliding with the relay refactor while it was still in flight. That coordination concern is now resolved by the current branch state. The implementation plan can proceed directly on top of the landed seams.
