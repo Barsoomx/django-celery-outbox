@@ -180,6 +180,7 @@ def test_pytest_autoloads_plugin_without_django_setup(tmp_path: Path) -> None:
 
 
 def test_outbox_fixture_cleans_between_tests(tmp_path: Path) -> None:
+    source_root = tmp_path / 'source'
     wheel_path = _build_project_wheel(tmp_path / 'wheelhouse')
     pytest_ini = tmp_path / 'pytest.ini'
     pytest_ini.write_text('[pytest]\n', encoding='utf-8')
@@ -203,7 +204,7 @@ def test_outbox_fixture_cleans_between_tests(tmp_path: Path) -> None:
     env['DB_ENGINE'] = 'sqlite'
     env['DJANGO_SETTINGS_MODULE'] = 'tests.settings'
     env.pop('PYTEST_DISABLE_PLUGIN_AUTOLOAD', None)
-    env = _prepend_pythonpath(REPO_ROOT, env)
+    env = _prepend_pythonpath(source_root, env)
     env = _prepend_pythonpath(wheel_path, env)
 
     result = subprocess.run(  # noqa: S603

@@ -51,12 +51,8 @@ __all__ = [
 ]
 
 
-def _is_unset(value: object) -> bool:
-    return value is _UNSET or value is ...
-
-
 def _normalize_expected_args(args: object) -> object:
-    if _is_unset(args):
+    if args is _UNSET:
         return _UNSET
 
     if isinstance(args, tuple):
@@ -66,13 +62,19 @@ def _normalize_expected_args(args: object) -> object:
 
 
 def _summarize_queued_messages(outbox_model: type[CeleryOutbox]) -> str:
-    queued_messages = [f'{msg.task_name}(task_id={msg.task_id}, args={msg.args}, kwargs={msg.kwargs})' for msg in outbox_model.objects.order_by('id')]
+    queued_messages = [
+        (f'{msg.task_name}(task_id={msg.task_id}, args={msg.inspection_args}, kwargs={msg.inspection_kwargs})')
+        for msg in outbox_model.objects.order_by('id')
+    ]
 
     return '; '.join(queued_messages) if queued_messages else 'none'
 
 
 @pytest.fixture()
-def outbox(transactional_db: object) -> Generator[type[CeleryOutbox], None, None]:
+def outbox(
+    transactional_db: object,
+    django_db_blocker: Any,
+) -> Generator[type[CeleryOutbox], None, None]:
     del transactional_db
 
     import structlog.contextvars
@@ -86,12 +88,13 @@ def outbox(transactional_db: object) -> Generator[type[CeleryOutbox], None, None
         CeleryOutboxDeadLetter.objects.all().delete()
         CeleryOutbox.objects.all().delete()
 
-    _reset_state()
-
-    try:
-        yield CeleryOutbox
-    finally:
+    with django_db_blocker.unblock():
         _reset_state()
+
+        try:
+            yield CeleryOutbox
+        finally:
+            _reset_state()
 
 
 @pytest.fixture(name='assert_task_sent')
@@ -99,8 +102,8 @@ def assert_task_sent_fixture(outbox: type[CeleryOutbox]) -> AssertTaskSent:
     def _assert_task_sent(
         name: str,
         *,
-        args: object = ...,
-        kwargs: object = ...,
+        args: object = _UNSET,
+        kwargs: object = _UNSET,
     ) -> CeleryOutbox:
         queryset = outbox.objects.filter(task_name=name)
 
@@ -108,7 +111,7 @@ def assert_task_sent_fixture(outbox: type[CeleryOutbox]) -> AssertTaskSent:
         if normalized_args is not _UNSET:
             queryset = queryset.filter(args=normalized_args)
 
-        if not _is_unset(kwargs):
+        if kwargs is not _UNSET:
             queryset = queryset.filter(kwargs=kwargs)
 
         matches = list(queryset.order_by('id'))
