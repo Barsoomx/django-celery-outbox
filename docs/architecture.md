@@ -161,7 +161,7 @@ The relay deliberately uses two separate transactions with network I/O between t
 This avoids holding a database lock open during broker communication, which could take seconds.
 
 The tradeoff: if the process crashes between transaction 1 and 2, sent messages remain in the outbox
-and will be re-sent after `retry_after` time. **Consumers must be idempotent.**
+and will be re-sent after stale-timeout recovery. **Consumers must be idempotent.**
 
 ## Exponential Backoff
 
@@ -197,7 +197,7 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 |----------|---------|
 | Business transaction rolls back | Task never created in outbox. No delivery. |
 | Relay crashes before sending to broker | Message remains in outbox. Recovered after stale timeout (5 min). |
-| Relay sends to broker, crashes before TX2 | Message re-sent after backoff. **Duplicate delivery.** |
+| Relay sends to broker, crashes before TX2 | Message re-sent after stale timeout recovery. **Duplicate delivery.** |
 | Broker rejects message | Relay catches exception, message retried with backoff. |
 | Relay max retries exceeded | Message moved to dead letter table. Operator can retry via admin. |
 
@@ -205,22 +205,17 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 
 ## Schema Versioning
 
-The outbox uses a `schema_version` field to enable safe format migrations across library upgrades.
+The outbox stores a `schema_version` on each row so the relay can reject unsupported payload
+formats safely.
 
-### Upgrade Policy
+Current implementation:
 
-- **N-1 compatibility**: Each version supports deserializing the current and previous schema versions
-- **Rolling deployments**: Old relay instances skip messages with newer schema versions (picked up by updated relays)
-- **Deprecated versions**: Messages below minimum supported version are skipped
+- `CURRENT_SCHEMA_VERSION = 1`
+- `MIN_SUPPORTED_VERSION = 1`
+- `MessageSelector` only selects rows whose `schema_version` falls within that supported range
 
-### Behavior
-
-| Relay Version | Message Version | Action |
-|--------------|-----------------|--------|
-| 1 | 1 | Process normally |
-| 2 | 1 | Process (N-1 support) |
-| 2 | 2 | Process normally |
-| 1 | 2 | Skip (future version) |
+Today that means version `1` rows are processed normally, while older or newer versions are
+skipped until compatible code is deployed.
 
 ## Module Dependency Graph
 

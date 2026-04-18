@@ -74,7 +74,8 @@ Key design decisions:
 - **Multi-DB aware**: checks `in_atomic_block` on the correct database connection
 - **Exclude list**: `CELERY_OUTBOX_EXCLUDE_TASKS` setting bypasses outbox for specific tasks
 - **Context propagation**: captures Sentry trace + structlog context at call time
-- **Signal emission**: fires `outbox_message_created` after inserting the row
+- **Signal emission**: fires `outbox_message_created` immediately after inserting the row,
+  before the caller's outer transaction commits
 
 ### 2. Models (`models.py`)
 
@@ -268,7 +269,8 @@ Why not one transaction?
 
 Tradeoff:
 - If the process crashes between transaction 1 and 2, sent messages remain in the outbox
-  and will be re-sent after `retry_after` time (at-least-once delivery)
+  and will be re-sent after stale-timeout recovery marks them pending again
+  (at-least-once delivery)
 - Consumers **must be idempotent**
 
 #### Database-side Now()
@@ -633,13 +635,13 @@ the dead letter table. This re-enqueues them for the relay to process.
 
  with transaction.atomic():
    order = Order.objects.create(...)
-   app.send_task(                       ┌─────────────────┐
+   OutboxCelery.send_task(             ┌─────────────────┐
      'process_order',                   │ INSERT INTO     │
      args=[order.id],             ───>  │ celery_outbox   │
    )                                    │ (task_id,       │
-   # COMMIT                             │  task_name,     │
-                                        │  args, kwargs,  │
- --> signal: outbox_message_created     │  options,       │
+ --> signal: outbox_message_created     │  task_name,     │
+   # COMMIT                             │  args, kwargs,  │
+                                        │  options,       │
                                         │  sentry_*,      │
                                         │  structlog_ctx) │
                                         └────────┬────────┘
@@ -712,7 +714,7 @@ the dead letter table. This re-enqueues them for the relay to process.
 |----------|---------|
 | Business transaction rolls back | Task never created in outbox. No delivery. |
 | Relay crashes before sending to broker | Message remains in outbox with `updated_at` set. Recovered after stale timeout (5 min). |
-| Relay sends to broker, crashes before TX2 | Message re-sent after backoff. **Duplicate delivery.** |
+| Relay sends to broker, crashes before TX2 | Message re-sent after stale timeout recovery. **Duplicate delivery.** |
 | Broker rejects message (queue full, quota exceeded) | Relay catches exception, message retried with backoff. Requires broker to signal rejection. |
 | Broker fails silently (no publisher confirms) | Message lost. Relay proceeds to delete from outbox. **Enable `confirm_publish` on RabbitMQ; Redis has no confirms.** |
 | Broker accepts but worker crashes | Standard Celery retry/ack behavior. Outside outbox scope. |
