@@ -1,4 +1,6 @@
+from collections.abc import Collection
 import sys
+from types import FrameType
 
 from django.conf import settings
 from django.core.checks import Error, Tags, register
@@ -19,7 +21,7 @@ def _is_migrate_command() -> bool:
     if 'migrate' in sys.argv[1:]:
         return True
 
-    frame = sys._getframe()
+    frame: FrameType | None = sys._getframe()
     while frame is not None:
         filename = frame.f_code.co_filename.replace('\\', '/')
         if filename.endswith('/django/core/management/commands/migrate.py'):
@@ -33,7 +35,7 @@ def _selected_outbox_aliases(databases: object) -> list[str]:
     outbox_alias = get_outbox_db_alias()
     if databases is None:
         return [outbox_alias]
-    if outbox_alias in databases:
+    if isinstance(databases, Collection) and not isinstance(databases, (str, bytes)) and outbox_alias in databases:
         return [outbox_alias]
     return []
 
@@ -58,7 +60,7 @@ def check_celery_outbox_app_setting(
     except ImportError as exc:
         return [
             Error(
-                str(exc),
+                f'Could not import CELERY_OUTBOX_APP {setting_value!r}: {exc}',
                 hint='Set CELERY_OUTBOX_APP to the dotted path of your Celery app instance.',
                 id='celery_outbox.E003',
             )

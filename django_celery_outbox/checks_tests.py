@@ -6,7 +6,6 @@ from celery import Celery
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 from django.db import DatabaseError
-from django.db import connections as django_connections
 from django.test import override_settings
 
 from django_celery_outbox.checks import (
@@ -98,6 +97,7 @@ def test_check_celery_outbox_app_setting_converts_import_error_to_invalid_settin
         errors = check_celery_outbox_app_setting(None)
 
     assert [error.id for error in errors] == ['celery_outbox.E003']
+    assert errors[0].msg == "Could not import CELERY_OUTBOX_APP 'project.celery_app': boom"
 
 
 @override_settings(CELERY_OUTBOX_APP='project.celery_app')
@@ -216,17 +216,16 @@ def test_call_command_check_reports_database_errors_on_plain_check() -> None:
 
 
 def test_call_command_check_reports_database_errors_with_database_argument() -> None:
-    m_connection = _mock_connection(skip_locked=False, alias='outbox')
+    m_connection = _mock_connection(skip_locked=False, alias='default')
     m_recorder = MagicMock()
     m_recorder.applied_migrations.return_value = _mock_applied_outbox_migrations()
     m_loader = MagicMock()
     m_loader.disk_migrations = _mock_applied_outbox_migrations()
 
     with override_settings(CELERY_OUTBOX_APP='django_celery_outbox.checks_tests.valid_celery_app'):
-        with patch.object(django_connections._connections, 'outbox', m_connection, create=True):
-            with patch('django_celery_outbox.checks.connections', {'outbox': m_connection}):
-                with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='outbox'):
-                    with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
-                        with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
-                            with pytest.raises(SystemCheckError, match='celery_outbox.E001'):
-                                call_command('check', databases=['outbox'])
+        with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
+            with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
+                with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
+                    with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
+                        with pytest.raises(SystemCheckError, match='celery_outbox.E001'):
+                            call_command('check', databases=['default'])
