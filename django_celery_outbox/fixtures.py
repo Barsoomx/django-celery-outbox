@@ -158,7 +158,7 @@ def fake_relay() -> Generator[FakeRelayRecorder, None, None]:
     original_send_task = Celery.send_task
 
     def _record(
-        _app: object,
+        _app: Celery,
         *,
         name: str,
         args: list[Any] | tuple[Any, ...] | None = None,

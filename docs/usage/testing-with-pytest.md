@@ -22,7 +22,7 @@ DJANGO_SETTINGS_MODULE = myproject.settings
 ```
 
 The fixtures assume `pytest-django` is installed and Django settings are configured before tests run.
-If you use `drain_outbox()`, your test settings must also define `CELERY_OUTBOX_APP`, because the helper runs the real relay path against your configured Celery app.
+If you use `drain_outbox()` or `fake_relay`, your test settings must also define `CELERY_OUTBOX_APP`, because both helpers resolve the configured Celery app used by the relay publish path.
 
 ## Quick Example
 
@@ -104,6 +104,7 @@ The fixture returns a `FakeRelayRecorder` with a `calls` list of `RecordedRelayC
 - `options`
 
 This is useful when you want to verify what the relay would publish after draining the outbox.
+`fake_relay` resolves `CELERY_OUTBOX_APP` to distinguish relay publishes from unrelated direct Celery sends, so tests using it must configure that setting.
 
 ### `drain_outbox()`
 

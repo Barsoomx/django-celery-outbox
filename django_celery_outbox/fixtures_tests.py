@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import structlog.contextvars
+from celery import Celery
 from celery.result import AsyncResult
 from django.db import connections, transaction
 
@@ -460,12 +461,12 @@ def test_fake_relay_delegates_non_relay_celery_sends(
     import django_celery_outbox._settings as settings_module
     import django_celery_outbox.relay._publisher as publisher_module
 
-    relay_app = object()
-    other_app = object()
+    relay_app = Celery('relay-app')
+    other_app = Celery('other-app')
     delegated_result = MagicMock(spec=AsyncResult)
-    delegated_calls: list[tuple[object, dict[str, Any]]] = []
+    delegated_calls: list[tuple[Celery, dict[str, Any]]] = []
 
-    def fake_original_send_task(app: object, **kwargs: Any) -> AsyncResult:
+    def fake_original_send_task(app: Celery, **kwargs: Any) -> AsyncResult:
         delegated_calls.append((app, kwargs))
         return delegated_result
 

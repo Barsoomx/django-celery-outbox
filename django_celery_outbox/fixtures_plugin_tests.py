@@ -180,8 +180,8 @@ def test_pytest_autoloads_plugin_without_django_setup(tmp_path: Path) -> None:
 
 
 def test_outbox_fixture_cleans_between_tests(tmp_path: Path) -> None:
-    source_root = tmp_path / 'source'
-    wheel_path = _build_project_wheel(tmp_path / 'wheelhouse')
+    source_root = _prepare_wheel_source(tmp_path / 'source')
+    wheel_path = _build_project_wheel(tmp_path / 'wheelhouse', source_root=source_root)
     pytest_ini = tmp_path / 'pytest.ini'
     pytest_ini.write_text('[pytest]\n', encoding='utf-8')
 

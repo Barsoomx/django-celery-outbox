@@ -42,6 +42,14 @@ python manage.py celery_outbox_relay
 
 **[Full Documentation →](https://barsoomx.github.io/django-celery-outbox/)**
 
+## Testing with pytest
+
+The package ships a `pytest11` plugin with fixtures for outbox assertions and relay verification: `outbox`, `assert_task_sent`, `fake_relay`, and `drain_outbox`.
+
+If you use `fake_relay` or `drain_outbox`, configure `CELERY_OUTBOX_APP` in your test settings so the fixtures can resolve the relay Celery app.
+
+See [Testing with pytest](https://barsoomx.github.io/django-celery-outbox/usage/testing-with-pytest/) for setup and usage examples.
+
 ## Security
 
 See [Security Guide](https://barsoomx.github.io/django-celery-outbox/security/) for PII handling, traceback logging, and DLQ retention.
