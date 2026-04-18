@@ -22,10 +22,24 @@ def test_load_celery_app_setting_requires_value() -> None:
         load_celery_app_setting()
 
 
+@pytest.mark.parametrize('app_path, expected_type', [(0, 'int'), ([], 'list'), (False, 'bool')])
+def test_load_celery_app_setting_rejects_falsey_non_strings(app_path: object, expected_type: str) -> None:
+    with override_settings(CELERY_OUTBOX_APP=app_path):
+        with pytest.raises(ValueError, match=f'must be a dotted path string, got {expected_type}'):
+            load_celery_app_setting()
+
+
 @override_settings(CELERY_OUTBOX_APP='no_dot_in_path')
 def test_load_celery_app_setting_requires_dotted_path() -> None:
     with pytest.raises(ValueError, match='must be a dotted path'):
         load_celery_app_setting()
+
+
+@pytest.mark.parametrize('app_path', ['.app', 'module.'])
+def test_load_celery_app_setting_rejects_malformed_dotted_paths(app_path: str) -> None:
+    with override_settings(CELERY_OUTBOX_APP=app_path):
+        with pytest.raises(ValueError, match='must be a dotted path'):
+            load_celery_app_setting()
 
 
 @override_settings(CELERY_OUTBOX_APP='nonexistent.module.app')

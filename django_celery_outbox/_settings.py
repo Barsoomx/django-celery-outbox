@@ -8,15 +8,22 @@ from django_celery_outbox.models import CeleryOutbox
 
 def load_celery_app_setting() -> Celery:
     app_path = getattr(settings, 'CELERY_OUTBOX_APP', None)
-    if not app_path:
-        raise ValueError(
-            'CELERY_OUTBOX_APP setting is required. '
-            'Set it to the dotted path of your Celery app instance, e.g. '
-            '"myproject.celery_app.app".'
-        )
     if not isinstance(app_path, str):
+        if app_path is None:
+            raise ValueError(
+                'CELERY_OUTBOX_APP setting is required. '
+                'Set it to the dotted path of your Celery app instance, e.g. '
+                '"myproject.celery_app.app".'
+            )
         raise ValueError(
             f'CELERY_OUTBOX_APP must be a dotted path string, got {type(app_path).__name__}.'
+        )
+
+    path_parts = app_path.split('.')
+    if len(path_parts) < 2 or any(not part for part in path_parts):
+        raise ValueError(
+            f'CELERY_OUTBOX_APP must be a dotted path '
+            f'(e.g. "myproject.celery_app.app"), got: "{app_path}"'
         )
 
     try:
