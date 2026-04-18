@@ -15,6 +15,10 @@ if TYPE_CHECKING:
 _UNSET = object()
 
 
+def _is_omitted(value: object) -> bool:
+    return value is _UNSET or value is Ellipsis
+
+
 @dataclass(slots=True)
 class RecordedRelayCall:
     name: str
@@ -53,7 +57,7 @@ __all__ = [
 
 
 def _normalize_expected_args(args: object) -> object:
-    if args is _UNSET:
+    if _is_omitted(args):
         return _UNSET
 
     if isinstance(args, tuple):
@@ -123,7 +127,7 @@ def assert_task_sent_fixture(outbox: type[CeleryOutbox]) -> AssertTaskSent:
         if normalized_args is not _UNSET:
             queryset = queryset.filter(args=normalized_args)
 
-        if kwargs is not _UNSET:
+        if not _is_omitted(kwargs):
             queryset = queryset.filter(kwargs=kwargs)
 
         matches = list(queryset.order_by('id'))
@@ -146,7 +150,12 @@ def assert_task_sent_fixture(outbox: type[CeleryOutbox]) -> AssertTaskSent:
 
 @pytest.fixture()
 def fake_relay() -> Generator[FakeRelayRecorder, None, None]:
+    from django_celery_outbox._settings import load_celery_app_setting
+    from django_celery_outbox.relay._publisher import Celery
+
     recorder = FakeRelayRecorder()
+    relay_app = load_celery_app_setting()
+    original_send_task = Celery.send_task
 
     def _record(
         _app: object,
@@ -157,7 +166,21 @@ def fake_relay() -> Generator[FakeRelayRecorder, None, None]:
         task_id: str | None = None,
         headers: dict[str, Any] | None = None,
         **options: Any,
-    ) -> None:
+    ) -> object:
+        if _app is not relay_app:
+            delegated_options = dict(options)
+            if headers is not None:
+                delegated_options['headers'] = headers
+
+            return original_send_task(
+                _app,
+                name=name,
+                args=args,
+                kwargs=kwargs,
+                task_id=task_id,
+                **delegated_options,
+            )
+
         recorder.calls.append(
             RecordedRelayCall(
                 name=name,
@@ -168,6 +191,7 @@ def fake_relay() -> Generator[FakeRelayRecorder, None, None]:
                 options=dict(options),
             )
         )
+        return None
 
     with patch(
         'django_celery_outbox.relay._publisher.Celery.send_task',

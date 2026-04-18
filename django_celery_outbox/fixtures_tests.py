@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 import structlog.contextvars
+from celery.result import AsyncResult
 from django.db import connections, transaction
 
 from django_celery_outbox import fixtures as fixtures_module
@@ -381,6 +382,25 @@ def test_assert_task_sent_matches_name_args_and_kwargs_with_fake_model() -> None
     assert matched is first_message
 
 
+def test_assert_task_sent_treats_ellipsis_as_omitted_with_fake_model() -> None:
+    message = FakeQueuedMessage(
+        id=1,
+        task_name='ellipsis.task',
+        task_id='ellipsis-1',
+        args=[1],
+        kwargs={'flag': True},
+    )
+    assert_task_sent, _ = _build_assert_task_sent([message])
+
+    matched = assert_task_sent(
+        'ellipsis.task',
+        args=...,
+        kwargs=...,
+    )
+
+    assert matched is message
+
+
 def test_assert_task_sent_reports_missing_task_with_queued_summary_with_fake_model() -> None:
     assert_task_sent, _ = _build_assert_task_sent(
         [
@@ -432,3 +452,60 @@ def test_assert_task_sent_reports_ambiguous_matches_with_queued_summary_with_fak
     assert 'multiple queued tasks' in message
     assert 'dup-1' in message
     assert 'dup-2' in message
+
+
+def test_fake_relay_delegates_non_relay_celery_sends(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import django_celery_outbox._settings as settings_module
+    import django_celery_outbox.relay._publisher as publisher_module
+
+    relay_app = object()
+    other_app = object()
+    delegated_result = MagicMock(spec=AsyncResult)
+    delegated_calls: list[tuple[object, dict[str, Any]]] = []
+
+    def fake_original_send_task(app: object, **kwargs: Any) -> AsyncResult:
+        delegated_calls.append((app, kwargs))
+        return delegated_result
+
+    monkeypatch.setattr(settings_module, 'load_celery_app_setting', lambda: relay_app)
+    monkeypatch.setattr(publisher_module.Celery, 'send_task', fake_original_send_task)
+
+    fake_relay_fixture = cast(Any, fixtures_module.fake_relay)
+    generator = fake_relay_fixture.__wrapped__()
+    recorder = next(generator)
+
+    relay_result = publisher_module.Celery.send_task(
+        relay_app,
+        name='relay.task',
+        args=[1],
+        kwargs={'flag': True},
+        task_id='relay-1',
+    )
+    direct_result = publisher_module.Celery.send_task(
+        other_app,
+        name='direct.task',
+        task_id='direct-1',
+    )
+
+    with pytest.raises(StopIteration):
+        next(generator)
+
+    assert relay_result is None
+    assert len(recorder.calls) == 1
+    assert recorder.calls[0].name == 'relay.task'
+    assert recorder.calls[0].task_id == 'relay-1'
+
+    assert direct_result is delegated_result
+    assert delegated_calls == [
+        (
+            other_app,
+            {
+                'name': 'direct.task',
+                'args': None,
+                'kwargs': None,
+                'task_id': 'direct-1',
+            },
+        )
+    ]
