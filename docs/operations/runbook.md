@@ -1,6 +1,6 @@
 # Runbook
 
-Open this page when something is wrong. Skim for the symptom that matches what you are seeing (page's [Incident playbooks](#incident-playbooks)), read the relevant playbook top to bottom, and execute. This page is not meant to be read cover-to-cover.
+Open this page when something is wrong. Jump to the [Incident playbooks](#incident-playbooks) section, find the playbook that matches the symptom you are seeing, read it top to bottom, and execute. This page is not meant to be read cover-to-cover.
 
 Every playbook below has the same shape: **Detect → Triage → Fix → Verify**. If you cannot find a matching playbook, the closest page for ad-hoc diagnosis is [Troubleshooting](../troubleshooting.md).
 
