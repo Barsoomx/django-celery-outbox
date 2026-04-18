@@ -74,6 +74,7 @@ provide an empty, transactional outbox table for the current test and a typed ha
 Behavior:
 
 - depends on `pytest-django` transactional database support
+- assumes Django settings are configured for pytest, typically via `DJANGO_SETTINGS_MODULE`
 - ensures `CeleryOutbox` and `CeleryOutboxDeadLetter` are empty at fixture start
 - yields the `CeleryOutbox` model class itself
 - performs cleanup after the test to prevent cross-test leakage
@@ -177,6 +178,12 @@ Reasoning:
 
 This design intentionally assumes `pytest-django` is installed when users consume these fixtures.
 
+The spec also assumes that documentation will be explicit about setup:
+
+- install `pytest` and `pytest-django`
+- configure Django settings for pytest
+- understand that `drain_outbox()` requires the same supported database backends as relay itself
+
 ### Relay execution path
 
 `drain_outbox()` will not shell out to `manage.py celery_outbox_relay`.
@@ -207,12 +214,14 @@ Therefore `drain_outbox()` needs an explicit progress algorithm.
 
 Accepted algorithm:
 
-1. inspect queue state before a pass
+1. inspect total outbox row count before a pass
 2. run one relay processing pass
-3. inspect queue state after the pass
-4. continue if row count decreased
-5. stop successfully if the queue is empty
-6. fail if rows remain and the queue state no longer changes
+3. inspect total outbox row count after the pass
+4. stop successfully if the queue is empty
+5. continue only if total row count decreased
+6. fail if rows remain and total row count did not decrease
+
+This is intentionally strict. Changes such as updating `retry_after`, stamping `updated_at`, or moving a row into a retryable future state do not count as drain progress. The helper contract is "fully flush the queue now", not "mutate queue state and maybe flush later".
 
 The helper must fail loudly rather than silently succeeding on a partially drained queue.
 
@@ -266,6 +275,12 @@ The goal is fast diagnosis, not generic "assert 1 == 0" output.
 
 Add a short "Testing with pytest" section to `README.md` with one canonical example:
 
+That section must also state the prerequisites directly before or after the example:
+
+- install `pytest` and `pytest-django`
+- configure `DJANGO_SETTINGS_MODULE` for the test suite
+- use a relay-supported database backend for `drain_outbox()` (`PostgreSQL >= 9.5` or `MySQL >= 8.0.1`)
+
 ```python
 def test_my_code(fake_relay, assert_task_sent, drain_outbox):
     ...
@@ -286,15 +301,16 @@ For this issue, a separate MkDocs page is not required. README coverage is suffi
 The implementation must include package self-tests covering:
 
 1. pytest plugin registration
-2. `outbox` cleanup semantics
-3. `assert_task_sent` success and failure cases
-4. `fake_relay` recording behavior
-5. `drain_outbox()` on:
+2. subprocess smoke test proving pytest can discover/import the `pytest11` plugin without touching Django models or settings at module import time
+3. `outbox` cleanup semantics
+4. `assert_task_sent` success and failure cases
+5. `fake_relay` recording behavior
+6. `drain_outbox()` on:
    - single message
    - multiple messages
    - multiple batches
    - no-progress failure
-6. typed helper imports from `django_celery_outbox.fixtures`
+7. typed helper imports from `django_celery_outbox.fixtures`
 
 ## Acceptance Criteria
 
