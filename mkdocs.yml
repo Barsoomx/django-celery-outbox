@@ -59,6 +59,7 @@ nav:
     - Dead Letter Queue: operations/dead-letter.md
     - Admin Interface: operations/admin-interface.md
     - Health Checks: operations/health-checks.md
+    - Runbook: operations/runbook.md
   - Deployment:
     - Kubernetes: deployment/kubernetes.md
     - Database Setup: deployment/database-setup.md
