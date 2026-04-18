@@ -1,5 +1,5 @@
-from collections.abc import Collection
 import sys
+from collections.abc import Collection
 from types import FrameType
 
 from django.conf import settings
