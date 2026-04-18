@@ -6,7 +6,12 @@ Messages that exceed `max_retries` are moved to `CeleryOutboxDeadLetter`.
 
 ### Django Admin
 
-Navigate to Django Admin > Celery Outbox > Dead Letter Queue
+Navigate to Django Admin > Celery Outbox > Dead Letter Queue.
+
+The changelist supports:
+
+- filtering by `task_name`, `failure_reason`, `dead_at`, and `schema_version`
+- searching by `task_id`, `task_name`, and `failure_reason`
 
 ### Management Command
 
@@ -32,14 +37,36 @@ Each dead letter entry contains:
 
 ## Replaying Dead Letters
 
-Currently manual. Copy task data and re-queue:
+Use the Django admin bulk action `retry_selected`.
+
+What it does:
+
+- copies the selected `CeleryOutboxDeadLetter` rows back into `CeleryOutbox`
+- preserves the stored payload and `schema_version`
+- deletes the retried rows from `celery_outbox_dead_letter`
+
+There is no built-in management command equivalent. If you need scripted replay, wrap the same model-to-model copy in your own command.
+
+Example automation sketch:
 
 ```python
 from django_celery_outbox.models import CeleryOutboxDeadLetter
-from myproject.celery_app import app
+from django_celery_outbox.models import CeleryOutbox
 
 dl = CeleryOutboxDeadLetter.objects.get(pk=123)
-app.send_task(dl.task_name, args=dl.args, kwargs=dl.kwargs)
+CeleryOutbox.objects.create(
+    task_id=dl.task_id,
+    task_name=dl.task_name,
+    args=dl.args,
+    kwargs=dl.kwargs,
+    redacted_args=dl.redacted_args,
+    redacted_kwargs=dl.redacted_kwargs,
+    options=dl.options,
+    schema_version=dl.schema_version,
+    sentry_trace_id=dl.sentry_trace_id,
+    sentry_baggage=dl.sentry_baggage,
+    structlog_context=dl.structlog_context,
+)
 dl.delete()
 ```
 

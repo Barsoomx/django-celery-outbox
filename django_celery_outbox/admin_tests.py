@@ -192,6 +192,18 @@ def test_dead_letter_list_display() -> None:
     assert admin_instance.list_display == expected
 
 
+def test_dead_letter_list_filter() -> None:
+    admin_instance = admin.site._registry[CeleryOutboxDeadLetter]
+
+    assert admin_instance.list_filter == ['task_name', 'failure_reason', 'dead_at', 'schema_version']
+
+
+def test_dead_letter_search_fields() -> None:
+    admin_instance = admin.site._registry[CeleryOutboxDeadLetter]
+
+    assert admin_instance.search_fields == ['task_id', 'task_name', 'failure_reason']
+
+
 def test_dead_letter_actions_include_retry_selected() -> None:
     admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
 

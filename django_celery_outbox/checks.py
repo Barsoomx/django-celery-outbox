@@ -165,6 +165,14 @@ def check_outbox_migrations_applied(
                     id='celery_outbox.E006',
                 )
             ]
+        except Exception as exc:
+            return [
+                Error(
+                    f'Could not verify django-celery-outbox schema on database "{db_alias}": {exc}',
+                    hint='Ensure the configured database is reachable and run `python manage.py migrate`.',
+                    id='celery_outbox.E006',
+                )
+            ]
 
         missing = sorted(expected - applied)
         if missing:

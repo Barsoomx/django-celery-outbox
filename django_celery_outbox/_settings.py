@@ -7,11 +7,11 @@ from django.conf import settings
 
 def load_celery_app_setting() -> Celery:
     app_path = getattr(settings, 'CELERY_OUTBOX_APP', None)
+    if app_path in (None, ''):
+        raise ValueError(
+            'CELERY_OUTBOX_APP setting is required. Set it to the dotted path of your Celery app instance, e.g. "myproject.celery_app.app".'
+        )
     if not isinstance(app_path, str):
-        if app_path is None:
-            raise ValueError(
-                'CELERY_OUTBOX_APP setting is required. Set it to the dotted path of your Celery app instance, e.g. "myproject.celery_app.app".'
-            )
         raise ValueError(f'CELERY_OUTBOX_APP must be a dotted path string, got {type(app_path).__name__}.')
 
     path_parts = app_path.split('.')
@@ -23,14 +23,21 @@ def load_celery_app_setting() -> Celery:
     try:
         module_spec = importlib.util.find_spec(module_path)
     except ModuleNotFoundError as exc:
-        if exc.name and module_path.startswith(f'{exc.name}.') or exc.name == module_path:
+        if ((exc.name and module_path.startswith(f'{exc.name}.')) or exc.name == module_path):
             raise ValueError(f'CELERY_OUTBOX_APP module could not be imported: "{module_path}".') from exc
-        raise
+        raise ValueError(
+            f'CELERY_OUTBOX_APP "{app_path}" could not be loaded because resolving module "{module_path}" failed: {exc}'
+        ) from exc
 
     if module_spec is None:
         raise ValueError(f'CELERY_OUTBOX_APP module could not be imported: "{module_path}".')
 
-    module = importlib.import_module(module_path)
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError as exc:
+        raise ValueError(
+            f'CELERY_OUTBOX_APP "{app_path}" could not be loaded because importing module "{module_path}" failed: {exc}'
+        ) from exc
 
     try:
         app = getattr(module, attr_name)

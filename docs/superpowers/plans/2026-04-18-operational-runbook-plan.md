@@ -172,7 +172,7 @@ Use these tables as a reference while following any playbook.
 
 | Signal                     | Healthy                              | Stale                                                                                |
 | -------------------------- | ------------------------------------ | ------------------------------------------------------------------------------------ |
-| mtime of `--liveness-file` | within 2× the relay poll interval    | older → relay stalled or dead → [Relay hanging](#relay-hanging)                      |
+| mtime of `--liveness-file` | within your configured freshness threshold | older → relay stalled or dead → [Relay hanging](#relay-hanging)                      |
 
 See [Health Checks](health-checks.md) for the `--liveness-file` flag details.
 
@@ -338,7 +338,7 @@ Replace the block from `### Dead-letter queue growing` through its HTML comment 
 3. **Time distribution of `dead_at`** — is this ongoing or a past spike that has already stopped?
 4. **Cross-reference** recent deploys, config changes, and broker incidents.
 
-All four can be answered from the Django admin ([Admin Interface](admin-interface.md)) or directly with SQL.
+The first three are visible in the Django admin ([Admin Interface](admin-interface.md)) by filtering on `failure_reason`, `task_name`, and `dead_at`. Item 4 comes from deploy history, config history, and broker incident history outside the package.
 
 **Fix** (by cause):
 
@@ -399,7 +399,7 @@ Replace the block from `### Relay hanging` through its HTML comment placeholder 
 **Detect** — any of:
 
 - Liveness probe failing (pod restart loop).
-- `--liveness-file` mtime older than 2× the relay poll interval.
+- `--liveness-file` mtime older than your configured freshness threshold.
 - `celery_outbox_batch_processed` log event absent from the relay log.
 - `celery_outbox_queue_depth` flat but non-zero while the application is still producing.
 
@@ -408,9 +408,21 @@ Replace the block from `### Relay hanging` through its HTML comment placeholder 
 1. **Last log event and its timestamp** from the relay pod — tells you where execution stalled.
 2. **DB lock contention:**
 
+    PostgreSQL:
+
     ```sql
     SELECT * FROM pg_locks WHERE relation = 'celery_outbox'::regclass;
     ```
+
+    MySQL 8:
+
+    ```sql
+    SELECT *
+    FROM performance_schema.data_locks
+    WHERE OBJECT_NAME = 'celery_outbox';
+    ```
+
+    If `performance_schema.data_locks` is not enabled in your MySQL deployment, use your platform's lock-wait tooling instead.
 
 3. **Broker send-ack blocking** — is the relay waiting on network I/O to the broker? Inspect the pod's network state (`ss -tnp`, or platform equivalent) from inside the container.
 4. **Multiple-replica lock contention** — see the note in [Troubleshooting › Database Lock Contention](../troubleshooting.md#database-lock-contention).
@@ -525,7 +537,23 @@ spec:
           command: ["python", "manage.py", "celery_outbox_relay", "--liveness-file", "/tmp/relay-alive"]
           livenessProbe:
             exec:
-              command: ["test", "-f", "/tmp/relay-alive"]
+              command:
+                - python
+                - -c
+                - |
+                  import os
+                  import sys
+                  import time
+
+                  path = "/tmp/relay-alive"
+                  max_age_seconds = 90
+
+                  try:
+                      stale_for = time.time() - os.path.getmtime(path)
+                  except FileNotFoundError:
+                      sys.exit(1)
+
+                  sys.exit(0 if stale_for < max_age_seconds else 1)
             initialDelaySeconds: 10
             periodSeconds: 30
             failureThreshold: 3

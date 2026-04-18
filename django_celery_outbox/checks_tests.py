@@ -182,6 +182,20 @@ def test_check_outbox_migrations_applied_converts_database_error_to_schema_verif
     assert [error.id for error in errors] == ['celery_outbox.E006']
 
 
+def test_check_outbox_migrations_applied_converts_loader_error_to_schema_verification_error() -> None:
+    m_connection = _mock_connection()
+    m_recorder = MagicMock()
+    m_recorder.applied_migrations.return_value = _mock_applied_outbox_migrations()
+
+    with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
+        with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
+            with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
+                with patch('django_celery_outbox.checks.MigrationLoader', side_effect=RuntimeError('boom')):
+                    errors = check_outbox_migrations_applied(None)
+
+    assert [error.id for error in errors] == ['celery_outbox.E006']
+
+
 @override_settings(CELERY_OUTBOX_APP='django_celery_outbox.checks_tests.valid_celery_app')
 def test_call_command_check_reports_invalid_exclude_tasks() -> None:
     m_connection = _mock_connection(alias='outbox')
@@ -229,3 +243,20 @@ def test_call_command_check_reports_database_errors_with_database_argument() -> 
                     with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
                         with pytest.raises(SystemCheckError, match='celery_outbox.E001'):
                             call_command('check', databases=['default'])
+
+
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.checks_tests.valid_celery_app')
+def test_call_command_check_skips_outbox_database_checks_when_database_argument_excludes_alias() -> None:
+    m_connection = _mock_connection(skip_locked=False, alias='outbox')
+    m_recorder = MagicMock()
+    m_loader = MagicMock()
+
+    with patch('django_celery_outbox.checks.connections', {'outbox': m_connection}):
+        with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='outbox'):
+            with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
+                with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
+                    call_command('check', databases=['default'])
+
+    m_connection.introspection.table_names.assert_not_called()
+    m_recorder.applied_migrations.assert_not_called()
+    assert m_loader.mock_calls == []

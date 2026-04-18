@@ -70,9 +70,9 @@ Purely reference material. No prose between tables except a one-line caption.
 
 **Table: Liveness file**
 
-| Signal                       | Healthy                              | Stale                                                    |
-| ---------------------------- | ------------------------------------ | -------------------------------------------------------- |
-| mtime of `--liveness-file`   | within 2x the relay poll interval    | older -> relay stalled or dead -> "Relay hanging" playbook |
+| Signal                       | Healthy                               | Stale                                                    |
+| ---------------------------- | ------------------------------------- | -------------------------------------------------------- |
+| mtime of `--liveness-file`   | within the configured freshness threshold | older -> relay stalled or dead -> "Relay hanging" playbook |
 
 **Table: `celery_outbox_stats` snapshot**
 
@@ -146,6 +146,8 @@ Every playbook uses this fixed layout:
 3. Time distribution of `dead_at` - ongoing or a past spike already over?
 4. Cross-reference with recent deploys, config changes, or broker incidents.
 
+The first three are visible from Django admin filters or SQL. Item 4 comes from deploy/config/broker history outside the package.
+
 **Fix**:
 
 - Past broker outage, now recovered -> purge old records with `python manage.py celery_outbox_purge_dead_letter --older-than-dead 7d`. Cross-ref `operations/dead-letter.md`.
@@ -160,14 +162,16 @@ Every playbook uses this fixed layout:
 **Detect**:
 
 - Liveness probe failing (pod restart loop).
-- `--liveness-file` mtime older than 2x the relay poll interval.
+- `--liveness-file` mtime older than the configured freshness threshold.
 - `celery_outbox_batch_processed` log event absent from the relay log.
 - `celery_outbox_queue_depth` flat but non-zero while the app is still producing.
 
 **Triage**:
 
 1. Last log event and its timestamp from the relay pod - tells you where execution stalled.
-2. DB lock contention: `SELECT * FROM pg_locks WHERE relation = 'celery_outbox'::regclass`.
+2. DB lock contention:
+   - PostgreSQL: `SELECT * FROM pg_locks WHERE relation = 'celery_outbox'::regclass`
+   - MySQL 8: `SELECT * FROM performance_schema.data_locks WHERE OBJECT_NAME = 'celery_outbox'`
 3. Broker send-ack blocking - is the relay waiting on network I/O to the broker?
 4. Multiple-replica lock contention (already documented in `troubleshooting.md` - cross-ref it).
 
@@ -193,6 +197,7 @@ Every playbook uses this fixed layout:
 - Helm chart runs `python manage.py migrate` in a `pre-upgrade` hook (or a one-shot `Job` with an `helm.sh/hook: pre-upgrade` annotation). Concrete YAML snippet in the runbook.
 - Relay `Deployment` uses `strategy: RollingUpdate` with `maxUnavailable: 0`.
 - `terminationGracePeriodSeconds` set to at least one batch's worst-case duration, with margin.
+- Liveness probe checks file freshness, not just file existence.
 - Deployment spec fragment with the relevant fields annotated (template, not a drop-in).
 - Verification steps after the upgrade: liveness file mtime refreshes, `celery_outbox_batch_processed` log events appear with the new pod names, metrics continue reporting.
 

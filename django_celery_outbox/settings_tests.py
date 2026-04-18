@@ -23,6 +23,12 @@ def test_load_celery_app_setting_requires_value() -> None:
         load_celery_app_setting()
 
 
+@override_settings(CELERY_OUTBOX_APP='')
+def test_load_celery_app_setting_treats_empty_string_as_missing() -> None:
+    with pytest.raises(ValueError, match='CELERY_OUTBOX_APP setting is required'):
+        load_celery_app_setting()
+
+
 @pytest.mark.parametrize('app_path, expected_type', [(0, 'int'), ([], 'list'), (False, 'bool')])
 def test_load_celery_app_setting_rejects_falsey_non_strings(app_path: object, expected_type: str) -> None:
     with override_settings(CELERY_OUTBOX_APP=app_path):
@@ -69,7 +75,27 @@ def test_load_celery_app_setting_propagates_internal_import_errors(monkeypatch: 
     monkeypatch.setattr('django_celery_outbox._settings.importlib.util.find_spec', lambda _: object())
     monkeypatch.setattr('django_celery_outbox._settings.importlib.import_module', raise_import_error)
 
-    with pytest.raises(ImportError, match='boom'):
+    with pytest.raises(
+        ValueError,
+        match=r'CELERY_OUTBOX_APP "django_celery_outbox\.settings_tests\.valid_celery_app" could not be loaded because importing module "django_celery_outbox\.settings_tests" failed: boom',
+    ):
+        load_celery_app_setting()
+
+
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.settings_tests.valid_celery_app')
+def test_load_celery_app_setting_wraps_internal_find_spec_import_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    error = ModuleNotFoundError("No module named 'missing_dependency'")
+    error.name = 'missing_dependency'
+
+    def raise_module_not_found(_: object) -> object:
+        raise error
+
+    monkeypatch.setattr('django_celery_outbox._settings.importlib.util.find_spec', raise_module_not_found)
+
+    with pytest.raises(
+        ValueError,
+        match=r'CELERY_OUTBOX_APP "django_celery_outbox\.settings_tests\.valid_celery_app" could not be loaded because resolving module "django_celery_outbox\.settings_tests" failed: No module named \'missing_dependency\'',
+    ):
         load_celery_app_setting()
 
 
