@@ -281,7 +281,7 @@ Why not one transaction?
 
 Tradeoff:
 - If the process crashes between transaction 1 and 2, sent messages remain in the outbox
-  and will be re-sent after stale-timeout recovery marks them pending again
+  and may be re-sent after stale-timeout recovery marks them pending again
   (duplicate-tolerant recovery, subject to broker-confirm caveats)
 - Consumers **must be idempotent**
 
@@ -306,7 +306,8 @@ with the database clock, which matters when relay instances run on different hos
 └──────────────────┘                └──────────────────┘
 ```
 
-`SKIP LOCKED` ensures multiple relay instances process different messages without conflicts.
+`SKIP LOCKED` lets multiple relay instances claim different currently unlocked rows without blocking
+each other.
 
 #### Exponential Backoff with Jitter
 
@@ -350,8 +351,9 @@ This means a message is eligible when:
 - Its backoff period has elapsed (`retry_after <= database now`), or
 - It is stale: picked up > 5 minutes ago but never got a `retry_after` (crashed relay recovery)
 
-The stale timeout (`_STALE_TIMEOUT = 5 minutes`) prevents in-flight messages (between TX1 and TX2)
-from being picked up by another relay instance, which would cause duplicate task execution.
+The stale timeout (`_STALE_TIMEOUT = 5 minutes`) prevents another relay instance from reclaiming a
+freshly stamped row during that window. It does not eliminate duplicate delivery if publish already
+succeeded and the process later crashes or stalls long enough for stale-timeout recovery to reclaim it.
 
 #### Retry Flow (with Dead Letter)
 
@@ -404,8 +406,8 @@ Message lifecycle:
     (per loaded exceeded message, after the move)
 ```
 
-Messages are **never silently deleted**. Failed messages that exceed retries are moved to the
-dead letter table where operators can inspect them and retry via admin.
+Messages that exceed retries are not silently discarded. They are moved to the dead letter
+table where operators can inspect them and retry via admin.
 
 ### 4. Serialization (`serialization.py`)
 
@@ -727,10 +729,10 @@ the dead letter table. This re-enqueues them for the relay to process.
 | Scenario | Outcome |
 |----------|---------|
 | Business transaction rolls back | Task never created in outbox. No delivery. |
-| Relay crashes before sending to broker | Message remains in outbox with `updated_at` set. Recovered after stale timeout (5 min). |
-| Relay sends to broker, crashes before TX2 | Message re-sent after stale timeout recovery. **Duplicate delivery.** |
+| Relay crashes before sending to broker | Message remains in outbox with `updated_at` set and becomes eligible for reclaim after stale timeout (5 min). |
+| Relay sends to broker, crashes before TX2 | Message may be re-sent after stale-timeout reclaim. **Duplicate delivery is possible.** |
 | Broker rejects message (queue full, quota exceeded) | Relay catches exception, message retried with backoff. Requires broker to signal rejection. |
-| Broker fails silently (no publisher confirms) | Message lost. Relay proceeds to delete from outbox. **Enable `confirm_publish` on RabbitMQ; Redis has no confirms.** |
+| Broker fails silently (no publisher confirms) | Message may be lost because the relay can still delete the outbox row without broker confirmation. **Enable `confirm_publish` on RabbitMQ; Redis has no confirms.** |
 | Broker accepts but worker crashes | Standard Celery retry/ack behavior. Outside outbox scope. |
 | Relay max retries exceeded | Message moved to dead letter table. Operator can inspect and retry via admin. |
 

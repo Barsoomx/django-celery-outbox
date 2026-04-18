@@ -138,10 +138,10 @@ Failed messages exceeding max retries:
 
 ## Concurrency
 
-Multiple relay instances are safe via `SELECT FOR UPDATE SKIP LOCKED`:
+Multiple relay instances can coordinate claims via `SELECT FOR UPDATE SKIP LOCKED`:
 
 - Each relay locks different rows
-- No double-processing
+- Prevents simultaneous claims on the same row while it stays locked or within the stale-timeout window
 - Scales horizontally
 
 ```
@@ -172,7 +172,8 @@ The relay deliberately uses two separate transactions with network I/O between t
 This avoids holding a database lock open during broker communication, which could take seconds.
 
 The tradeoff: if the process crashes between transaction 1 and 2, sent messages remain in the outbox
-and will be re-sent after stale-timeout recovery. **Consumers must be idempotent.**
+and become eligible for reclaim after stale-timeout recovery. If publish already succeeded, that
+reclaim can lead to a resend. **Consumers must be idempotent.**
 
 ## Exponential Backoff
 
@@ -207,8 +208,8 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 | Scenario | Outcome |
 |----------|---------|
 | Business transaction rolls back | Task never created in outbox. No delivery. |
-| Relay crashes before sending to broker | Message remains in outbox. Recovered after stale timeout (5 min). |
-| Relay sends to broker, crashes before TX2 | Message re-sent after stale timeout recovery. **Duplicate delivery.** |
+| Relay crashes before sending to broker | Message remains in outbox and becomes eligible for reclaim after stale timeout (5 min). |
+| Relay sends to broker, crashes before TX2 | Message may be re-sent after stale-timeout reclaim. **Duplicate delivery is possible.** |
 | Broker rejects message | Relay catches exception, message retried with backoff. |
 | Broker fails silently (no publisher confirms) | Message may still be lost after the relay deletes the outbox row. |
 | Relay max retries exceeded | Message moved to dead letter table. Operator can retry via admin. |
