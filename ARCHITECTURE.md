@@ -321,7 +321,8 @@ Example with `backoff_time=120`, `max_retries=5`:
   5th fail  -> dead letter
 ```
 
-The `_select_messages()` query filters messages by:
+The `MessageSelector` collaborator uses `get_pending_filter()` to find pending rows.
+The timing portion of that predicate is:
 
 ```python
 Q(updated_at__isnull=True)
