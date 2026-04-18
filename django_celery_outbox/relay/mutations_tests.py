@@ -29,6 +29,27 @@ def test_update_failed_increments_retries_and_sets_retry_after() -> None:
     assert msg.retry_after >= before + timedelta(seconds=239)
 
 
+@pytest.mark.django_db
+def test_update_failed_noops_for_empty_list() -> None:
+    mutations = RelayMutations(backoff_time=120)
+    msg = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=3,
+        updated_at=None,
+        retry_after=None,
+    )
+    created_at = msg.created_at
+
+    mutations.update_failed([])
+
+    msg.refresh_from_db()
+    assert msg.created_at == created_at
+    assert msg.retries == 3
+    assert msg.updated_at is None
+    assert msg.retry_after is None
+
+
 def test_update_failed_groups_ids_by_retry_count() -> None:
     mutations = RelayMutations(backoff_time=120)
 
@@ -70,6 +91,7 @@ def test_delete_published_noops_for_empty_list() -> None:
 @pytest.mark.django_db
 def test_move_exceeded_to_dead_letter_preserves_message_fields() -> None:
     mutations = RelayMutations(backoff_time=120)
+    created_at = timezone.now().replace(microsecond=0) - timedelta(hours=1)
     msg = CeleryOutbox.objects.create(
         task_id='task-dead',
         task_name='some.task',
@@ -84,16 +106,24 @@ def test_move_exceeded_to_dead_letter_preserves_message_fields() -> None:
         sentry_baggage='baggage',
         structlog_context='{"request_id": "req-1"}',
     )
+    CeleryOutbox.objects.filter(pk=msg.pk).update(created_at=created_at)
+    msg.refresh_from_db()
 
     mutations.move_exceeded_to_dead_letter([msg])
 
     dead = CeleryOutboxDeadLetter.objects.get(task_id='task-dead')
+    assert dead.created_at == created_at
+    assert dead.retries == 5
+    assert dead.task_id == 'task-dead'
     assert dead.task_name == 'some.task'
     assert dead.args == [1]
     assert dead.kwargs == {'a': 1}
     assert dead.redacted_args == ['x']
     assert dead.redacted_kwargs == {'a': 'x'}
     assert dead.options == {'priority': 9}
+    assert dead.sentry_trace_id == 'trace'
+    assert dead.sentry_baggage == 'baggage'
+    assert dead.structlog_context == '{"request_id": "req-1"}'
     assert dead.schema_version == 2
     assert dead.failure_reason == 'max retries exceeded'
     assert not CeleryOutbox.objects.filter(pk=msg.id).exists()
