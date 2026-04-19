@@ -20,7 +20,7 @@ jobs:
           python-version: '3.12'
 
       - name: Build package artifact
-        run: python -m pip install -q build && rm -rf dist/example && python -m build --outdir dist/example
+        run: python -m pip install -q build && rm -rf dist/example && python -Im build --outdir dist/example
 
       - name: Start services
         working-directory: examples/minimal_django

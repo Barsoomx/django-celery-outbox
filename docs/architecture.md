@@ -210,7 +210,7 @@ If publish already succeeded, that reclaim can lead to a resend. **Consumers mus
 `RelayPolicy` is the control layer for outage handling and draining mode:
 
 - `--send-timeout` bounds a single `Celery.send_task()` publish attempt.
-- Two consecutive broker outages in one batch open a process-local breaker for `--broker-outage-cooldown`.
+- Two consecutive broker outages without an intervening successful publish open a process-local breaker for `--broker-outage-cooldown`.
 - Broker-outage deferral does not increment `retries` and does not consume `--max-retries`.
 - `SIGTERM` or `SIGINT` starts draining mode.
 - The relay stops starting new sends after `--shutdown-timeout`.
@@ -256,6 +256,14 @@ The package emits Django signals around enqueue and relay operations. The signal
 | `outbox_message_dead_lettered` | `Relay` | `task_ids`, `task_names` |
 
 `outbox_message_created` is emitted after the outbox row is written but before transaction commit. Use `transaction.on_commit()` if downstream work must observe only committed rows.
+
+All package-owned signals use `send_robust()`. Receiver exceptions are logged as `celery_outbox_signal_error` and do not abort enqueue or relay processing.
+
+Relay signal timing is:
+
+- `outbox_message_sent`: after broker publish succeeds for a row
+- `outbox_message_failed`: after an ordinary non-outage failure is classified for retry/backoff
+- `outbox_message_dead_lettered`: after rows are classified as exceeded and moved to dead letter
 
 ## Delivery Guarantees
 

@@ -30,7 +30,7 @@ The compose services install the built wheel from `/package/dist/example`, so bu
 # From the repository root
 rm -rf dist/example
 python -m pip install -q build
-python -m build --outdir dist/example
+python -Im build --outdir dist/example
 
 # Start all services
 docker compose -f examples/minimal_django/docker-compose.yml up -d

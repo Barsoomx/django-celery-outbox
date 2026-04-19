@@ -97,11 +97,15 @@ def load_dlq_retention_setting() -> dict[str, timedelta | str | None] | None:
 
     older_than_dead = parse_duration(retention['older_than_dead']) if retention.get('older_than_dead') else None
     older_than_created = parse_duration(retention['older_than_created']) if retention.get('older_than_created') else None
+    task_name_pattern = retention.get('task_name')
+
+    if task_name_pattern is not None and not isinstance(task_name_pattern, str):
+        raise TypeError('CELERY_OUTBOX_DLQ_RETENTION task_name must be a string.')
 
     return {
         'older_than_dead': older_than_dead,
         'older_than_created': older_than_created,
-        'task_name_pattern': retention.get('task_name'),
+        'task_name_pattern': task_name_pattern,
     }
 
 

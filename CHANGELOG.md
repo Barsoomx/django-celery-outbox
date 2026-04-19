@@ -21,14 +21,16 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 
 ### Changed
 - **Relay internals**: split the relay into focused selector, publisher, mutation, runtime, and policy components for easier testing and safer evolution
+- **Producer contract hardening**: `outbox_message_created` now uses `send_robust()`, receiver failures log `celery_outbox_signal_error` instead of aborting enqueue, and `messages.enqueued` is emitted only after commit
 - **Failure handling semantics**: broker outages are now deferred without consuming retry budget, while non-outage failures continue through normal retry/dead-letter flow
+- **Tracing compatibility**: `sentry_baggage` now persists as `TextField` storage in both outbox and dead-letter tables so valid long baggage values are preserved
 - **Testing story**: package-level pytest integration is now documented and exercised through wheel/plugin tests, making third-party integration tests easier to write
 - **Dependency maintenance**: bumped `pytest` from `9.0.2` to `9.0.3`
 
 ### Fixed
 - **Build cache reliability**: wheel/build cache handling is more predictable in local and CI packaging flows
 - **Relay robustness**: top-level relay loop now survives iteration failures, keeps liveness/metrics fresh during breaker cooldowns, and respects shutdown deadlines while draining
-- **Configuration feedback**: invalid settings and unsupported database setups now fail fast with explicit Django check output instead of surfacing later as runtime surprises
+- **Configuration feedback**: invalid `CELERY_OUTBOX_PII_REDACTOR`, invalid `CELERY_OUTBOX_DLQ_RETENTION`, and unsupported database setups now fail fast with explicit Django check output instead of surfacing later as runtime surprises
 
 
 ## [0.2.0] — 2026-04-13
@@ -37,9 +39,6 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 - **Dead letter support**: Messages exceeding max retries are moved to `CeleryOutboxDeadLetter` table instead of being deleted
 - **Operator CLI commands**: `celery_outbox_stats` for queue metrics and `purge_dead_letter` for dead letter cleanup
 - **Observability**: StatsD/DogStatsD metrics (messages_sent, send_latency, queue_depth, dead_letter_count, etc.)
-- **PII redaction**: Configurable payload scrubbing for sensitive data in logs (`CELERY_OUTBOX_REDACT_FIELDS`)
-- **Log sampling**: Reduce log volume with configurable sampling rates (`CELERY_OUTBOX_LOG_SAMPLE_RATE`)
-- **Health check endpoint**: `/health/` returns queue_depth, oldest_pending, dead_letter_count
 - **Schema versioning**: `schema_version` field for safe format migrations
 - **Example project**: Full Django + Celery + RabbitMQ example in `examples/minimal_django/`
 - **MkDocs documentation**: Comprehensive docs site with operations, observability, and tuning guides

@@ -328,7 +328,6 @@ class Relay:
                                 break
                             continue
 
-                        self._policy.record_success()
                         self._record_non_outage_failure(msg, exc, failed, exceeded)
                     else:
                         span.set_status('ok')
@@ -451,7 +450,7 @@ class Relay:
         wait_for_inflight_after_outage = False
 
         for future in as_completed(list(pending)):
-            stop_reason, breaker_exc, wait_for_inflight_after_outage = self._consume_parallel_future(
+            stop_reason, breaker_exc, should_wait_for_inflight = self._consume_parallel_future(
                 future,
                 pending,
                 published,
@@ -461,10 +460,11 @@ class Relay:
                 stop_reason=stop_reason,
                 breaker_exc=breaker_exc,
             )
+            wait_for_inflight_after_outage = wait_for_inflight_after_outage or should_wait_for_inflight
             break
 
         for future in [future for future in list(pending) if future.done()]:
-            stop_reason, breaker_exc, wait_for_inflight_after_outage = self._consume_parallel_future(
+            stop_reason, breaker_exc, should_wait_for_inflight = self._consume_parallel_future(
                 future,
                 pending,
                 published,
@@ -474,6 +474,7 @@ class Relay:
                 stop_reason=stop_reason,
                 breaker_exc=breaker_exc,
             )
+            wait_for_inflight_after_outage = wait_for_inflight_after_outage or should_wait_for_inflight
 
         return stop_reason, breaker_exc, wait_for_inflight_after_outage
 
@@ -499,6 +500,8 @@ class Relay:
             deferred_due_to_outage,
         )
         if breaker_opened:
+            if stop_reason == 'shutdown':
+                return stop_reason, trigger_exc, False
             return 'breaker', trigger_exc, bool(pending)
         return stop_reason, breaker_exc, saw_outage and bool(pending)
 
@@ -584,7 +587,6 @@ class Relay:
             deferred_due_to_outage.append(msg.id)
             return self._policy.record_outage(time.monotonic())
 
-        self._policy.record_success()
         self._record_non_outage_failure(msg, exc, failed, exceeded)
         return False
 

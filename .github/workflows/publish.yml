@@ -27,7 +27,7 @@ jobs:
       - name: Clean build outputs
         run: rm -rf build dist
       - name: Build sdist and wheel
-        run: python -m build
+        run: python -Im build
       - name: Check built artifact contents
         run: pytest tests/release_artifact_tests.py -v
       - name: Check distribution metadata

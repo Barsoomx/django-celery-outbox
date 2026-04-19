@@ -59,7 +59,7 @@ Treat this as "relay alive but broker unavailable." It should route differently 
 ### celery_outbox_relay_breaker_trip
 
 **Level:** WARNING
-**When:** A second consecutive broker outage in the same batch opens the process-local breaker
+**When:** A second consecutive broker outage without an intervening successful publish opens the process-local breaker
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -145,17 +145,6 @@ No additional fields.
 1. **Pre-send exceeded:** Message was already at max retries when relay picked it up (e.g., after restart). `exception_type='pre_exceeded'`.
 2. **Post-send exceeded:** Send attempt failed on the last allowed retry. `exception_type` contains the actual exception category.
 
-### celery_outbox_signal_error
-
-**Level:** ERROR
-**When:** Django signal receiver raises exception
-
-| Field | Type | Description |
-|-------|------|-------------|
-| signal | str | Signal representation logged by `_send_signal_safe()` |
-| task_id | str | Task UUID |
-| task_name | str | Task name |
-
 `celery_outbox_relay_iteration_failed` is the catch-all relay-loop failure event. Wire it into your log-alerting stack.
 
 ## App Events
@@ -169,6 +158,39 @@ No additional fields.
 |-------|------|-------------|
 | task_name | str | Task name |
 | task_id | str | Task UUID |
+
+### celery_outbox_signal_error
+
+**Level:** ERROR
+**When:** A package-owned Django signal receiver raises an exception; enqueue/relay continues because signals use `send_robust()`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| signal | str | Signal name passed to `_send_signal_safe()` |
+| task_id | str | Task UUID |
+| task_name | str | Task name |
+| receiver | str | Receiver `__qualname__` or repr used in the log |
+
+### celery_outbox_metric_error
+
+**Level:** WARNING
+**When:** Producer-side metric emission fails during `messages.enqueued`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| metric | str | Metric name that failed to emit |
+| task_name | str | Task name being enqueued |
+
+## Inspection Events
+
+### celery_outbox_inspection_redaction_failed
+
+**Level:** WARNING
+**When:** Admin/debug inspection redaction fails and the package falls back to stored raw `options`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| task_name | str | Task whose inspection payload could not be redacted |
 
 ## Serialization Events
 

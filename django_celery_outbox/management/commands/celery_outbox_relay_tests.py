@@ -116,14 +116,56 @@ def test_add_arguments_registers_reliability_params() -> None:
     assert isinstance(parsed.max_backoff, float)
 
 
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS='not-an-int')
+def test_add_arguments_allows_cli_override_when_stale_timeout_setting_is_invalid() -> None:
+    command = Command()
+    parser = command.create_parser('manage.py', 'celery_outbox_relay')
+
+    parsed = parser.parse_args(['--stale-timeout-seconds', '15'])
+
+    assert parsed.stale_timeout_seconds == 15
+
+
 @override_settings(
     CELERY_OUTBOX_APP='django_celery_outbox.management.commands.celery_outbox_relay_tests.valid_celery_app',
     CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=900,
 )
-def test_add_arguments_defaults_stale_timeout_from_settings() -> None:
+@patch.object(Command, '_get_celery_app')
+@patch('django_celery_outbox.management.commands.celery_outbox_relay.Relay')
+def test_handle_uses_configured_stale_timeout_when_cli_omits_it(
+    m_relay_cls: MagicMock,
+    m_get_celery_app: MagicMock,
+) -> None:
+    m_app = MagicMock()
+    m_get_celery_app.return_value = m_app
     command = Command()
-    parser = command.create_parser('manage.py', 'celery_outbox_relay')
 
-    defaults = parser.parse_args([])
+    command.handle(
+        batch_size=50,
+        idle_time=2.0,
+        backoff_time=60,
+        max_retries=3,
+        stale_timeout_seconds=None,
+        send_timeout=10.0,
+        shutdown_timeout=30.0,
+        broker_outage_cooldown=30.0,
+        max_backoff=3600.0,
+        liveness_file=None,
+        publish_concurrency=1,
+    )
 
-    assert defaults.stale_timeout_seconds == 900
+    m_relay_cls.assert_called_once_with(
+        app=m_app,
+        config=RelayConfig.init(
+            batch_size=50,
+            idle_time=2.0,
+            backoff_time=60,
+            max_retries=3,
+            stale_timeout_seconds=900,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+            liveness_file=None,
+        ),
+    )

@@ -24,11 +24,13 @@ class Command(BaseCommand):
         parser.add_argument(
             '--stale-timeout-seconds',
             type=int,
-            default=load_stale_timeout_seconds_setting(),
+            default=None,
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
         stale_timeout_seconds = options['stale_timeout_seconds']
+        if stale_timeout_seconds is None:
+            stale_timeout_seconds = load_stale_timeout_seconds_setting()
         if stale_timeout_seconds <= 0:
             raise CommandError('stale-timeout-seconds must be > 0')
 

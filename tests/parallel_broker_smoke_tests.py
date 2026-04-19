@@ -14,6 +14,7 @@ pytestmark = pytest.mark.live_broker_smoke
 def test_parallel_publish_smoke_to_live_rabbitmq() -> None:
     broker_url = os.environ['CELERY_BROKER_URL']
     queue_name = f'parallel-smoke-{uuid4().hex}'
+    task_ids = ['parallel-smoke-1', 'parallel-smoke-2']
 
     app = OutboxCelery('parallel-smoke')
     app.conf.broker_url = broker_url
@@ -21,19 +22,21 @@ def test_parallel_publish_smoke_to_live_rabbitmq() -> None:
     app.conf.task_default_exchange = queue_name
     app.conf.task_default_routing_key = queue_name
 
-    app.send_task('smoke.task', task_id='parallel-smoke-1')
+    for task_id in task_ids:
+        app.send_task('smoke.task', task_id=task_id)
 
     relay = Relay(
         app=app,
-        config=RelayConfig.init(batch_size=1, idle_time=0, max_retries=1, publish_concurrency=2),
+        config=RelayConfig.init(batch_size=2, idle_time=0, max_retries=1, publish_concurrency=2),
     )
     relay._processing()
 
     with Connection(broker_url) as connection:
         queue = connection.SimpleQueue(queue_name)
-        message = queue.get(timeout=10)
+        messages = [queue.get(timeout=10) for _ in task_ids]
         try:
-            assert message.headers['id'] == 'parallel-smoke-1'
+            assert {message.headers['id'] for message in messages} == set(task_ids)
         finally:
-            message.ack()
+            for message in messages:
+                message.ack()
             queue.close()

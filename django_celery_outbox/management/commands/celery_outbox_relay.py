@@ -37,7 +37,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--stale-timeout-seconds',
             type=int,
-            default=load_stale_timeout_seconds_setting(),
+            default=None,
         )
         parser.add_argument(
             '--send-timeout',
@@ -66,6 +66,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        if options.get('stale_timeout_seconds') is None:
+            options['stale_timeout_seconds'] = load_stale_timeout_seconds_setting()
         app = self._get_celery_app()
         relay = Relay(
             app=app,

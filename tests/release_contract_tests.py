@@ -24,6 +24,25 @@ def test_release_contract_rejects_speculative_markers(tmp_path: Path) -> None:
     assert 'WIP' in result.stdout + result.stderr
 
 
+def test_release_contract_rejects_known_ghost_entries(tmp_path: Path) -> None:
+    changelog = tmp_path / 'CHANGELOG.md'
+    changelog.write_text(
+        '## [0.2.0] — 2026-04-13\n- **PII redaction**: Configurable payload scrubbing for sensitive data in logs (`CELERY_OUTBOX_REDACT_FIELDS`)\n',
+        encoding='utf-8',
+    )
+
+    result = subprocess.run(  # noqa: S603
+        [sys.executable, 'scripts/check_release_contract.py', str(changelog)],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert 'ghost changelog entry' in result.stdout + result.stderr
+    assert 'CELERY_OUTBOX_REDACT_FIELDS' in result.stdout + result.stderr
+
+
 def test_release_contract_requires_requested_version_section(tmp_path: Path) -> None:
     changelog = tmp_path / 'CHANGELOG.md'
     changelog.write_text('## [Unreleased]\n- Ready to ship\n', encoding='utf-8')
@@ -91,6 +110,13 @@ def test_installed_wheel_smoke_script_accepts_wheel_origin(monkeypatch: pytest.M
     assert 'django_celery_outbox-0.3.0-py3-none-any.whl' in capsys.readouterr().out
 
 
+def test_installed_wheel_smoke_script_imports_pytest_plugin_and_replay_command() -> None:
+    smoke_script = Path('scripts/smoke_installed_wheel.py').read_text(encoding='utf-8')
+
+    assert 'import django_celery_outbox.fixtures' in smoke_script
+    assert 'import django_celery_outbox.management.commands.celery_outbox_replay_dead_letter' in smoke_script
+
+
 def test_release_workflows_include_contract_and_live_broker_gates() -> None:
     publish_workflow = Path('.github/workflows/publish.yml').read_text(encoding='utf-8')
     tests_workflow = Path('.github/workflows/tests.yml').read_text(encoding='utf-8')
@@ -103,7 +129,7 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
     assert 'release_contract:' in publish_workflow
     assert 'needs: [artifact_smoke, live_broker_smoke]' in publish_workflow
     assert 'needs: [release_contract]' in publish_workflow or 'needs:\n    - release_contract' in publish_workflow
-    assert publish_workflow.count('python -m build') == 1
+    assert publish_workflow.count('python -Im build') == 1
     assert 'actions/download-artifact@' in publish_workflow
     assert 'artifact-smoke-dist' in publish_workflow
     assert 'smoke_installed_wheel.py' in publish_workflow

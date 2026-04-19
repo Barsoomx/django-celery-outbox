@@ -11,7 +11,7 @@ pytestmark = pytest.mark.release_artifact
 
 def test_built_wheel_excludes_internal_test_modules(tmp_path: Path) -> None:
     dist_dir = tmp_path / 'dist'
-    subprocess.run([sys.executable, '-m', 'build', '--outdir', str(dist_dir)], check=True)  # noqa: S603
+    subprocess.run([sys.executable, '-Im', 'build', '--outdir', str(dist_dir)], check=True)  # noqa: S603
 
     wheel_path = next(dist_dir.glob('django_celery_outbox-*.whl'))
     with zipfile.ZipFile(wheel_path) as archive:
@@ -33,7 +33,7 @@ def test_built_wheel_ignores_stale_build_cache(tmp_path: Path) -> None:
     dist_dir = tmp_path / 'dist'
 
     try:
-        subprocess.run([sys.executable, '-m', 'build', '--outdir', str(dist_dir)], check=True)  # noqa: S603
+        subprocess.run([sys.executable, '-Im', 'build', '--outdir', str(dist_dir)], check=True)  # noqa: S603
     finally:
         stale_module.unlink(missing_ok=True)
 

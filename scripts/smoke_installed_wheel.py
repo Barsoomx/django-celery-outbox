@@ -70,8 +70,10 @@ def main(argv: list[str]) -> int:
     bootstrap_django()
 
     import django_celery_outbox
+    import django_celery_outbox.fixtures
     import django_celery_outbox.management.commands.celery_outbox_purge_dead_letter
     import django_celery_outbox.management.commands.celery_outbox_relay
+    import django_celery_outbox.management.commands.celery_outbox_replay_dead_letter
     import django_celery_outbox.management.commands.celery_outbox_stats
 
     sys.stdout.write(f'{django_celery_outbox.__file__}\n')

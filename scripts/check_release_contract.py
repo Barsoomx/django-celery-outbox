@@ -9,6 +9,11 @@ from pathlib import Path
 
 SPECULATIVE_MARKERS = ('WIP', 'TODO', 'TBD', 'FIXME', 'draft')
 MARKER_PATTERN = re.compile(r'\b(' + '|'.join(re.escape(marker) for marker in SPECULATIVE_MARKERS) + r')\b', re.IGNORECASE)
+KNOWN_GHOST_ENTRY_PATTERNS = (
+    re.compile(r'^\s*-\s+\*\*PII redaction\*\*:.*CELERY_OUTBOX_REDACT_FIELDS', re.IGNORECASE),
+    re.compile(r'^\s*-\s+\*\*Log sampling\*\*:.*CELERY_OUTBOX_LOG_SAMPLE_RATE', re.IGNORECASE),
+    re.compile(r'^\s*-\s+\*\*Health check endpoint\*\*:.*`/health/`', re.IGNORECASE),
+)
 
 
 def _build_release_heading_pattern(version: str) -> re.Pattern[str]:
@@ -44,6 +49,11 @@ def check_changelog(path: Path, *, version: str | None = None) -> list[str]:
         match = MARKER_PATTERN.search(line)
         if match:
             problems.append(f'{path}:{line_number}: speculative marker "{match.group(1)}" found: {line.strip()}')
+
+        for pattern in KNOWN_GHOST_ENTRY_PATTERNS:
+            if pattern.search(line):
+                problems.append(f'{path}:{line_number}: ghost changelog entry found: {line.strip()}')
+                break
 
     if version is not None:
         if not _has_release_heading(lines, version):

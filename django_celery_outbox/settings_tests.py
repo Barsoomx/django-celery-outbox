@@ -185,6 +185,12 @@ def test_load_dlq_retention_setting_rejects_invalid_duration() -> None:
         load_dlq_retention_setting()
 
 
+@override_settings(CELERY_OUTBOX_DLQ_RETENTION={'older_than_dead': '7d', 'task_name': 123})
+def test_load_dlq_retention_setting_rejects_non_string_task_name() -> None:
+    with pytest.raises(TypeError, match='task_name must be a string'):
+        load_dlq_retention_setting()
+
+
 @override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=900)
 def test_load_stale_timeout_seconds_setting_returns_configured_value() -> None:
     assert load_stale_timeout_seconds_setting() == 900
