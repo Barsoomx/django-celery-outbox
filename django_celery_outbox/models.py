@@ -32,6 +32,12 @@ class CeleryOutbox(models.Model):
                 condition=models.Q(updated_at__isnull=True),
                 name='celery_outbox_pending_idx',
             ),
+            models.Index(fields=['retry_after', 'id'], name='celery_outbox_retry_idx'),
+            models.Index(
+                fields=['updated_at', 'id'],
+                condition=models.Q(retry_after__isnull=True),
+                name='celery_outbox_stale_idx',
+            ),
         ]
 
     def __str__(self) -> str:
@@ -72,6 +78,10 @@ class CeleryOutboxDeadLetter(models.Model):
         db_table = 'celery_outbox_dead_letter'
         verbose_name = 'CeleryOutboxDeadLetter'
         verbose_name_plural = 'CeleryOutboxDeadLetter'
+        indexes = [
+            models.Index(fields=['dead_at'], name='celery_outbox_dlq_dead_at_idx'),
+            models.Index(fields=['created_at'], name='celery_outbox_dlq_created_idx'),
+        ]
 
     @property
     def inspection_args(self) -> list:

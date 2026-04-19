@@ -8,14 +8,13 @@ import structlog
 from celery import Celery
 from django.db import close_old_connections, connections, transaction
 from django.dispatch import Signal
-from django.utils import timezone
 from kombu.transport.native_delayed_delivery import (
     declare_native_delayed_delivery_exchanges_and_queues,
 )
 
 from django_celery_outbox import metrics
 from django_celery_outbox.metrics import get_task_tag
-from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.relay._config import RelayConfig
 from django_celery_outbox.relay._message_selector import MessageSelector, get_pending_filter
 from django_celery_outbox.relay._mutations import RelayMutations
@@ -27,8 +26,27 @@ from django_celery_outbox.signals import (
     outbox_message_failed,
     outbox_message_sent,
 )
+from django_celery_outbox.stats import QueueStats, get_queue_stats
 
 _logger = structlog.getLogger(__name__)
+
+
+class QueueSnapshotSampler:
+    def __init__(self, *, refresh_interval_seconds: float = 5.0) -> None:
+        self._refresh_interval_seconds = refresh_interval_seconds
+        self._last_sampled_at: float | None = None
+        self._last_stats = QueueStats(
+            queue_depth=0,
+            dlq_count=0,
+            oldest_pending_seconds=None,
+            top_failing=[],
+        )
+
+    def get(self, *, now_monotonic: float) -> QueueStats:
+        if self._last_sampled_at is None or now_monotonic - self._last_sampled_at >= self._refresh_interval_seconds:
+            self._last_stats = get_queue_stats(top_n=0)
+            self._last_sampled_at = now_monotonic
+        return self._last_stats
 
 
 class Relay:
@@ -62,6 +80,7 @@ class Relay:
             broker_outage_cooldown=config.broker_outage_cooldown,
             shutdown_timeout=config.shutdown_timeout,
         )
+        self._queue_snapshot_sampler = QueueSnapshotSampler()
         self._running = True
 
     def start(self) -> None:
@@ -128,23 +147,18 @@ class Relay:
         self,
         *,
         start_time: float,
+        finished_at: float,
+        snapshot: QueueStats,
         published: int,
         failed: int,
         exceeded: int,
         deferred_due_to_outage: int,
         shutdown_aborted: int,
     ) -> None:
-        queue_depth = CeleryOutbox.objects.count()
-        metrics.gauge('queue.depth', queue_depth)
-        metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
-        metrics.timing('batch.duration_ms', (time.monotonic() - start_time) * 1000)
-
-        oldest = CeleryOutbox.objects.filter(get_pending_filter()).order_by('created_at').values_list('created_at', flat=True).first()
-        if oldest:
-            age_seconds = (timezone.now() - oldest).total_seconds()
-            metrics.gauge('oldest_pending_age_seconds', age_seconds)
-        else:
-            metrics.gauge('oldest_pending_age_seconds', 0)
+        metrics.gauge('queue.depth', snapshot.queue_depth)
+        metrics.gauge('dead_letter.count', snapshot.dlq_count)
+        metrics.timing('batch.duration_ms', (finished_at - start_time) * 1000)
+        metrics.gauge('oldest_pending_age_seconds', snapshot.oldest_pending_seconds or 0)
 
         _logger.info(
             'celery_outbox_batch_processed',
@@ -153,7 +167,7 @@ class Relay:
             exceeded=exceeded,
             deferred_due_to_outage=deferred_due_to_outage,
             shutdown_aborted=shutdown_aborted,
-            queue_depth=queue_depth,
+            queue_depth=snapshot.queue_depth,
         )
 
         self._touch_liveness()
@@ -183,8 +197,12 @@ class Relay:
                 close_old_connections()
                 time.sleep(sleep_for)
                 close_old_connections()
+                finished_at = time.monotonic()
+                snapshot = self._queue_snapshot_sampler.get(now_monotonic=finished_at)
                 self._finalize_processing_cycle(
                     start_time=start_time,
+                    finished_at=finished_at,
+                    snapshot=snapshot,
                     published=0,
                     failed=0,
                     exceeded=0,
@@ -231,8 +249,12 @@ class Relay:
             else:
                 batch_span.set_status('ok')
 
+        finished_at = time.monotonic()
+        snapshot = self._queue_snapshot_sampler.get(now_monotonic=finished_at)
         self._finalize_processing_cycle(
             start_time=start_time,
+            finished_at=finished_at,
+            snapshot=snapshot,
             published=len(published),
             failed=len(failed),
             exceeded=len(exceeded),

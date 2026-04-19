@@ -17,7 +17,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--top',
             type=int,
-            default=10,
+            default=0,
         )
 
     def handle(self, *args: Any, **options: Any) -> None:

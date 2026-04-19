@@ -1,6 +1,8 @@
 import json
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 
 
 def test_queue_stats_to_dict() -> None:
@@ -210,3 +212,17 @@ def test_get_queue_stats_top_n_zero_returns_empty_list() -> None:
     result = get_queue_stats(top_n=0)
 
     assert result.top_failing == []
+
+
+@pytest.mark.django_db
+def test_get_queue_stats_top_n_zero_does_not_run_group_by() -> None:
+    from django_celery_outbox.factories import CeleryOutboxFactory
+    from django_celery_outbox.stats import get_queue_stats
+
+    CeleryOutboxFactory.create(task_name='app.tasks.task_a', retries=10)
+
+    with CaptureQueriesContext(connection) as ctx:
+        result = get_queue_stats(top_n=0)
+
+    assert result.top_failing == []
+    assert not any('GROUP BY' in query['sql'].upper() for query in ctx.captured_queries)

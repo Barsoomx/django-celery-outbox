@@ -1,6 +1,6 @@
 import pytest
 
-from django_celery_outbox.models import CeleryOutbox
+from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 
 
 @pytest.mark.django_db
@@ -42,6 +42,21 @@ def test_pending_index_exists() -> None:
     index_names = [idx.name for idx in CeleryOutbox._meta.indexes]
 
     assert 'celery_outbox_pending_idx' in index_names
+
+
+def test_outbox_retry_and_stale_indexes_declared() -> None:
+    index_names = {index.name for index in CeleryOutbox._meta.indexes}
+
+    assert 'celery_outbox_pending_idx' in index_names
+    assert 'celery_outbox_retry_idx' in index_names
+    assert 'celery_outbox_stale_idx' in index_names
+
+
+def test_dead_letter_retention_indexes_declared() -> None:
+    index_names = {index.name for index in CeleryOutboxDeadLetter._meta.indexes}
+
+    assert 'celery_outbox_dlq_dead_at_idx' in index_names
+    assert 'celery_outbox_dlq_created_idx' in index_names
 
 
 @pytest.mark.django_db

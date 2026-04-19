@@ -18,6 +18,7 @@ _UNIT_MULTIPLIERS = {
     'd': 86400,
     'w': 604800,
 }
+_DELETE_CHUNK_SIZE = 1000
 
 
 @dataclass
@@ -78,9 +79,14 @@ def _execute_purge(queryset: QuerySet, dry_run: bool) -> PurgeResult:
     deleted_count = sum(task_names.values())
 
     if not dry_run and deleted_count > 0:
-        queryset.delete()
+        _delete_in_chunks(queryset)
 
     return PurgeResult(deleted_count=deleted_count, task_names=task_names)
+
+
+def _delete_in_chunks(queryset: QuerySet[CeleryOutboxDeadLetter]) -> None:
+    while ids := list(queryset.order_by('pk').values_list('pk', flat=True)[:_DELETE_CHUNK_SIZE]):
+        CeleryOutboxDeadLetter.objects.filter(pk__in=ids).delete()
 
 
 def parse_duration(value: str) -> timedelta:

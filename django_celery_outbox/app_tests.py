@@ -1,9 +1,8 @@
 import subprocess
 import sys
-from collections.abc import Callable, Sequence
-from collections.abc import Generator
+from collections.abc import Callable, Generator
+from contextlib import AbstractContextManager
 from pathlib import Path
-from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -115,7 +114,7 @@ def test_send_task_ignores_outbox_message_created_receiver_exception(
 @pytest.mark.django_db
 def test_messages_enqueued_increments_only_after_commit(
     f_app: OutboxCelery,
-    django_capture_on_commit_callbacks: Callable[..., object],
+    django_capture_on_commit_callbacks: Callable[..., AbstractContextManager[list[Callable[[], object]]]],
 ) -> None:
     with patch('django_celery_outbox.metrics.increment') as increment:
         with django_capture_on_commit_callbacks(execute=False) as callbacks:
@@ -123,7 +122,6 @@ def test_messages_enqueued_increments_only_after_commit(
                 f_app.send_task('my.task', task_id='metric-commit-1')
                 increment.assert_not_called()
 
-        callbacks = cast(Sequence[Callable[[], object]], callbacks)
         assert len(callbacks) == 1
         callbacks[0]()
         increment.assert_called_once_with('messages.enqueued', tags={'task_name': 'my.task'})
@@ -132,7 +130,7 @@ def test_messages_enqueued_increments_only_after_commit(
 @pytest.mark.django_db
 def test_messages_enqueued_not_emitted_on_rollback(
     f_app: OutboxCelery,
-    django_capture_on_commit_callbacks: Callable[..., object],
+    django_capture_on_commit_callbacks: Callable[..., AbstractContextManager[list[Callable[[], object]]]],
 ) -> None:
     with patch('django_celery_outbox.metrics.increment') as increment:
         with django_capture_on_commit_callbacks(execute=False) as callbacks:
@@ -141,7 +139,6 @@ def test_messages_enqueued_not_emitted_on_rollback(
                     f_app.send_task('my.task', task_id='metric-rollback-1')
                     raise RuntimeError('rollback')
 
-        callbacks = cast(Sequence[Callable[[], object]], callbacks)
         assert callbacks == []
         increment.assert_not_called()
 
@@ -165,7 +162,7 @@ def test_send_task_excluded_does_not_increment_messages_enqueued(
 def test_messages_enqueued_metric_errors_are_logged_and_swallowed(
     m_logger: MagicMock,
     f_app: OutboxCelery,
-    django_capture_on_commit_callbacks: Callable[..., object],
+    django_capture_on_commit_callbacks: Callable[..., AbstractContextManager[list[Callable[[], object]]]],
 ) -> None:
     with patch('django_celery_outbox.metrics.increment', side_effect=RuntimeError('statsd down')):
         with django_capture_on_commit_callbacks(execute=True):

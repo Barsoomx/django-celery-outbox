@@ -43,3 +43,14 @@ def test_command_respects_top_argument() -> None:
     output = out.getvalue()
     data = json.loads(output)
     assert len(data['top_failing']) == 2
+
+
+@pytest.mark.django_db
+def test_stats_command_defaults_top_to_zero() -> None:
+    CeleryOutboxFactory.create(task_name='app.tasks.task_a', retries=10)
+
+    out = StringIO()
+    call_command('celery_outbox_stats', format='json', stdout=out)
+
+    parsed = json.loads(out.getvalue())
+    assert parsed['top_failing'] == []
