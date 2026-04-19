@@ -3,6 +3,13 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Release artifacts now exclude internal `*_tests.py` modules from built wheels and source distributions.
+- Release publishing now runs built-artifact and changelog contract checks before PyPI upload.
+- CI now includes a dedicated live RabbitMQ smoke lane for Django 5.0 and 5.1.
+
 
 ## [0.3.0] — 2026-04-19
 

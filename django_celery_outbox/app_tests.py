@@ -12,10 +12,15 @@ from django.test import override_settings
 
 from django_celery_outbox.app import OutboxCelery
 from django_celery_outbox.models import CeleryOutbox
+from django_celery_outbox.signals import outbox_message_created
 
 
 def sample_redactor(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
     return args, dict.fromkeys(kwargs, '[REDACTED]')
+
+
+def boom(sender: type, **kwargs: object) -> None:
+    raise RuntimeError('boom')
 
 
 @pytest.fixture()
@@ -79,6 +84,97 @@ def test_send_task_returns_async_result(f_app: OutboxCelery) -> None:
     result = f_app.send_task('my.task')
 
     assert isinstance(result, AsyncResult)
+
+
+@patch('django_celery_outbox.app._logger')
+@pytest.mark.django_db
+def test_send_task_ignores_outbox_message_created_receiver_exception(
+    m_logger: MagicMock,
+    f_app: OutboxCelery,
+) -> None:
+    outbox_message_created.connect(boom)
+    try:
+        result = f_app.send_task('my.task', task_id='safe-signal-1')
+    finally:
+        outbox_message_created.disconnect(boom)
+
+    assert result.id == 'safe-signal-1'
+    assert CeleryOutbox.objects.filter(task_id='safe-signal-1').exists()
+    m_logger.error.assert_any_call(
+        'celery_outbox_signal_error',
+        signal='outbox_message_created',
+        task_id='safe-signal-1',
+        task_name='my.task',
+        receiver='boom',
+        exc_info=True,
+    )
+
+
+@pytest.mark.django_db
+def test_messages_enqueued_increments_only_after_commit(
+    f_app: OutboxCelery,
+    django_capture_on_commit_callbacks,
+) -> None:
+    with patch('django_celery_outbox.metrics.increment') as increment:
+        with django_capture_on_commit_callbacks(execute=False) as callbacks:
+            with transaction.atomic():
+                f_app.send_task('my.task', task_id='metric-commit-1')
+                increment.assert_not_called()
+
+        assert len(callbacks) == 1
+        callbacks[0]()
+        increment.assert_called_once_with('messages.enqueued', tags={'task_name': 'my.task'})
+
+
+@pytest.mark.django_db
+def test_messages_enqueued_not_emitted_on_rollback(
+    f_app: OutboxCelery,
+    django_capture_on_commit_callbacks,
+) -> None:
+    with patch('django_celery_outbox.metrics.increment') as increment:
+        with django_capture_on_commit_callbacks(execute=False) as callbacks:
+            with pytest.raises(RuntimeError, match='rollback'):
+                with transaction.atomic():
+                    f_app.send_task('my.task', task_id='metric-rollback-1')
+                    raise RuntimeError('rollback')
+
+        assert callbacks == []
+        increment.assert_not_called()
+
+
+@patch.object(Celery, 'send_task', return_value=MagicMock(spec=AsyncResult))
+@pytest.mark.django_db
+def test_send_task_excluded_does_not_increment_messages_enqueued(
+    m_super_send: MagicMock,
+    f_app: OutboxCelery,
+) -> None:
+    with patch('django_celery_outbox.metrics.increment') as increment:
+        with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS={'my.excluded.task'}):
+            f_app.send_task('my.excluded.task')
+
+        increment.assert_not_called()
+    m_super_send.assert_called_once()
+
+
+@patch('django_celery_outbox.app._logger')
+@pytest.mark.django_db
+def test_messages_enqueued_metric_errors_are_logged_and_swallowed(
+    m_logger: MagicMock,
+    f_app: OutboxCelery,
+    django_capture_on_commit_callbacks,
+) -> None:
+    with patch('django_celery_outbox.metrics.increment', side_effect=RuntimeError('statsd down')):
+        with django_capture_on_commit_callbacks(execute=True):
+            result = f_app.send_task('my.task', task_id='metric-error-1')
+
+    assert result.id == 'metric-error-1'
+    assert CeleryOutbox.objects.filter(task_id='metric-error-1').exists()
+    m_logger.warning.assert_any_call(
+        'celery_outbox_metric_error',
+        metric='messages.enqueued',
+        task_name='my.task',
+        exc_info=True,
+    )
 
 
 @pytest.mark.django_db
@@ -476,3 +572,55 @@ def test_send_task_applies_pii_redactor_from_string_path(
     assert msg is not None
     assert msg.kwargs == {'email': 'user@example.com'}
     assert msg.redacted_kwargs == {'email': '[REDACTED]'}
+
+
+@pytest.mark.django_db
+def test_send_task_redactor_invoked_once_for_top_level_payload(
+    f_app: OutboxCelery,
+) -> None:
+    redactor = MagicMock(return_value=([{'email': '[REDACTED]'}], {'token': '[REDACTED]'}))
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=redactor):
+        f_app.send_task(
+            'test.task',
+            args=({'email': 'user@example.com'},),
+            kwargs={'token': 'secret'},
+        )
+
+    redactor.assert_called_once_with(
+        'test.task',
+        [{'email': 'user@example.com'}],
+        {'token': 'secret'},
+    )
+
+
+@pytest.mark.django_db
+def test_send_task_without_redactor_skips_deepcopy(
+    f_app: OutboxCelery,
+) -> None:
+    with patch('django_celery_outbox.app.deepcopy') as m_deepcopy:
+        with override_settings(CELERY_OUTBOX_PII_REDACTOR=None):
+            f_app.send_task(
+                'test.task',
+                args=({'email': 'user@example.com'},),
+                kwargs={'token': 'secret'},
+            )
+
+        m_deepcopy.assert_not_called()
+
+
+@pytest.mark.django_db
+def test_send_task_with_redactor_clones_payload_once(
+    f_app: OutboxCelery,
+) -> None:
+    from copy import deepcopy as real_deepcopy
+
+    with patch('django_celery_outbox.app.deepcopy', side_effect=real_deepcopy) as m_deepcopy:
+        with override_settings(CELERY_OUTBOX_PII_REDACTOR='django_celery_outbox.app_tests.sample_redactor'):
+            f_app.send_task(
+                'test.task',
+                args=({'email': 'user@example.com'},),
+                kwargs={'email': 'user@example.com'},
+            )
+
+        m_deepcopy.assert_called_once()

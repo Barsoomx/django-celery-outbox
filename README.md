@@ -18,6 +18,10 @@ Transactional Outbox pattern for Celery tasks in Django.
 - StatsD metrics
 - Django admin integration
 
+## Compatibility
+
+CI exercises Django 4.2 and 5.2 in the general matrix, plus dedicated live-broker smoke coverage for Django 5.0 and 5.1. The support claims in this repository stay aligned with those explicit lanes.
+
 ## Quick Start
 
 ```bash

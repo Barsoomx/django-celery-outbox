@@ -12,6 +12,8 @@ from django_celery_outbox._settings import (
     get_exclude_tasks_setting,
     get_outbox_db_alias,
     load_celery_app_setting,
+    load_dlq_retention_setting,
+    load_pii_redactor_setting,
 )
 
 _REQUIRED_OUTBOX_TABLES = frozenset({'celery_outbox', 'celery_outbox_dead_letter'})
@@ -98,6 +100,48 @@ def check_celery_outbox_exclude_tasks_setting(
                 str(exc),
                 hint='Use a set, frozenset, list, or tuple of task-name strings.',
                 id='celery_outbox.E004',
+            )
+        ]
+
+    return []
+
+
+@register()
+def check_celery_outbox_redactor_setting(
+    app_configs: object,
+    **kwargs: object,
+) -> list[Error]:
+    del app_configs, kwargs
+
+    try:
+        load_pii_redactor_setting()
+    except (ImportError, TypeError, ValueError) as exc:
+        return [
+            Error(
+                str(exc),
+                hint='Set CELERY_OUTBOX_PII_REDACTOR to None, a dotted path, or a callable(task_name, args, kwargs).',
+                id='celery_outbox.E007',
+            )
+        ]
+
+    return []
+
+
+@register()
+def check_celery_outbox_dlq_retention_setting(
+    app_configs: object,
+    **kwargs: object,
+) -> list[Error]:
+    del app_configs, kwargs
+
+    try:
+        load_dlq_retention_setting()
+    except (TypeError, ValueError) as exc:
+        return [
+            Error(
+                str(exc),
+                hint='Use the same keys supported by celery_outbox_purge_dead_letter.',
+                id='celery_outbox.E008',
             )
         ]
 

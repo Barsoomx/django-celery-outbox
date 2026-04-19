@@ -8,11 +8,12 @@ import structlog
 from celery import Celery
 from celery.result import AsyncResult
 from celery.utils import uuid
-from django.conf import settings
-from django.db import connections
-from django.utils.module_loading import import_string
+from django.db import connections, transaction
+from django.dispatch import Signal
 
-from django_celery_outbox._settings import get_exclude_tasks_setting
+from django_celery_outbox._settings import get_exclude_tasks_setting, load_pii_redactor_setting
+from django_celery_outbox import metrics
+from django_celery_outbox.metrics import get_task_tag
 from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, serialize_options
 from django_celery_outbox.signals import outbox_message_created
 from django_celery_outbox.structlog_utils import get_structlog_context_json
@@ -22,26 +23,68 @@ _logger = structlog.getLogger(__name__)
 
 @lru_cache(maxsize=1)
 def _get_redactor() -> Callable[[str, list, dict], tuple[list, dict]] | None:
-    redactor = getattr(settings, 'CELERY_OUTBOX_PII_REDACTOR', None)
-    if redactor is None:
-        return None
-
-    if isinstance(redactor, str):
-        return import_string(redactor)
-
-    return redactor
+    return load_pii_redactor_setting()
 
 
-def _redact_task_data(
+def _build_redacted_payloads(
     task_name: str,
-    args: list,
-    kwargs: dict,
-) -> tuple[list, dict]:
+    args_list: list[Any],
+    kwargs_dict: dict[str, Any],
+) -> tuple[list[Any] | None, dict[str, Any] | None]:
     redactor = _get_redactor()
     if redactor is None:
-        return args, kwargs
+        return None, None
 
-    return redactor(task_name, args, kwargs)
+    payload = deepcopy(
+        {
+            'args': args_list,
+            'kwargs': kwargs_dict,
+        }
+    )
+    redacted_args, redacted_kwargs = redactor(
+        task_name,
+        payload['args'],
+        payload['kwargs'],
+    )
+    return (
+        redacted_args if redacted_args != args_list else None,
+        redacted_kwargs if redacted_kwargs != kwargs_dict else None,
+    )
+
+
+def _send_signal_safe(
+    *,
+    signal: Signal,
+    signal_name: str,
+    task_id: str,
+    task_name: str,
+) -> None:
+    for receiver, response in signal.send_robust(
+        sender=OutboxCelery,
+        task_id=task_id,
+        task_name=task_name,
+    ):
+        if isinstance(response, Exception):
+            _logger.error(
+                'celery_outbox_signal_error',
+                signal=signal_name,
+                task_id=task_id,
+                task_name=task_name,
+                receiver=getattr(receiver, '__qualname__', repr(receiver)),
+                exc_info=True,
+            )
+
+
+def _emit_enqueued_metric_safe(task_name: str) -> None:
+    try:
+        metrics.increment('messages.enqueued', tags=get_task_tag(task_name))
+    except Exception:
+        _logger.warning(
+            'celery_outbox_metric_error',
+            metric='messages.enqueued',
+            task_name=task_name,
+            exc_info=True,
+        )
 
 
 _OUTBOX_OPTION_KEYS = (
@@ -171,18 +214,11 @@ class OutboxCelery(Celery):
         args_list = list(args) if args else []
         kwargs_dict = dict(kwargs) if kwargs else {}
 
-        redactor = _get_redactor()
-        if redactor is not None:
-            redacted_args, redacted_kwargs = redactor(
-                name,
-                deepcopy(args_list),
-                deepcopy(kwargs_dict),
-            )
-            stored_redacted_args = redacted_args if redacted_args != args_list else None
-            stored_redacted_kwargs = redacted_kwargs if redacted_kwargs != kwargs_dict else None
-        else:
-            stored_redacted_args = None
-            stored_redacted_kwargs = None
+        stored_redacted_args, stored_redacted_kwargs = _build_redacted_payloads(
+            name,
+            args_list,
+            kwargs_dict,
+        )
         from django_celery_outbox.models import CeleryOutbox
 
         if not connections[CeleryOutbox.objects.db].in_atomic_block:
@@ -210,10 +246,15 @@ class OutboxCelery(Celery):
                 structlog_context=get_structlog_context_json(),
             )
 
-            outbox_message_created.send(
-                sender=OutboxCelery,
+            _send_signal_safe(
+                signal=outbox_message_created,
+                signal_name='outbox_message_created',
                 task_id=task_id,
                 task_name=name,
+            )
+            transaction.on_commit(
+                lambda: _emit_enqueued_metric_safe(name),
+                using=CeleryOutbox.objects.db,
             )
 
             span.set_status('ok')

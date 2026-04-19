@@ -11,13 +11,19 @@ from django.test import override_settings
 from django_celery_outbox.checks import (
     _is_migrate_command,
     check_celery_outbox_app_setting,
+    check_celery_outbox_dlq_retention_setting,
     check_celery_outbox_exclude_tasks_setting,
+    check_celery_outbox_redactor_setting,
     check_database_supports_skip_locked,
     check_outbox_migrations_applied,
 )
 
 valid_celery_app = Celery('checks-tests')
 not_a_celery_app = object()
+
+
+def bad_redactor_signature(task_name: str, args: list) -> tuple[list, dict]:
+    return args, {}
 
 
 def _mock_connection(
@@ -115,6 +121,27 @@ def test_check_celery_outbox_exclude_tasks_setting_returns_error() -> None:
     assert [error.id for error in errors] == ['celery_outbox.E004']
 
 
+@override_settings(CELERY_OUTBOX_PII_REDACTOR='missing.module.redactor')
+def test_check_celery_outbox_redactor_setting_returns_error_for_invalid_path() -> None:
+    errors = check_celery_outbox_redactor_setting(None)
+
+    assert [error.id for error in errors] == ['celery_outbox.E007']
+
+
+@override_settings(CELERY_OUTBOX_PII_REDACTOR='django_celery_outbox.checks_tests.bad_redactor_signature')
+def test_check_celery_outbox_redactor_setting_returns_error_for_bad_signature() -> None:
+    errors = check_celery_outbox_redactor_setting(None)
+
+    assert [error.id for error in errors] == ['celery_outbox.E007']
+
+
+@override_settings(CELERY_OUTBOX_DLQ_RETENTION={'older_than_dead': '30x'})
+def test_check_celery_outbox_dlq_retention_setting_returns_error_for_bad_duration() -> None:
+    errors = check_celery_outbox_dlq_retention_setting(None)
+
+    assert [error.id for error in errors] == ['celery_outbox.E008']
+
+
 def test_check_outbox_migrations_applied_returns_missing_migration_error() -> None:
     m_connection = _mock_connection()
     m_recorder = MagicMock()
@@ -210,6 +237,40 @@ def test_call_command_check_reports_invalid_exclude_tasks() -> None:
                 with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
                     with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
                         with pytest.raises(SystemCheckError, match='celery_outbox.E004'):
+                            call_command('check')
+
+
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.checks_tests.valid_celery_app')
+def test_call_command_check_reports_invalid_redactor_setting() -> None:
+    m_connection = _mock_connection(alias='outbox')
+    m_recorder = MagicMock()
+    m_recorder.applied_migrations.return_value = _mock_applied_outbox_migrations()
+    m_loader = MagicMock()
+    m_loader.disk_migrations = _mock_applied_outbox_migrations()
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR='missing.module.redactor'):
+        with patch('django_celery_outbox.checks.connections', {'outbox': m_connection}):
+            with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='outbox'):
+                with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
+                    with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
+                        with pytest.raises(SystemCheckError, match='celery_outbox.E007'):
+                            call_command('check')
+
+
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.checks_tests.valid_celery_app')
+def test_call_command_check_reports_invalid_dlq_retention_setting() -> None:
+    m_connection = _mock_connection(alias='outbox')
+    m_recorder = MagicMock()
+    m_recorder.applied_migrations.return_value = _mock_applied_outbox_migrations()
+    m_loader = MagicMock()
+    m_loader.disk_migrations = _mock_applied_outbox_migrations()
+
+    with override_settings(CELERY_OUTBOX_DLQ_RETENTION={'older_than_dead': '30x'}):
+        with patch('django_celery_outbox.checks.connections', {'outbox': m_connection}):
+            with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='outbox'):
+                with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
+                    with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
+                        with pytest.raises(SystemCheckError, match='celery_outbox.E008'):
                             call_command('check')
 
 

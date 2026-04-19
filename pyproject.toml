@@ -122,6 +122,11 @@ pythonpath = ['.']
 python_files = ['*_tests.py']
 python_classes = ['Test*']
 python_functions = ['test_*']
+markers = [
+    "release_artifact: tests that validate built wheel and sdist contents",
+    "release_contract: tests that validate release gates and contract checks",
+    "live_broker_smoke: tests that require a live RabbitMQ broker",
+]
 filterwarnings = [
     'ignore::pytest.PytestCollectionWarning',
 ]

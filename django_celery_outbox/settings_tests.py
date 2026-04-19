@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 import pytest
 from celery import Celery
 from django.test import override_settings
@@ -6,10 +8,20 @@ from django_celery_outbox._settings import (
     get_exclude_tasks_setting,
     get_outbox_db_alias,
     load_celery_app_setting,
+    load_dlq_retention_setting,
+    load_pii_redactor_setting,
 )
 
 valid_celery_app = Celery('settings-tests')
 not_a_celery_app = object()
+
+
+def valid_redactor(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+    return args, kwargs
+
+
+def bad_redactor_signature(task_name: str, args: list) -> tuple[list, dict]:
+    return args, {}
 
 
 @override_settings(CELERY_OUTBOX_APP='django_celery_outbox.settings_tests.valid_celery_app')
@@ -127,3 +139,46 @@ def test_get_exclude_tasks_setting_rejects_non_string_members() -> None:
 
 def test_get_outbox_db_alias_returns_model_database_alias() -> None:
     assert get_outbox_db_alias() == 'default'
+
+
+@override_settings(CELERY_OUTBOX_PII_REDACTOR='django_celery_outbox.settings_tests.valid_redactor')
+def test_load_pii_redactor_setting_loads_dotted_path() -> None:
+    assert load_pii_redactor_setting() is valid_redactor
+
+
+@override_settings(CELERY_OUTBOX_PII_REDACTOR=valid_redactor)
+def test_load_pii_redactor_setting_accepts_callable() -> None:
+    assert load_pii_redactor_setting() is valid_redactor
+
+
+@override_settings(CELERY_OUTBOX_PII_REDACTOR='missing.module.redactor')
+def test_load_pii_redactor_setting_raises_for_invalid_path() -> None:
+    with pytest.raises(ImportError):
+        load_pii_redactor_setting()
+
+
+@override_settings(CELERY_OUTBOX_PII_REDACTOR='django_celery_outbox.settings_tests.bad_redactor_signature')
+def test_load_pii_redactor_setting_raises_for_bad_signature() -> None:
+    with pytest.raises(TypeError, match='must accept \\(task_name, args, kwargs\\)'):
+        load_pii_redactor_setting()
+
+
+@override_settings(CELERY_OUTBOX_DLQ_RETENTION={'older_than_dead': '7d', 'task_name': 'myapp.*'})
+def test_load_dlq_retention_setting_parses_supported_values() -> None:
+    assert load_dlq_retention_setting() == {
+        'older_than_dead': timedelta(days=7),
+        'older_than_created': None,
+        'task_name_pattern': 'myapp.*',
+    }
+
+
+@override_settings(CELERY_OUTBOX_DLQ_RETENTION={})
+def test_load_dlq_retention_setting_requires_a_threshold() -> None:
+    with pytest.raises(ValueError, match='must specify older_than_dead or older_than_created'):
+        load_dlq_retention_setting()
+
+
+@override_settings(CELERY_OUTBOX_DLQ_RETENTION={'older_than_dead': '30x'})
+def test_load_dlq_retention_setting_rejects_invalid_duration() -> None:
+    with pytest.raises(ValueError, match="Invalid duration format: '30x'"):
+        load_dlq_retention_setting()
