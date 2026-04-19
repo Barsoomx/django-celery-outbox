@@ -664,7 +664,55 @@ $ python manage.py celery_outbox_relay \
     └── Relay(app=..., config=..., ...).start()
 ```
 
-### 10. Admin (`admin.py`)
+### 10. System Checks, Operator Commands, and Test Fixtures
+
+#### Django System Checks (`apps.py`, `checks.py`)
+
+`DjangoCeleryOutboxConfig.ready()` imports `checks.py`, which registers focused Django system
+checks surfaced by `python manage.py check`.
+
+Current checks:
+
+- `celery_outbox.E001` -- configured outbox database lacks `SELECT FOR UPDATE SKIP LOCKED`
+- `celery_outbox.E002` -- missing `CELERY_OUTBOX_APP`
+- `celery_outbox.E003` -- invalid or non-importable `CELERY_OUTBOX_APP`
+- `celery_outbox.E004` -- invalid `CELERY_OUTBOX_EXCLUDE_TASKS`
+- `celery_outbox.E005` -- django-celery-outbox migrations not fully applied
+- `celery_outbox.E006` -- outbox schema could not be verified
+
+These checks reuse the same internal setting loaders used by runtime code so early validation and
+runtime behavior stay aligned.
+
+#### Operator Commands (`stats.py`, `purge.py`, `tasks.py`)
+
+Two additional public management commands complement the relay daemon:
+
+- `python manage.py celery_outbox_stats`
+  Reports `queue_depth`, `dlq_count`, `oldest_pending_seconds`, and `top_failing`, with
+  `--format=text|json` and `--top=<N>`.
+- `python manage.py celery_outbox_purge_dead_letter`
+  Purges dead-letter rows by `dead_at`, `created_at`, and optional task-name glob filters.
+  If CLI retention flags are omitted, it falls back to `CELERY_OUTBOX_DLQ_RETENTION`.
+
+The same purge core is also exposed through the shared task
+`django_celery_outbox.tasks.purge_dead_letter`, intended for scheduled cleanup via Celery beat.
+
+#### pytest Plugin (`fixtures.py`)
+
+The package exports a pytest plugin through the `pytest11` entry point:
+
+```
+django_celery_outbox = "django_celery_outbox.fixtures"
+```
+
+User-facing helpers:
+
+- `outbox` -- returns the `CeleryOutbox` model with queue cleanup around each test
+- `assert_task_sent(...)` -- asserts that exactly one queued row matches the expected payload
+- `fake_relay` -- records broker publishes by patching raw `Celery.send_task`
+- `drain_outbox()` -- runs the real relay path synchronously until the queue drains or no progress is possible
+
+### 11. Admin (`admin.py`)
 
 #### CeleryOutboxAdmin
 
@@ -770,6 +818,7 @@ the dead letter table. This re-enqueues them for the relay to process.
 | `CELERY_OUTBOX_STRUCTLOG_ENABLED` | `True` | Enable structlog context capture |
 | `CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS` | `None` (all) | Whitelist of structlog context keys |
 | `CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK` | `True` | Include traceback in relay send-failure logs |
+| `CELERY_OUTBOX_DLQ_RETENTION` | `None` | Optional default retention policy for purge command / task (`older_than_dead`, `older_than_created`, `task_name`) |
 | `CELERY_OUTBOX_DISABLE_TASK_NAME_TAGS` | `False` | Disable per-task metric tags entirely |
 | `CELERY_OUTBOX_MONITORED_TASKS` | `None` | Optional allowlist for task-name metric tags; others collapse to aggregate labels |
 | `MONITORING_METRICS_ENABLED` | `True` | Enable StatsD metric emission |
@@ -799,6 +848,9 @@ unconditional end-to-end at-least-once guarantee. Consumers must be idempotent.
 ```
 __init__.py (lazy exports)
     │
+    ├── apps.py
+    │     └── checks.py (Django system checks)
+    │
     ├── app.py (OutboxCelery)
     │     ├── models.py (CeleryOutbox)
     │     ├── serialization.py (serialize_options)
@@ -818,14 +870,22 @@ __init__.py (lazy exports)
     ├── signals.py (Django Signal instances)
     │     (no internal deps)
     │
+    ├── fixtures.py (pytest plugin helpers)
+    │
     ├── metrics.py (increment, gauge, timing)
     │     └── statsd.py (get_statsd)
+    │
+    ├── stats.py (queue statistics)
+    ├── purge.py (dead-letter purge core)
+    ├── tasks.py (shared purge task)
     │
     ├── statsd.py (DogStatsd singleton)
     │     (reads django.conf.settings)
     │
-    └── management/commands/celery_outbox_relay (Command module)
-          └── relay (Relay, RelayConfig)
+    └── management/commands/
+          ├── celery_outbox_relay (Relay command)
+          ├── celery_outbox_stats (operator stats command)
+          └── celery_outbox_purge_dead_letter (DLQ purge command)
 
 admin.py (standalone, auto-registered)
     └── models.py (CeleryOutbox, CeleryOutboxDeadLetter)

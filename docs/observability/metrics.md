@@ -6,6 +6,7 @@ The relay emits StatsD metrics for monitoring.
 
 ```python
 # settings.py
+MONITORING_METRICS_ENABLED = True
 MONITORING_STATSD_HOST = 'localhost'
 MONITORING_STATSD_PORT = 9125
 MONITORING_STATSD_PREFIX = 'celery_outbox'
@@ -14,6 +15,8 @@ MONITORING_STATSD_TAGS = {
     'service': 'myapp',
 }
 ```
+
+Set `MONITORING_METRICS_ENABLED = False` to disable all emission without removing the integration code.
 
 ## Metric Reference
 

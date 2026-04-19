@@ -111,6 +111,13 @@ python manage.py celery_outbox_relay \
   --liveness-file /tmp/celery-outbox-alive
 ```
 
+## Operational Helpers
+
+- `DjangoCeleryOutboxConfig.ready()` registers Django system checks that validate supported database backends, required and importable `CELERY_OUTBOX_APP`, valid `CELERY_OUTBOX_EXCLUDE_TASKS`, and applied outbox migrations before runtime.
+- `celery_outbox_stats` reports `queue_depth`, `dlq_count`, `oldest_pending_seconds`, and `top_failing`, with `--format` and `--top` options.
+- `celery_outbox_purge_dead_letter` and the shared task `django_celery_outbox.tasks.purge_dead_letter` share the same purge core and can read `CELERY_OUTBOX_DLQ_RETENTION`.
+- A packaged pytest plugin is auto-discovered through `pytest11` and exposes `outbox`, `assert_task_sent`, `fake_relay`, and `drain_outbox()`.
+
 ## Database Tables
 
 ### celery_outbox
@@ -235,7 +242,7 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 |---------|----------|-------------|
 | Sentry trace | `sentry_sdk.get_traceparent()` | `sentry-trace` header |
 | Sentry baggage | `sentry_sdk.get_baggage()` | `baggage` header |
-| structlog | `structlog.contextvars.get_contextvars()` | `bound_contextvars()` |
+| structlog | `structlog.contextvars.get_contextvars()` | `bound_contextvars()` inside the relay publish path |
 
 ## Delivery Guarantees
 
@@ -271,6 +278,9 @@ skipped until compatible code is deployed.
 ```
 __init__.py (lazy exports)
     │
+    ├── apps.py
+    │     └── checks.py (Django system checks)
+    │
     ├── app.py (OutboxCelery)
     │     ├── models.py (CeleryOutbox)
     │     ├── serialization.py (serialize_options)
@@ -289,13 +299,21 @@ __init__.py (lazy exports)
     │
     ├── signals.py (Django Signal instances)
     │
+    ├── fixtures.py (pytest plugin helpers)
+    │
     ├── metrics.py (increment, gauge, timing)
     │     └── statsd.py (get_statsd)
     │
+    ├── stats.py (queue statistics)
+    ├── purge.py (dead-letter purge core)
+    ├── tasks.py (shared purge task)
+    │
     ├── statsd.py (DogStatsd singleton)
     │
-    └── management/commands/celery_outbox_relay (Command module)
-          └── relay (Relay, RelayConfig)
+    └── management/commands/
+          ├── celery_outbox_relay (Relay command)
+          ├── celery_outbox_stats (operator stats command)
+          └── celery_outbox_purge_dead_letter (DLQ purge command)
 
 admin.py (standalone, auto-registered)
     └── models.py (CeleryOutbox, CeleryOutboxDeadLetter)

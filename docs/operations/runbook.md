@@ -27,6 +27,7 @@ just steady-state queue drain.
 | `queue_depth`             | rows in `celery_outbox` awaiting send             | trending up → [Queue growing](#queue-growing)        |
 | `oldest_pending_seconds`  | age of the oldest pending row (delivery latency)  | above your SLO → [Queue growing](#queue-growing)     |
 | `dlq_count`               | rows in `celery_outbox_dead_letter`               | delta from baseline → [Dead-letter queue growing](#dead-letter-queue-growing) |
+| `top_failing`             | current outbox task groups with the highest cumulative retry counts | one task dominating retries → [Queue growing](#queue-growing) or [Dead-letter queue growing](#dead-letter-queue-growing) |
 
 ### Metrics for graphing and alerting
 

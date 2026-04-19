@@ -45,6 +45,26 @@ Event names and field schemas are part of the public API.
 |-------|------|-------------|
 | signal | int | Signal number (15=SIGTERM, 2=SIGINT) |
 
+### celery_outbox_relay_breaker_open
+
+**Level:** WARNING
+**When:** A broker-outage cooldown suppresses the next batch attempt
+
+| Field | Type | Description |
+|-------|------|-------------|
+| cooldown_seconds | float | Seconds remaining before the relay retries a batch |
+
+### celery_outbox_relay_breaker_trip
+
+**Level:** WARNING
+**When:** A second consecutive broker outage in the same batch opens the process-local breaker
+
+| Field | Type | Description |
+|-------|------|-------------|
+| deferred_count | int | Selected rows deferred by outage handling in this batch |
+| exception_type | str | Broker-outage exception class name |
+| exception_message | str | Exception message |
+
 ### celery_outbox_batch_processed
 
 **Level:** INFO
@@ -55,7 +75,20 @@ Event names and field schemas are part of the public API.
 | published | int | Messages successfully sent |
 | failed | int | Messages that will retry |
 | exceeded | int | Messages moved to dead letter |
+| deferred_due_to_outage | int | Selected rows deferred by broker-outage handling |
+| shutdown_aborted | int | Selected rows left untouched because shutdown deadline was reached |
 | queue_depth | int | Pending messages in outbox |
+
+### celery_outbox_relay_shutdown_deadline_exceeded
+
+**Level:** WARNING
+**When:** Draining mode stops the relay from starting more sends in the current batch
+
+| Field | Type | Description |
+|-------|------|-------------|
+| aborted_count | int | Number of selected rows left unstarted in this batch |
+| aborted_task_ids | list[str] | Task IDs of the aborted rows |
+| aborted_task_names | list[str] | Task names of the aborted rows |
 
 ### celery_outbox_relay_idle
 
@@ -107,7 +140,7 @@ No additional fields.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| signal | str | Signal name |
+| signal | str | Signal representation logged by `_send_signal_safe()` |
 | task_id | str | Task UUID |
 | task_name | str | Task name |
 
@@ -134,3 +167,18 @@ No additional fields.
 |-------|------|-------------|
 | dropped | int | Number of dropped signatures |
 | total | int | Total signatures attempted |
+
+## Purge Events
+
+### celery_outbox_dead_letter_purged
+
+**Level:** INFO
+**When:** Dead-letter purge logic finishes, including dry runs
+
+| Field | Type | Description |
+|-------|------|-------------|
+| deleted_count | int | Number of rows matched for deletion |
+| dry_run | bool | Whether the purge only reported matches |
+| older_than_dead | str \| null | Effective `dead_at` retention window |
+| older_than_created | str \| null | Effective `created_at` retention window |
+| task_name_pattern | str \| null | Effective task-name glob filter |

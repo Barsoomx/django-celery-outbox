@@ -51,16 +51,29 @@ python manage.py celery_outbox_relay \
 Show outbox statistics.
 
 ```bash
-python manage.py celery_outbox_stats
+python manage.py celery_outbox_stats [--format text|json] [--top N]
 ```
 
-Output:
+### Options
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `--format` | `text` \| `json` | `text` | Render human-readable or JSON output |
+| `--top` | int | `10` | Number of top failing task groups to include |
+
+Text output:
 
 ```
-Pending:      42
-Dead Letter:  3
-Oldest:       2024-01-15 10:30:00 (5m ago)
+Queue depth:     42
+DLQ count:       3
+Oldest pending:  5m 0s
+
+Top failing tasks:
+  1. myapp.tasks.process_order (12 retries)
+  2. myapp.tasks.send_email (4 retries)
 ```
+
+JSON output includes `queue_depth`, `dlq_count`, `oldest_pending_seconds`, and `top_failing`.
 
 ## celery_outbox_purge_dead_letter
 
@@ -79,4 +92,4 @@ python manage.py celery_outbox_purge_dead_letter --older-than-dead 30d
 | `--task-name` | str | None | Optional task-name glob for filtering dead letters |
 | `--dry-run` | flag | `False` | Show what would be deleted without deleting records |
 
-Specify at least one of `--older-than-dead` or `--older-than-created`.
+If neither retention flag is provided, the command falls back to `CELERY_OUTBOX_DLQ_RETENTION` from Django settings. CLI retention flags override that settings-based policy.
