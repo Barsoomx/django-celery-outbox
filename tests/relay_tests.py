@@ -280,6 +280,92 @@ def test_parallel_mode_never_submits_more_than_publish_concurrency(
 
 
 @pytest.mark.django_db
+def test_parallel_mode_stops_submitting_after_shutdown_deadline(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2, shutdown_timeout=30.0),
+    )
+    messages = [
+        CeleryOutbox.objects.create(task_id='shutdown-parallel-1', task_name='demo.task', options={}),
+        CeleryOutbox.objects.create(task_id='shutdown-parallel-2', task_name='demo.task', options={}),
+    ]
+    relay._policy.begin_shutdown(now_monotonic=0.0)
+
+    with patch.object(relay._publisher, 'prepare_publish_call', side_effect=lambda msg: msg, create=True):
+        with patch.object(relay._publisher, 'publish_prepared', return_value=None, create=True):
+            with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[0.0, 0.0, 31.0, 31.0]):
+                published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = relay._process_messages(messages)
+
+    assert published == [messages[0].id]
+    assert failed == []
+    assert exceeded == []
+    assert deferred_due_to_outage == []
+    assert [row.id for row in shutdown_aborted] == [messages[1].id]
+
+
+@pytest.mark.django_db
+def test_parallel_mode_stops_submitting_after_breaker_open(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            idle_time=0,
+            max_retries=5,
+            publish_concurrency=2,
+            broker_outage_cooldown=30.0,
+        ),
+    )
+    messages = [
+        CeleryOutbox.objects.create(task_id='breaker-parallel-1', task_name='demo.task', options={}),
+        CeleryOutbox.objects.create(task_id='breaker-parallel-2', task_name='demo.task', options={}),
+        CeleryOutbox.objects.create(task_id='breaker-parallel-3', task_name='demo.task', options={}),
+    ]
+
+    with patch.object(relay._publisher, 'prepare_publish_call', side_effect=lambda msg: msg, create=True):
+        with patch.object(
+            relay._publisher,
+            'publish_prepared',
+            side_effect=[TimeoutError('outage-1'), TimeoutError('outage-2')],
+            create=True,
+        ):
+            published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = relay._process_messages(messages)
+
+    assert published == []
+    assert failed == []
+    assert exceeded == []
+    assert deferred_due_to_outage == [messages[0].id, messages[1].id, messages[2].id]
+    assert shutdown_aborted == []
+
+
+@pytest.mark.django_db
+def test_inflight_futures_complete_and_are_classified_normally(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(app=m_celery_app, config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2))
+    first = CeleryOutbox.objects.create(task_id='inflight-1', task_name='demo.task', options={})
+    second = CeleryOutbox.objects.create(task_id='inflight-2', task_name='demo.task', options={}, retries=2)
+
+    with patch.object(relay._publisher, 'prepare_publish_call', side_effect=lambda msg: msg, create=True):
+        with patch.object(relay._publisher, 'publish_prepared', side_effect=[None, RuntimeError('boom')], create=True):
+            published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = relay._process_messages([first, second])
+
+    assert published == [first.id]
+    assert failed == []
+    assert [row.id for row in exceeded] == [second.id]
+    assert deferred_due_to_outage == []
+    assert shutdown_aborted == []
+
+
+@pytest.mark.django_db
 def test_processing_full_cycle(m_celery_app: MagicMock) -> None:
     relay = Relay(
         app=m_celery_app,
