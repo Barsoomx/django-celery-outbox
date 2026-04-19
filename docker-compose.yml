@@ -9,6 +9,8 @@ services:
         condition: service_healthy
       mysql:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       - DB_ENGINE=postgresql
       - DB_HOST=postgres

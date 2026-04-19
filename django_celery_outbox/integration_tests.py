@@ -97,11 +97,12 @@ def test_integration_tests_patch_close_old_connections_is_local() -> None:
     source = Path(__file__).read_text(encoding='utf-8')
     tree = ast.parse(source)
     function_defs = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    module_functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
 
     assert 'm_close_old_connections' not in function_defs
     assert '_process_relay_with_connection_patch' in function_defs
 
-    helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_process_relay_with_connection_patch')
+    helper = next(node for node in module_functions if node.name == '_process_relay_with_connection_patch')
     assert any(
         isinstance(call.func, ast.Name)
         and call.func.id == 'patch'
@@ -111,6 +112,15 @@ def test_integration_tests_patch_close_old_connections_is_local() -> None:
         for call in ast.walk(helper)
         if isinstance(call, ast.Call)
     )
+
+    direct_processing_calls = [
+        node.name
+        for node in module_functions
+        if node.name != '_process_relay_with_connection_patch'
+        and any(isinstance(call.func, ast.Attribute) and call.func.attr == '_processing' for call in ast.walk(node) if isinstance(call, ast.Call))
+    ]
+
+    assert not direct_processing_calls
 
 
 # ============================================================

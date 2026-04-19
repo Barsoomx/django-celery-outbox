@@ -159,7 +159,7 @@ jobs:
           DB_USER: ${{ matrix.db == 'mysql' && 'root' || 'test' }}
           DB_PASSWORD: ${{ matrix.db == 'mysql' && 'root' || 'test' }}
           DB_PORT: ${{ matrix.db == 'postgresql' && '5432' || '3306' }}
-        run: pytest -v
+        run: pytest -m "not release_artifact and not live_broker_smoke" -v
 
   live_broker_smoke:
     name: Live Broker Smoke (Django ${{ matrix.django }})
@@ -277,4 +277,4 @@ jobs:
           DB_USER: test
           DB_PASSWORD: test
           DB_PORT: 5432
-        run: pytest -v
+        run: pytest -m "not release_artifact and not live_broker_smoke" -v

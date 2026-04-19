@@ -24,15 +24,16 @@ The example declares RabbitMQ quorum queues explicitly and enables publisher con
 
 ## Quick Start
 
-The compose services install the built wheel from `/package/dist`, so build the package from the repository root before starting the example.
+The compose services install the built wheel from `/package/dist/example`, so build the package from the repository root before starting the example.
 
 ```bash
 # From the repository root
+rm -rf dist/example
 python -m pip install -q build
-python -m build
+python -m build --outdir dist/example
 
 # Start all services
-docker compose up -d
+docker compose -f examples/minimal_django/docker-compose.yml up -d
 
 # Create an order (triggers tasks via outbox)
 curl -X POST http://localhost:8000/orders/create/ \
@@ -43,17 +44,17 @@ curl -X POST http://localhost:8000/orders/create/ \
 curl http://localhost:8000/orders/
 
 # Watch relay logs
-docker compose logs -f relay
+docker compose -f examples/minimal_django/docker-compose.yml logs -f relay
 
 # Watch worker logs
-docker compose logs -f worker
+docker compose -f examples/minimal_django/docker-compose.yml logs -f worker
 
 # RabbitMQ Management UI
 # http://localhost:15672/ (guest/guest)
 
 # Inspect outbox via Django admin
 # http://localhost:8000/admin/ (create superuser first)
-docker compose exec app python manage.py createsuperuser
+docker compose -f examples/minimal_django/docker-compose.yml exec app python manage.py createsuperuser
 ```
 
 ## What Happens

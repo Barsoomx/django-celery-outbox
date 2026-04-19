@@ -234,8 +234,12 @@ def test_example_workflow_uses_built_artifact() -> None:
     assert 'django_celery_outbox/**' in workflow
     assert 'pyproject.toml' in workflow
     assert 'MANIFEST.in' in workflow
+    assert 'setup.py' in workflow
     assert 'Dockerfile' in workflow
-    assert 'python -m build' in workflow
-    assert 'pip install /package/dist/*.whl' in compose
+    assert 'rm -rf dist/example' in workflow
+    assert 'python -m build --outdir dist/example' in workflow
+    assert '/package/dist/example/django_celery_outbox-*.whl' in compose
+    assert 'Expected exactly one built wheel' in compose
     assert 'cp -r /package /tmp/package && pip install /tmp/package' not in compose
-    assert 'python -m build' in readme
+    assert 'python -m build --outdir dist/example' in readme
+    assert 'docker compose -f examples/minimal_django/docker-compose.yml up -d' in readme

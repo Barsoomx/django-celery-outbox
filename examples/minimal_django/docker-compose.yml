@@ -21,9 +21,15 @@ services:
       retries: 30
       start_period: 30s
     command: >
-      sh -c "pip install /package/dist/*.whl &&
-             python manage.py migrate &&
-             python manage.py runserver 0.0.0.0:8000"
+      sh -ec 'set -- /package/dist/example/django_celery_outbox-*.whl;
+              if [ "$1" = "/package/dist/example/django_celery_outbox-*.whl" ] || [ "$#" -ne 1 ]; then
+                echo "Expected exactly one built wheel in /package/dist/example";
+                ls -1 /package/dist/example || true;
+                exit 1;
+              fi;
+              pip install "$1";
+              python manage.py migrate;
+              python manage.py runserver 0.0.0.0:8000'
 
   relay:
     build: .
@@ -36,8 +42,14 @@ services:
       - .:/app
       - ../..:/package
     command: >
-      sh -c "pip install /package/dist/*.whl &&
-             python manage.py celery_outbox_relay --batch-size 10 --idle-time 1.0"
+      sh -ec 'set -- /package/dist/example/django_celery_outbox-*.whl;
+              if [ "$1" = "/package/dist/example/django_celery_outbox-*.whl" ] || [ "$#" -ne 1 ]; then
+                echo "Expected exactly one built wheel in /package/dist/example";
+                ls -1 /package/dist/example || true;
+                exit 1;
+              fi;
+              pip install "$1";
+              python manage.py celery_outbox_relay --batch-size 10 --idle-time 1.0'
 
   worker:
     build: .
@@ -50,8 +62,14 @@ services:
       - .:/app
       - ../..:/package
     command: >
-      sh -c "pip install /package/dist/*.whl &&
-             celery -A minimal_django worker -l info"
+      sh -ec 'set -- /package/dist/example/django_celery_outbox-*.whl;
+              if [ "$1" = "/package/dist/example/django_celery_outbox-*.whl" ] || [ "$#" -ne 1 ]; then
+                echo "Expected exactly one built wheel in /package/dist/example";
+                ls -1 /package/dist/example || true;
+                exit 1;
+              fi;
+              pip install "$1";
+              celery -A minimal_django worker -l info'
 
   postgres:
     image: postgres:15-alpine
