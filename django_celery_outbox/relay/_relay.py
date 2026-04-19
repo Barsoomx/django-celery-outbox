@@ -77,7 +77,21 @@ class Relay:
         )
 
         while self._running:
-            self._processing()
+            try:
+                self._processing()
+            except Exception as exc:
+                sentry_sdk.capture_exception(exc)
+                log_kwargs = {
+                    'exception_type': type(exc).__name__,
+                    'exception_message': str(exc),
+                }
+                if should_log_traceback():
+                    _logger.error('celery_outbox_relay_iteration_failed', **log_kwargs, exc_info=True)
+                else:
+                    _logger.error('celery_outbox_relay_iteration_failed', **log_kwargs)
+
+                if self._running:
+                    time.sleep(self._config.idle_time)
 
     def _setup_signals(self) -> None:
         signal.signal(signal.SIGTERM, self._handle_signal)
