@@ -14,21 +14,36 @@ python manage.py celery_outbox_relay [OPTIONS]
 |--------|------|---------|-------------|
 | `--batch-size` | int | 100 | Maximum messages per batch |
 | `--idle-time` | float | 1.0 | Seconds to sleep when queue empty |
-| `--backoff-time` | float | 5.0 | Base seconds for exponential backoff |
+| `--backoff-time` | int | 120 | Base seconds for exponential backoff |
 | `--max-retries` | int | 5 | Retries before dead letter |
+| `--stale-timeout-seconds` | int | 300 | Seconds before in-flight rows are considered stale |
+| `--send-timeout` | float | 10.0 | Timeout passed to broker publish |
+| `--shutdown-timeout` | float | 30.0 | Drain window for starting additional sends after SIGTERM |
+| `--broker-outage-cooldown` | float | 30.0 | Breaker cooldown before the next batch attempt |
+| `--max-backoff` | float | 3600.0 | Upper bound for normal message retry delay |
 | `--liveness-file` | path | None | File to touch after each batch |
 
 ### Examples
 
 ```bash
-# Development (fast polling)
-python manage.py celery_outbox_relay --batch-size 10 --idle-time 0.5
-
-# Production (larger batches)
-python manage.py celery_outbox_relay --batch-size 500 --idle-time 2.0
-
-# With liveness probe
+# Default production-style command with liveness probe
 python manage.py celery_outbox_relay --liveness-file /tmp/relay-alive
+
+# Lower-latency development loop
+python manage.py celery_outbox_relay --batch-size 25 --idle-time 0.5 --send-timeout 5.0
+
+# Full relay knob surface
+python manage.py celery_outbox_relay \
+  --batch-size 100 \
+  --idle-time 1.0 \
+  --backoff-time 120 \
+  --max-retries 5 \
+  --stale-timeout-seconds 300 \
+  --send-timeout 10.0 \
+  --shutdown-timeout 30.0 \
+  --broker-outage-cooldown 30.0 \
+  --max-backoff 3600.0 \
+  --liveness-file /tmp/relay-alive
 ```
 
 ## celery_outbox_stats

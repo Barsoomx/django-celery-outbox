@@ -28,8 +28,13 @@ python manage.py celery_outbox_relay [OPTIONS]
 |--------|---------|-------------|
 | `--batch-size` | `100` | Messages per batch |
 | `--idle-time` | `1.0` | Seconds to sleep when queue is empty |
-| `--backoff-time` | `5.0` | Base seconds for exponential backoff |
+| `--backoff-time` | `120` | Base seconds for exponential backoff |
 | `--max-retries` | `5` | Retries before dead letter |
+| `--stale-timeout-seconds` | `300` | Seconds before in-flight rows are considered stale and reclaimable |
+| `--send-timeout` | `10.0` | Timeout passed to `Celery.send_task()` during broker publish |
+| `--shutdown-timeout` | `30.0` | Drain window for starting additional sends after `SIGTERM`/`SIGINT` |
+| `--broker-outage-cooldown` | `30.0` | Process-local breaker cooldown before the next batch attempt |
+| `--max-backoff` | `3600.0` | Upper bound for normal message retry delay |
 | `--liveness-file` | `None` | File to touch after each batch (for k8s probes) |
 
 ## Metrics Settings

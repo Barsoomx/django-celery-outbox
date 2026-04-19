@@ -29,16 +29,17 @@ depends on broker acknowledgement semantics.
 ┌──────────────────────────────────────────────────────────────────┐
 │                         RELAY DAEMON                             │
 │                                                                  │
-│   ┌─────────────────┐     ┌─────────────────┐     ┌───────────┐  │
-│   │ MessageSelector │ ──► │ Relay           │ ──► │ Relay     │  │
-│   │ claim batch     │     │ orchestration   │     │ Publisher │  │
-│   └─────────────────┘     └─────────────────┘     └─────┬─────┘  │
-│                                    │                     │        │
-│                                    ▼                     ▼        │
-│                          ┌─────────────────┐     ┌───────────┐    │
-│                          │ RelayMutations  │     │ Celery    │    │
-│                          │ retry/delete/DL │     │ Broker    │    │
-│                          └─────────────────┘     └───────────┘    │
+│   ┌─────────────────┐     ┌─────────────────┐     ┌─────────────┐ │
+│   │ MessageSelector │ ──► │ Relay           │ ──► │ Relay       │ │
+│   │ claim batch     │     │ orchestration   │     │ Publisher   │ │
+│   └─────────────────┘     └────────┬────────┘     └──────┬──────┘ │
+│                                    │                     │         │
+│                     ┌──────────────┴──────────────┐      ▼         │
+│                     ▼                             ▼  ┌───────────┐ │
+│          ┌─────────────────┐           ┌────────────────────────┐  │
+│          │ RelayMutations  │           │ RelayPolicy            │  │
+│          │ retry/delete/DL │           │ outage/shutdown policy │  │
+│          └─────────────────┘           └────────────────────────┘  │
 └──────────────────────────────────────────────────────────────────┘
                                                         │
                                                         ▼
@@ -58,10 +59,12 @@ depends on broker acknowledgement semantics.
 2. **OutboxCelery** serializes the call and writes to `CeleryOutbox` table
 3. **Transaction commits** — task is now visible
 4. **Relay.start()** sets up signal handlers and delayed delivery support
-5. **MessageSelector** selects pending rows with `SELECT FOR UPDATE SKIP LOCKED` and marks them in-flight
-6. **RelayPublisher** restores options, tracing headers, and structlog context, then calls `Celery.send_task()`
-7. **RelayMutations** updates retries, deletes published rows, and moves exceeded rows to dead letter
-8. **Worker** executes task
+5. **RelayPolicy** decides whether a process-local breaker cooldown should skip the next batch
+6. **MessageSelector** selects pending rows with `SELECT FOR UPDATE SKIP LOCKED` and marks them in-flight
+7. **RelayPublisher** restores options, tracing headers, and structlog context, then calls `Celery.send_task()` with `--send-timeout`
+8. **RelayPolicy** classifies broker outages, tracks consecutive-outage breaker state, and enforces the shutdown deadline
+9. **RelayMutations** updates retries, deletes published rows, moves exceeded rows to dead letter, and defers broker-outage rows without incrementing retries
+10. **Worker** executes task
 
 ## Relay Processing Loop
 
@@ -70,6 +73,7 @@ depends on broker acknowledgement semantics.
 - `MessageSelector` owns row selection and in-flight stamping
 - `RelayPublisher` owns publish-time option restoration and raw broker send
 - `RelayMutations` owns retry, delete, and dead-letter persistence
+- `_policy.py` owns broker-outage classification, process-local breaker state, and shutdown deadlines
 - `_runtime.py` owns exception classification and traceback logging policy
 
 Conceptually, each batch looks like this:
@@ -80,12 +84,31 @@ relay.start()
   ├── _setup_delayed_delivery()
   └── while _running:
         └── _processing()
+              ├── policy.should_skip_batch()
               ├── selector.run()
               ├── publisher.publish(msg) for each selected message
+              ├── policy.record_success()/record_outage()/shutdown_deadline_exceeded()
               ├── mutations.update_failed(failed)
               ├── mutations.delete_published(published)
               ├── mutations.move_exceeded_to_dead_letter(exceeded)
+              ├── mutations.defer_due_to_outage(deferred_due_to_outage)
               └── metrics, liveness, idle/busy decision
+```
+
+## Relay Command
+
+```bash
+python manage.py celery_outbox_relay \
+  --batch-size 100 \
+  --idle-time 1.0 \
+  --backoff-time 120 \
+  --max-retries 5 \
+  --stale-timeout-seconds 300 \
+  --send-timeout 10.0 \
+  --shutdown-timeout 30.0 \
+  --broker-outage-cooldown 30.0 \
+  --max-backoff 3600.0 \
+  --liveness-file /tmp/celery-outbox-alive
 ```
 
 ## Database Tables
@@ -172,15 +195,26 @@ The relay deliberately uses two separate transactions with network I/O between t
 This avoids holding a database lock open during broker communication, which could take seconds.
 
 The tradeoff: if the process crashes between transaction 1 and 2, sent messages remain in the outbox
-and become eligible for reclaim after stale-timeout recovery. If publish already succeeded, that
-reclaim can lead to a resend. **Consumers must be idempotent.**
+and become eligible for reclaim after `--stale-timeout-seconds` recovery (default: `300` seconds).
+If publish already succeeded, that reclaim can lead to a resend. **Consumers must be idempotent.**
+
+## Outage Policy and Graceful Shutdown
+
+`RelayPolicy` is the control layer for outage handling and draining mode:
+
+- `--send-timeout` bounds a single `Celery.send_task()` publish attempt.
+- Two consecutive broker outages in one batch open a process-local breaker for `--broker-outage-cooldown`.
+- Broker-outage deferral does not increment `retries` and does not consume `--max-retries`.
+- `SIGTERM` or `SIGINT` starts draining mode.
+- The relay stops starting new sends after `--shutdown-timeout`.
+- Already-selected but not-yet-started rows recover later through `--stale-timeout-seconds` reclaim.
 
 ## Exponential Backoff
 
 Failed messages are retried with exponential backoff plus random jitter:
 
 ```
-retry_after = Now() + backoff_time * 2^retries + random(0, backoff_time * 0.1)
+retry_after = Now() + min(backoff_time * 2^retries + random(0, backoff_time * 0.1), max_backoff)
 ```
 
 Example with `backoff_time=120`, `max_retries=5`:
@@ -208,10 +242,11 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 | Scenario | Outcome |
 |----------|---------|
 | Business transaction rolls back | Task never created in outbox. No delivery. |
-| Relay crashes before sending to broker | Message remains in outbox and becomes eligible for reclaim after stale timeout (5 min). |
+| Relay crashes before sending to broker | Message remains in outbox and becomes eligible for reclaim after `--stale-timeout-seconds` (default: `300s`). |
 | Relay sends to broker, crashes before TX2 | Message may be re-sent after stale-timeout reclaim. **Duplicate delivery is possible.** |
-| Broker rejects message | Relay catches exception, message retried with backoff. |
-| Broker fails silently (no publisher confirms) | Message may still be lost after the relay deletes the outbox row. |
+| Broker outage or publish timeout | Selected rows are deferred by `--broker-outage-cooldown`; retries are not incremented, and a process-local breaker may pause the next batch attempt. |
+| Ordinary publish failure | Relay catches the exception, increments retries, and applies exponential backoff capped by `--max-backoff`. |
+| Broker fails silently (no publisher confirms) | Message may still be lost after the relay deletes the outbox row. Stronger guarantees require broker confirms. |
 | Relay max retries exceeded | Message moved to dead letter table. Operator can retry via admin. |
 
 **Delivery semantics:** duplicate-tolerant recovery with broker-confirm caveats, not an
@@ -249,6 +284,7 @@ __init__.py (lazy exports)
     │     ├── _message_selector.py (MessageSelector)
     │     ├── _publisher.py (RelayPublisher)
     │     ├── _mutations.py (RelayMutations)
+    │     ├── _policy.py (outage classification, breaker, shutdown policy)
     │     └── _runtime.py (exception policy)
     │
     ├── signals.py (Django Signal instances)

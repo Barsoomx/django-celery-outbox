@@ -162,9 +162,11 @@ as an orchestration layer over smaller collaborators:
 
 - `MessageSelector` selects pending rows and marks them in-flight
 - `RelayPublisher` restores serialized options, tracing headers, and structlog context,
-  then calls raw `Celery.send_task()`
-- `RelayMutations` updates retry state, deletes published rows, and moves exceeded rows
-  to the dead letter table
+  then calls raw `Celery.send_task()` with `--send-timeout`
+- `RelayMutations` updates retry state, deletes published rows, moves exceeded rows
+  to the dead letter table, and defers outage-interrupted rows without incrementing retries
+- `_policy.py` owns broker-outage classification, process-local breaker state, and
+  shutdown deadlines
 - `_runtime.py` holds exception classification and the traceback logging policy
 
 #### Processing Loop
@@ -172,13 +174,16 @@ as an orchestration layer over smaller collaborators:
 ```
 relay.start()
     │
-    ├── _setup_signals()    # SIGTERM/SIGINT -> _running = False
+    ├── _setup_signals()    # SIGTERM/SIGINT -> start draining mode
     ├── _setup_delayed_delivery()
     ├── log 'celery_outbox_relay_started'
     │
     └── while _running:
             │
             _processing()
+                │
+                ├── policy.should_skip_batch()
+                │     breaker open -> sleep until cooldown expires
                 │
                 ├── close_old_connections()
                 │
@@ -199,7 +204,14 @@ relay.start()
                 │
                 ├── _process_messages(messages)    # Network I/O
                 │       │
+                │       │   policy.begin_batch()
+                │       │
                 │       │   for each message:
+                │       │       │
+                │       │       ├── policy.shutdown_deadline_exceeded?
+                │       │       │       YES -> stop starting new sends
+                │       │       │              selected but unstarted rows recover
+                │       │       │              later via stale-timeout reclaim
                 │       │       │
                 │       │       ├── retries >= max_retries?
                 │       │       │       YES -> exceeded[]
@@ -211,23 +223,31 @@ relay.start()
                 │       │       │       ├── deserialize_options()
                 │       │       │       ├── restore headers (sentry-trace, baggage)
                 │       │       │       ├── bind structlog context
-                │       │       │       └── Celery.send_task() -> broker
+                │       │       │       └── Celery.send_task(timeout=send_timeout) -> broker
                 │       │       │
                 │       │       ├── else (Success) -> published[]
                 │       │       │       increment('messages.published')
+                │       │       │       policy.record_success()
                 │       │       │       _send_signal_safe(outbox_message_sent)
                 │       │       │
                 │       │       └── except (Failure)
+                │       │               ├── policy.is_broker_outage(exc)?
+                │       │               │       YES -> deferred_due_to_outage[]
+                │       │               │              policy.record_outage()
+                │       │               │              breaker may trip and stop batch
+                │       │               │
                 │       │               ├── classify_exception()
                 │       │               ├── should_log_traceback()
                 │       │               └── retries >= max-1?
                 │       │                      YES -> exceeded[]
                 │       │                             increment('messages.exceeded')
+                │       │                             policy.record_success()
                 │       │                      NO  -> failed[]
                 │       │                             increment('messages.failed')
+                │       │                             policy.record_success()
                 │       │                             _send_signal_safe(outbox_message_failed)
                 │       │
-                │       └── return (published, failed, exceeded)
+                │       └── return (published, failed, exceeded, deferred_due_to_outage, shutdown_aborted)
                 │
                 ├── close_old_connections()
                 │
@@ -243,6 +263,11 @@ relay.start()
                 │   │ mutations.move_exceeded_to_dead_letter(...)     │
                 │   │   INSERT INTO celery_outbox_dead_letter         │
                 │   │   DELETE FROM celery_outbox                     │
+                │   │                                                 │
+                │   │ mutations.defer_due_to_outage(...)              │
+                │   │   UPDATE retry_after = Now() + cooldown         │
+                │   │   retries unchanged                             │
+                │   │                                                 │
                 │   │ Relay._processing(): _send_signal_safe(...)     │
                 │   │   per loaded exceeded message after the move    │
                 │   └─────────────────────────────────────────────────┘
@@ -285,6 +310,20 @@ Tradeoff:
   and may be re-sent after stale-timeout recovery marks them pending again
   (duplicate-tolerant recovery, subject to broker-confirm caveats)
 - Consumers **must be idempotent**
+
+#### Outage Policy and Graceful Shutdown
+
+`RelayPolicy` is the control layer for outage handling and draining mode:
+
+- `--send-timeout` bounds a single `Celery.send_task()` publish attempt.
+- Two consecutive broker outages in one batch open a process-local breaker for
+  `--broker-outage-cooldown`.
+- Broker-outage deferral does not increment `retries` and does not consume
+  `--max-retries`.
+- `SIGTERM` or `SIGINT` starts draining mode.
+- The relay stops starting new sends after `--shutdown-timeout`.
+- Already-selected but not-yet-started rows recover later through
+  `--stale-timeout-seconds` reclaim.
 
 #### Database-side Now()
 
@@ -339,22 +378,24 @@ Example with `backoff_time=120`, `max_retries=5`:
 ```
 
 The `MessageSelector` collaborator uses `get_pending_filter()` to find pending rows.
-The timing portion of that predicate is:
+The timing portion of that predicate is conceptually:
 
 ```python
 Q(updated_at__isnull=True)
 | Q(retry_after__lte=Now())
-| Q(updated_at__lte=Now() - _STALE_TIMEOUT, retry_after__isnull=True)
+| Q(updated_at__lte=Now() - stale_timeout, retry_after__isnull=True)
 ```
 
 This means a message is eligible when:
 - It has never been attempted (`updated_at IS NULL`), or
 - Its backoff period has elapsed (`retry_after <= database now`), or
-- It is stale: picked up > 5 minutes ago but never got a `retry_after` (crashed relay recovery)
+- It is stale: picked up earlier than `--stale-timeout-seconds` ago but never got a
+  `retry_after` (crashed relay recovery)
 
-The stale timeout (`_STALE_TIMEOUT = 5 minutes`) prevents another relay instance from reclaiming a
-freshly stamped row during that window. It does not eliminate duplicate delivery if publish already
-succeeded and the process later crashes or stalls long enough for stale-timeout recovery to reclaim it.
+The stale-timeout window is controlled by `--stale-timeout-seconds` and defaults to `300`
+seconds. It prevents another relay instance from reclaiming a freshly stamped row during that
+window. It does not eliminate duplicate delivery if publish already succeeded and the process
+later crashes or stalls long enough for stale-timeout recovery to reclaim it.
 
 #### Retry Flow (with Dead Letter)
 
@@ -606,6 +647,11 @@ $ python manage.py celery_outbox_relay \
     --idle-time 1.0 \
     --backoff-time 120 \
     --max-retries 5 \
+    --stale-timeout-seconds 300 \
+    --send-timeout 10.0 \
+    --shutdown-timeout 30.0 \
+    --broker-outage-cooldown 30.0 \
+    --max-backoff 3600.0 \
     --liveness-file /tmp/celery-outbox-alive
 ```
 ```
@@ -737,9 +783,10 @@ the dead letter table. This re-enqueues them for the relay to process.
 | Scenario | Outcome |
 |----------|---------|
 | Business transaction rolls back | Task never created in outbox. No delivery. |
-| Relay crashes before sending to broker | Message remains in outbox with `updated_at` set and becomes eligible for reclaim after stale timeout (5 min). |
+| Relay crashes before sending to broker | Message remains in outbox with `updated_at` set and becomes eligible for reclaim after `--stale-timeout-seconds` (default: `300s`). |
 | Relay sends to broker, crashes before TX2 | Message may be re-sent after stale-timeout reclaim. **Duplicate delivery is possible.** |
-| Broker rejects message (queue full, quota exceeded) | Relay catches exception, message retried with backoff. Requires broker to signal rejection. |
+| Broker outage or publish timeout | Selected rows are deferred by `--broker-outage-cooldown`; retries are not incremented, and a process-local breaker may pause the next batch attempt. |
+| Ordinary publish failure | Relay catches the exception, increments retries, and applies exponential backoff capped by `--max-backoff`. |
 | Broker fails silently (no publisher confirms) | Message may be lost because the relay can still delete the outbox row without broker confirmation. **Enable `confirm_publish` on RabbitMQ; Redis has no confirms.** |
 | Broker accepts but worker crashes | Standard Celery retry/ack behavior. Outside outbox scope. |
 | Relay max retries exceeded | Message moved to dead letter table. Operator can inspect and retry via admin. |
@@ -765,6 +812,7 @@ __init__.py (lazy exports)
     │     ├── _message_selector.py (MessageSelector, pending filter)
     │     ├── _publisher.py (RelayPublisher)
     │     ├── _mutations.py (RelayMutations)
+    │     ├── _policy.py (outage classification, breaker, shutdown policy)
     │     └── _runtime.py (exception classification, traceback policy)
     │
     ├── signals.py (Django Signal instances)

@@ -43,7 +43,12 @@ livenessProbe:
 Choose `max_age_seconds` to exceed your normal healthy gap between touches. A good starting point is the larger of:
 
 - roughly 2x `--idle-time`
+- `--broker-outage-cooldown + --send-timeout`
 - your worst-case healthy batch duration
+
+During broker outage cooldown, queue depth may stop dropping for one cooldown window even while
+the relay process is healthy. Liveness still depends on fresh batch touches to `--liveness-file`,
+not on instantaneous queue drain.
 
 With the example above, Kubernetes restarts the pod if the file is missing or has been stale for at least 90 seconds.
 
