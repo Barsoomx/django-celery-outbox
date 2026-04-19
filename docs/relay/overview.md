@@ -59,7 +59,7 @@ Broker outages are handled differently from ordinary task publish failures:
 
 - Publish attempts are still bounded by `--send-timeout`.
 - Broker-outage rows are deferred by `--broker-outage-cooldown` instead of consuming retry budget.
-- After two consecutive broker outages in one batch, the process-local breaker opens and the
+- After two consecutive broker outages without an intervening successful publish, the process-local breaker opens and the
   relay stops starting new batch attempts until the cooldown expires.
 - In parallel publish mode, the relay also stops refilling the worker window until the already
   in-flight results are classified.

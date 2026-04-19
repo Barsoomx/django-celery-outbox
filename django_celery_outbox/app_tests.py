@@ -179,6 +179,45 @@ def test_messages_enqueued_metric_errors_are_logged_and_swallowed(
 
 
 @pytest.mark.django_db
+def test_pii_redactor_cache_tracks_setting_changes(f_app: OutboxCelery) -> None:
+    def redactor(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+        del task_name, kwargs
+        return ['redacted', *args], {}
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=redactor):
+        with transaction.atomic():
+            f_app.send_task('my.task', task_id='redactor-cache-1', args=('secret',))
+
+    first = CeleryOutbox.objects.get(task_id='redactor-cache-1')
+    assert first.redacted_args == ['redacted', 'secret']
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=None):
+        with transaction.atomic():
+            f_app.send_task('my.task', task_id='redactor-cache-2', args=('secret',))
+
+    second = CeleryOutbox.objects.get(task_id='redactor-cache-2')
+    assert second.redacted_args is None
+
+
+@pytest.mark.django_db
+def test_pii_redactor_cache_accepts_unhashable_callable_instance(f_app: OutboxCelery) -> None:
+    class UnhashableRedactor:
+        def __call__(self, task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+            del task_name, kwargs
+            return ['instance-redacted', *args], {}
+
+        def __eq__(self, other: object) -> bool:
+            return self is other
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=UnhashableRedactor()):
+        with transaction.atomic():
+            f_app.send_task('my.task', task_id='redactor-unhashable-1', args=('secret',))
+
+    outbox = CeleryOutbox.objects.get(task_id='redactor-unhashable-1')
+    assert outbox.redacted_args == ['instance-redacted', 'secret']
+
+
+@pytest.mark.django_db
 def test_send_task_args_none_saves_empty_list(f_app: OutboxCelery) -> None:
     f_app.send_task('my.task', args=None)
 

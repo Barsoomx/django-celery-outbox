@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Callable, Hashable
 from copy import deepcopy
 from functools import lru_cache
 from typing import Any, cast
@@ -8,6 +8,7 @@ import structlog
 from celery import Celery
 from celery.result import AsyncResult
 from celery.utils import uuid
+from django.conf import settings
 from django.db import connections, transaction
 from django.dispatch import Signal
 
@@ -21,8 +22,15 @@ from django_celery_outbox.structlog_utils import get_structlog_context_json
 _logger = structlog.getLogger(__name__)
 
 
-@lru_cache(maxsize=1)
-def _get_redactor() -> Callable[[str, list, dict], tuple[list, dict]] | None:
+def _get_redactor_cache_key(setting_value: object) -> tuple[str, object]:
+    if isinstance(setting_value, Hashable):
+        return ('value', setting_value)
+    return ('id', id(setting_value))
+
+
+@lru_cache(maxsize=8)
+def _get_redactor(cache_key: tuple[str, object]) -> Callable[[str, list, dict], tuple[list, dict]] | None:
+    del cache_key
     return load_pii_redactor_setting()
 
 
@@ -31,7 +39,7 @@ def _build_redacted_payloads(
     args_list: list[Any],
     kwargs_dict: dict[str, Any],
 ) -> tuple[list[Any] | None, dict[str, Any] | None]:
-    redactor = _get_redactor()
+    redactor = _get_redactor(_get_redactor_cache_key(getattr(settings, 'CELERY_OUTBOX_PII_REDACTOR', None)))
     if redactor is None:
         return None, None
 
@@ -89,7 +97,7 @@ def _redact_signature_options(
 
 
 def _redact_options_for_inspection(task_name: str, options: dict[str, Any]) -> dict[str, Any]:
-    redactor = load_pii_redactor_setting()
+    redactor = _get_redactor(_get_redactor_cache_key(getattr(settings, 'CELERY_OUTBOX_PII_REDACTOR', None)))
     if redactor is None:
         return options
 
@@ -97,6 +105,7 @@ def _redact_options_for_inspection(task_name: str, options: dict[str, Any]) -> d
         cloned = cast(dict[str, Any], deepcopy(options))
         return _redact_signature_options(task_name, cloned, redactor)
     except Exception:
+        # Admin/debug inspection should keep working even if user redaction code misbehaves.
         _logger.warning(
             'celery_outbox_inspection_redaction_failed',
             task_name=task_name,
