@@ -21,13 +21,15 @@ def parse_structlog_context(raw: str | None) -> dict[str, Any]:
 
 
 class RelayPublisher:
-    def __init__(self, app: Celery) -> None:
+    def __init__(self, app: Celery, *, send_timeout: float) -> None:
         self._app = app
+        self._send_timeout = send_timeout
 
     def publish(self, msg: CeleryOutbox) -> None:
         options = deserialize_options(msg.options, self._app, msg.schema_version)
 
         headers = options.pop('headers', {}) or {}
+        options.pop('timeout', None)
         if msg.sentry_trace_id:
             headers['sentry-trace'] = msg.sentry_trace_id
         if msg.sentry_baggage:
@@ -45,5 +47,6 @@ class RelayPublisher:
                 task_id=msg.task_id,
                 eta=eta,
                 headers=headers,
+                timeout=self._send_timeout,
                 **options,
             )

@@ -18,7 +18,7 @@ def m_celery_app() -> MagicMock:
 
 @pytest.mark.django_db
 def test_publish_calls_raw_celery_send_task(m_celery_app: MagicMock) -> None:
-    publisher = RelayPublisher(app=m_celery_app)
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
     eta_dt = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
     msg = CeleryOutbox.objects.create(
         task_id='abc-123',
@@ -45,8 +45,45 @@ def test_publish_calls_raw_celery_send_task(m_celery_app: MagicMock) -> None:
 
 
 @pytest.mark.django_db
+def test_publish_passes_timeout_to_raw_celery_send_task(m_celery_app: MagicMock) -> None:
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
+    msg = CeleryOutbox.objects.create(
+        task_id='timeout-123',
+        task_name='myapp.tasks.timeout',
+        options={},
+    )
+
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task') as m_send:
+        publisher.publish(msg)
+
+    _, kwargs = m_send.call_args
+    assert kwargs['timeout'] == 10.0
+
+
+@pytest.mark.django_db
+def test_publish_send_timeout_overrides_deserialized_timeout_option(m_celery_app: MagicMock) -> None:
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
+    msg = CeleryOutbox.objects.create(
+        task_id='timeout-override-123',
+        task_name='myapp.tasks.timeout_override',
+        options={},
+    )
+
+    with patch(
+        'django_celery_outbox.relay._publisher.deserialize_options',
+        return_value={'timeout': 1.5, 'priority': 9},
+    ):
+        with patch('django_celery_outbox.relay._publisher.Celery.send_task') as m_send:
+            publisher.publish(msg)
+
+    _, kwargs = m_send.call_args
+    assert kwargs['timeout'] == 10.0
+    assert kwargs['priority'] == 9
+
+
+@pytest.mark.django_db
 def test_publish_binds_structlog_context(m_celery_app: MagicMock) -> None:
-    publisher = RelayPublisher(app=m_celery_app)
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
     msg = CeleryOutbox.objects.create(
         task_id='ctx-123',
         task_name='myapp.tasks.ctx',
@@ -63,7 +100,7 @@ def test_publish_binds_structlog_context(m_celery_app: MagicMock) -> None:
 
 @pytest.mark.django_db
 def test_publish_tolerates_headers_none(m_celery_app: MagicMock) -> None:
-    publisher = RelayPublisher(app=m_celery_app)
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
     msg = CeleryOutbox.objects.create(
         task_id='headers-none',
         task_name='myapp.tasks.headers',
@@ -79,7 +116,7 @@ def test_publish_tolerates_headers_none(m_celery_app: MagicMock) -> None:
 
 @pytest.mark.django_db
 def test_publish_without_sentry_context_does_not_add_headers(m_celery_app: MagicMock) -> None:
-    publisher = RelayPublisher(app=m_celery_app)
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
     msg = CeleryOutbox.objects.create(
         task_id='no-sentry',
         task_name='myapp.tasks.no_sentry',
@@ -97,7 +134,7 @@ def test_publish_without_sentry_context_does_not_add_headers(m_celery_app: Magic
 
 @pytest.mark.django_db
 def test_publish_propagates_extra_options(m_celery_app: MagicMock) -> None:
-    publisher = RelayPublisher(app=m_celery_app)
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
     msg = CeleryOutbox.objects.create(
         task_id='extra-opts',
         task_name='myapp.tasks.extra',
@@ -114,7 +151,7 @@ def test_publish_propagates_extra_options(m_celery_app: MagicMock) -> None:
 
 @pytest.mark.django_db
 def test_publish_passes_schema_version_to_deserializer(m_celery_app: MagicMock) -> None:
-    publisher = RelayPublisher(app=m_celery_app)
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
     msg = CeleryOutbox.objects.create(
         task_id='schema-v2',
         task_name='myapp.tasks.schema',
