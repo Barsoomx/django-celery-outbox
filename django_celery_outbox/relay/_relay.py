@@ -76,7 +76,7 @@ class Relay:
             max_retries=self._config.max_retries,
         )
 
-        while self._running:
+        while self._running or self._should_continue_draining():
             try:
                 self._processing()
             except Exception as exc:
@@ -90,7 +90,7 @@ class Relay:
                 else:
                     _logger.error('celery_outbox_relay_iteration_failed', **log_kwargs)
 
-                if self._running:
+                if self._running or self._should_continue_draining():
                     time.sleep(self._config.idle_time)
 
     def _setup_signals(self) -> None:
@@ -115,22 +115,79 @@ class Relay:
         self._policy.begin_shutdown(time.monotonic())
         self._running = False
 
+    def _should_continue_draining(self) -> bool:
+        if not self._policy.shutdown_requested():
+            return False
+
+        if self._policy.shutdown_deadline_exceeded(time.monotonic()):
+            return False
+
+        return CeleryOutbox.objects.filter(get_pending_filter()).exists()
+
+    def _finalize_processing_cycle(
+        self,
+        *,
+        start_time: float,
+        published: int,
+        failed: int,
+        exceeded: int,
+        deferred_due_to_outage: int,
+        shutdown_aborted: int,
+    ) -> None:
+        queue_depth = CeleryOutbox.objects.count()
+        metrics.gauge('queue.depth', queue_depth)
+        metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
+        metrics.timing('batch.duration_ms', (time.monotonic() - start_time) * 1000)
+
+        oldest = CeleryOutbox.objects.filter(get_pending_filter()).order_by('created_at').values_list('created_at', flat=True).first()
+        if oldest:
+            age_seconds = (timezone.now() - oldest).total_seconds()
+            metrics.gauge('oldest_pending_age_seconds', age_seconds)
+        else:
+            metrics.gauge('oldest_pending_age_seconds', 0)
+
+        _logger.info(
+            'celery_outbox_batch_processed',
+            published=published,
+            failed=failed,
+            exceeded=exceeded,
+            deferred_due_to_outage=deferred_due_to_outage,
+            shutdown_aborted=shutdown_aborted,
+            queue_depth=queue_depth,
+        )
+
+        self._touch_liveness()
+
     def _processing(self) -> None:
         start_time = time.monotonic()
         now_monotonic = time.monotonic()
-
-        if self._policy.should_skip_batch(now_monotonic):
-            sleep_for = self._policy.seconds_until_batch_retry(now_monotonic)
-            _logger.warning(
-                'celery_outbox_relay_breaker_open',
-                cooldown_seconds=sleep_for,
-            )
-            time.sleep(sleep_for)
-            return
-
-        close_old_connections()
-
         with sentry_sdk.start_span(op='queue.process', name='celery_outbox.relay.batch') as batch_span:
+            if self._policy.should_skip_batch(now_monotonic):
+                sleep_for = self._policy.seconds_until_batch_retry(now_monotonic)
+                _logger.warning(
+                    'celery_outbox_relay_breaker_open',
+                    cooldown_seconds=sleep_for,
+                )
+                batch_span.set_data('celery_outbox.published', 0)
+                batch_span.set_data('celery_outbox.failed', 0)
+                batch_span.set_data('celery_outbox.exceeded', 0)
+                batch_span.set_data('celery_outbox.deferred_due_to_outage', 0)
+                batch_span.set_data('celery_outbox.shutdown_aborted', 0)
+                batch_span.set_data('celery_outbox.batch_size', 0)
+                batch_span.set_status('ok')
+                time.sleep(sleep_for)
+                self._finalize_processing_cycle(
+                    start_time=start_time,
+                    published=0,
+                    failed=0,
+                    exceeded=0,
+                    deferred_due_to_outage=0,
+                    shutdown_aborted=0,
+                )
+                return
+
+            close_old_connections()
+
             with transaction.atomic():
                 messages = self._selector.run()
 
@@ -167,29 +224,14 @@ class Relay:
             else:
                 batch_span.set_status('ok')
 
-        queue_depth = CeleryOutbox.objects.count()
-        metrics.gauge('queue.depth', queue_depth)
-        metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
-        metrics.timing('batch.duration_ms', (time.monotonic() - start_time) * 1000)
-
-        oldest = CeleryOutbox.objects.filter(get_pending_filter()).order_by('created_at').values_list('created_at', flat=True).first()
-        if oldest:
-            age_seconds = (timezone.now() - oldest).total_seconds()
-            metrics.gauge('oldest_pending_age_seconds', age_seconds)
-        else:
-            metrics.gauge('oldest_pending_age_seconds', 0)
-
-        _logger.info(
-            'celery_outbox_batch_processed',
+        self._finalize_processing_cycle(
+            start_time=start_time,
             published=len(published),
             failed=len(failed),
             exceeded=len(exceeded),
             deferred_due_to_outage=len(deferred_due_to_outage),
             shutdown_aborted=len(shutdown_aborted),
-            queue_depth=queue_depth,
         )
-
-        self._touch_liveness()
 
         if len(messages) < self._config.batch_size:
             _logger.debug('celery_outbox_relay_idle')
@@ -229,7 +271,6 @@ class Relay:
 
             with structlog.contextvars.bound_contextvars(**msg_context):
                 if msg.retries >= self._config.max_retries:
-                    self._policy.record_success()
                     _logger.warning(
                         'celery_outbox_max_retries_exceeded',
                         exception_type='pre_exceeded',
