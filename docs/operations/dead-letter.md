@@ -13,13 +13,22 @@ The changelist supports:
 - filtering by `task_name`, `failure_reason`, `dead_at`, and `schema_version`
 - searching by `task_id`, `task_name`, and `failure_reason`
 
-### Management Command
+### Snapshot Command
 
 ```bash
 python manage.py celery_outbox_stats
 ```
 
 Output includes dead letter count.
+
+### Replay Command
+
+```bash
+python manage.py celery_outbox_replay_dead_letter 123 124
+python manage.py celery_outbox_replay_dead_letter 123 124 125 --limit 2
+```
+
+The replay command requeues only the selected dead-letter IDs. It preserves stored payload, schema, and tracing/context fields, then removes replayed rows from `celery_outbox_dead_letter`.
 
 ## Investigating Failures
 
@@ -42,36 +51,10 @@ Use the Django admin bulk action `retry_selected`.
 What it does:
 
 - copies the selected `CeleryOutboxDeadLetter` rows back into `CeleryOutbox`
-- preserves the stored payload and `schema_version`
+- preserves the stored payload, `schema_version`, and tracing/context fields
 - deletes the retried rows from `celery_outbox_dead_letter`
 
-There is no built-in management command equivalent. If you need scripted replay, wrap the same model-to-model copy in your own command.
-
-Example automation sketch:
-
-```python
-from django.db import transaction
-from django_celery_outbox.models import CeleryOutboxDeadLetter
-from django_celery_outbox.models import CeleryOutbox
-
-dl = CeleryOutboxDeadLetter.objects.get(pk=123)
-
-with transaction.atomic():
-    CeleryOutbox.objects.create(
-        task_id=dl.task_id,
-        task_name=dl.task_name,
-        args=dl.args,
-        kwargs=dl.kwargs,
-        redacted_args=dl.redacted_args,
-        redacted_kwargs=dl.redacted_kwargs,
-        options=dl.options,
-        schema_version=dl.schema_version,
-        sentry_trace_id=dl.sentry_trace_id,
-        sentry_baggage=dl.sentry_baggage,
-        structlog_context=dl.structlog_context,
-    )
-    dl.delete()
-```
+For scripted replay, use `python manage.py celery_outbox_replay_dead_letter ...` instead of writing your own model-copy loop.
 
 ## Purging Old Entries
 
@@ -108,6 +91,8 @@ python manage.py celery_outbox_purge_dead_letter --older-than-dead 30d --dry-run
 
 Dead letters should be reviewed and purged regularly. Recommended:
 
-1. **Alert** on `dead_letter.count > 0`
+1. **Alert** on `increase(celery_outbox_messages_exceeded_total[10m]) > 0`
 2. **Investigate** within 24 hours
 3. **Purge** entries older than 30 days
+
+Treat dead-letter growth as "new failures over time," not as a fixed table-size threshold. A large but stable table may just mean you need a purge job; a non-zero increase means something is failing now.

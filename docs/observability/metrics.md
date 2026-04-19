@@ -22,7 +22,7 @@ Set `MONITORING_METRICS_ENABLED = False` to disable all emission without removin
 
 | Metric | Type | Tags | Description |
 |--------|------|------|-------------|
-| `queue.depth` | gauge | - | Pending messages |
+| `queue.depth` | gauge | - | Live backlog: rows currently eligible for relay send or recovery (`updated_at IS NULL`, retryable by `retry_after`, or stale in-flight rows) |
 | `dead_letter.count` | gauge | - | Dead letter entries |
 | `oldest_pending_age_seconds` | gauge | - | Age of oldest pending message in seconds |
 | `batch.duration_ms` | timing | - | Processing time |
@@ -76,6 +76,11 @@ Recommended alerts:
 
 | Condition | Severity | Action |
 |-----------|----------|--------|
-| `queue.depth > 1000` for 5m | Warning | Check relay health |
-| `dead_letter.count > 10` | Warning | Investigate failures |
-| `messages.failed > 0` for 10m | Warning | Check broker connectivity |
+| `queue.depth > 1000` for 5m | Warning | Check whether the live backlog is draining |
+| `celery_outbox_oldest_pending_age_seconds > 60` for 10m | Critical | Queue latency is above SLO; inspect relay throughput and broker health |
+| `increase(celery_outbox_messages_exceeded_total[10m]) > 0` | Critical | New dead letters were created; triage failures before replaying or purging |
+| `rate(celery_outbox_messages_failed_total[5m]) > 0` for 10m | Warning | Check broker connectivity or task-specific send failures |
+
+Do not treat `queue.depth` as a count of only `updated_at IS NULL` rows. It is the same live-backlog summary used by the relay selector and the `celery_outbox_stats` command.
+
+`celery_outbox_relay_breaker_open` is a broker-unavailable condition, not proof that the relay process is dead. Page process-down incidents from your platform health checks or liveness file monitoring instead of from the bundled metric examples.

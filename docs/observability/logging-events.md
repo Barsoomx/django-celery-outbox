@@ -54,6 +54,8 @@ Event names and field schemas are part of the public API.
 |-------|------|-------------|
 | cooldown_seconds | float | Seconds remaining before the relay retries a batch |
 
+Treat this as "relay alive but broker unavailable." It should route differently from process-down alerts.
+
 ### celery_outbox_relay_breaker_trip
 
 **Level:** WARNING
@@ -104,6 +106,16 @@ No additional fields.
 
 No additional fields.
 
+### celery_outbox_relay_iteration_failed
+
+**Level:** ERROR
+**When:** The top-level relay loop catches an unexpected exception, records it, and retries after the idle sleep
+
+| Field | Type | Description |
+|-------|------|-------------|
+| exception_type | str | Exception class name |
+| exception_message | str | Exception message |
+
 ### celery_outbox_send_failed
 
 **Level:** ERROR
@@ -143,6 +155,8 @@ No additional fields.
 | signal | str | Signal representation logged by `_send_signal_safe()` |
 | task_id | str | Task UUID |
 | task_name | str | Task name |
+
+`celery_outbox_relay_iteration_failed` is the catch-all relay-loop failure event. Wire it into your log-alerting stack.
 
 ## App Events
 

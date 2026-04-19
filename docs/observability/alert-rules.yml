@@ -1,14 +1,14 @@
 groups:
   - name: celery-outbox
     rules:
-      - alert: CeleryOutboxDeadLetters
-        expr: increase(celery_outbox_messages_exceeded_total[5m]) > 0
+      - alert: CeleryOutboxNewDeadLetters
+        expr: increase(celery_outbox_messages_exceeded_total[10m]) > 0
         for: 0m
         labels:
           severity: critical
         annotations:
-          summary: "Dead-lettered messages detected"
-          description: "{{ $value }} messages exceeded max retries in the last 5 minutes"
+          summary: "New dead-lettered messages detected"
+          description: "{{ $value }} messages exceeded max retries in the last 10 minutes"
 
       - alert: CeleryOutboxQueueBacklog
         expr: celery_outbox_queue_depth > 5000
@@ -30,20 +30,11 @@ groups:
           summary: "Message failure rate > 5%"
           description: "Failure rate is {{ $value | humanizePercentage }}"
 
-      - alert: CeleryOutboxStuck
-        expr: celery_outbox_oldest_pending_age_seconds > 300
-        for: 5m
+      - alert: CeleryOutboxQueueAgeHigh
+        expr: celery_outbox_oldest_pending_age_seconds > 60
+        for: 10m
         labels:
           severity: critical
         annotations:
-          summary: "Messages stuck in outbox > 5 minutes"
-          description: "Oldest pending message is {{ $value | humanizeDuration }} old"
-
-      - alert: CeleryOutboxRelayDown
-        expr: up{job="celery-outbox-relay"} == 0
-        for: 2m
-        labels:
-          severity: critical
-        annotations:
-          summary: "Celery outbox relay is down"
-          description: "No metrics received from relay for 2 minutes"
+          summary: "Outbox queue age above SLO"
+          description: "Oldest live-backlog message is {{ $value | humanizeDuration }} old"
