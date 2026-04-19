@@ -144,6 +144,29 @@ def test_drain_outbox_raises_on_broker_failures(
     assert message.retry_after is not None
 
 
+def test_drain_outbox_fails_on_timeout_outage_deferral(
+    drain_outbox: DrainOutbox,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+
+    app = OutboxCelery('fixture-tests')
+
+    with transaction.atomic():
+        app.send_task('timeout.task', task_id='timeout-task-1')
+
+    with patch(
+        'django_celery_outbox.relay._publisher.Celery.send_task',
+        side_effect=TimeoutError('timed out'),
+    ):
+        with pytest.raises(AssertionError, match='could not fully drain the queue'):
+            drain_outbox()
+
+    message = CeleryOutbox.objects.get(task_id='timeout-task-1')
+    assert message.retries == 0
+    assert message.retry_after is not None
+
+
 def test_fixture_types_are_importable() -> None:
     assert AssertTaskSent is not None
     assert DrainOutbox is not None
