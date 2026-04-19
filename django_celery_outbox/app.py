@@ -55,6 +55,44 @@ def _build_redacted_payloads(
     )
 
 
+def _redact_serialized_signature(
+    task_name: str,
+    signature: dict[str, Any],
+    redactor: Callable[[str, list, dict], tuple[list, dict]],
+) -> dict[str, Any]:
+    redacted_args, redacted_kwargs = redactor(
+        task_name,
+        deepcopy(list(signature.get('args', []))),
+        deepcopy(dict(signature.get('kwargs', {}))),
+    )
+    updated = dict(signature)
+    updated['args'] = redacted_args
+    updated['kwargs'] = redacted_kwargs
+    return updated
+
+
+def _redact_options_for_inspection(task_name: str, options: dict[str, Any]) -> dict[str, Any]:
+    redactor = load_pii_redactor_setting()
+    if redactor is None:
+        return options
+
+    try:
+        cloned = cast(dict[str, Any], deepcopy(options))
+        for key in ('link', 'link_error', 'chain'):
+            if key in cloned and isinstance(cloned[key], list):
+                cloned[key] = [_redact_serialized_signature(task_name, item, redactor) if isinstance(item, dict) else item for item in cloned[key]]
+        if 'chord' in cloned and isinstance(cloned['chord'], dict):
+            cloned['chord'] = _redact_serialized_signature(task_name, cloned['chord'], redactor)
+        return cloned
+    except Exception:
+        _logger.warning(
+            'celery_outbox_inspection_redaction_failed',
+            task_name=task_name,
+            exc_info=True,
+        )
+        return options
+
+
 def _send_signal_safe(
     *,
     signal: Signal,

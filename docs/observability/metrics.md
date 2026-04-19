@@ -27,6 +27,7 @@ Set `MONITORING_METRICS_ENABLED = False` to disable all emission without removin
 | `oldest_pending_age_seconds` | gauge | - | Age of oldest pending message in seconds |
 | `batch.duration_ms` | timing | - | Processing time |
 | `send_latency_ms` | timing | `task_name` | Time from enqueue to publish (outbox queue latency) |
+| `messages.enqueued` | counter | `task_name` | Committed outbox rows only; rollback and excluded-task bypass do not emit it |
 | `messages.published` | counter | `task_name` | Successfully sent |
 | `messages.failed` | counter | `task_name`, `exception_type` | Failed (will retry) |
 | `messages.exceeded` | counter | `task_name`, `exception_type` | Dead-lettered |

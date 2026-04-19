@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.contrib import admin, messages
+from django.test import override_settings
 from django.utils import timezone
 
 if TYPE_CHECKING:
@@ -12,6 +13,13 @@ if TYPE_CHECKING:
 from django_celery_outbox.admin import CeleryOutboxAdmin, CeleryOutboxDeadLetterAdmin
 from django_celery_outbox.factories import CeleryOutboxDeadLetterFactory, CeleryOutboxFactory
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+
+
+def _redact_payloads(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+    del task_name
+    redacted_args = [{'email': '[REDACTED]'} if isinstance(item, dict) and 'email' in item else item for item in args]
+    redacted_kwargs = {key: '[REDACTED]' if key in {'email', 'token'} else value for key, value in kwargs.items()}
+    return redacted_args, redacted_kwargs
 
 
 def test_registered_for_model() -> None:
@@ -59,7 +67,7 @@ def test_readonly_fields() -> None:
         'task_id',
         'display_args',
         'display_kwargs',
-        'options',
+        'display_options',
         'retries',
         'schema_version',
         'created_at',
@@ -70,6 +78,32 @@ def test_readonly_fields() -> None:
         'structlog_context',
     ]
     assert admin_instance.readonly_fields == expected
+
+
+@pytest.mark.django_db
+def test_admin_display_options_uses_inspection_options() -> None:
+    admin_instance: CeleryOutboxAdmin = admin.site._registry[CeleryOutbox]  # type: ignore[assignment]
+    entry = CeleryOutboxFactory.build(
+        task_name='parent.task',
+        options={
+            'link': [
+                {
+                    'task': 'callback.task',
+                    'args': [],
+                    'kwargs': {'token': 'secret'},
+                    'options': {},
+                    'subtask_type': None,
+                    'immutable': False,
+                    'chord_size': None,
+                }
+            ]
+        },
+    )
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=_redact_payloads):
+        displayed = admin_instance.display_options(entry)
+
+    assert displayed['link'][0]['kwargs']['token'] == '[REDACTED]'
 
 
 def test_has_delete_permission_returns_false() -> None:
@@ -208,6 +242,13 @@ def test_dead_letter_actions_include_retry_selected() -> None:
     admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
 
     assert 'retry_selected' in admin_instance.actions
+
+
+def test_dead_letter_readonly_fields_use_display_options() -> None:
+    dead_letter_admin = admin.site._registry[CeleryOutboxDeadLetter]
+
+    assert 'display_options' in dead_letter_admin.readonly_fields
+    assert 'options' not in dead_letter_admin.readonly_fields
 
 
 @pytest.mark.django_db

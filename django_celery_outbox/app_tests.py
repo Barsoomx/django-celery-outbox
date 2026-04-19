@@ -351,6 +351,18 @@ def test_send_task_saves_sentry_context(m_sentry: MagicMock, f_app: OutboxCelery
 
 @pytest.mark.django_db
 @patch('django_celery_outbox.app.sentry_sdk')
+def test_send_task_accepts_long_sentry_baggage(m_sentry: MagicMock, f_app: OutboxCelery) -> None:
+    baggage = 'x' * 3000
+    m_sentry.get_traceparent.return_value = 'trace-1'
+    m_sentry.get_baggage.return_value = baggage
+
+    f_app.send_task('my.task', task_id='long-baggage-1')
+
+    assert CeleryOutbox.objects.get(task_id='long-baggage-1').sentry_baggage == baggage
+
+
+@pytest.mark.django_db
+@patch('django_celery_outbox.app.sentry_sdk')
 def test_send_task_creates_sentry_span(m_sentry: MagicMock, f_app: OutboxCelery) -> None:
     m_span = MagicMock()
     m_sentry.start_span.return_value.__enter__.return_value = m_span

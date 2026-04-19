@@ -37,7 +37,7 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
         'task_id',
         'display_args',
         'display_kwargs',
-        'options',
+        'display_options',
         'retries',
         'schema_version',
         'created_at',
@@ -65,6 +65,10 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
     @admin.display(description='kwargs')
     def display_kwargs(self, obj: CeleryOutbox) -> dict:
         return obj.inspection_kwargs
+
+    @admin.display(description='options')
+    def display_options(self, obj: CeleryOutbox) -> dict:
+        return obj.inspection_options
 
     def changelist_view(self, request: HttpRequest, extra_context: dict | None = None) -> HttpResponse:
         extra_context = extra_context or {}
@@ -125,7 +129,7 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         'task_id',
         'display_args',
         'display_kwargs',
-        'options',
+        'display_options',
         'retries',
         'schema_version',
         'created_at',
@@ -153,6 +157,10 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
     @admin.display(description='kwargs')
     def display_kwargs(self, obj: CeleryOutboxDeadLetter) -> dict:
         return obj.inspection_kwargs
+
+    @admin.display(description='options')
+    def display_options(self, obj: CeleryOutboxDeadLetter) -> dict:
+        return obj.inspection_options
 
     @admin.action(description='Retry selected dead-lettered messages')
     def retry_selected(self, request: HttpRequest, queryset: QuerySet[CeleryOutboxDeadLetter]) -> None:

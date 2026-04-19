@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.db import models
 
 
@@ -18,7 +20,7 @@ class CeleryOutbox(models.Model):
     options = models.JSONField(default=dict)
 
     sentry_trace_id = models.CharField(max_length=512, null=True, blank=True)
-    sentry_baggage = models.CharField(max_length=2048, null=True, blank=True)
+    sentry_baggage = models.TextField(null=True, blank=True)
     structlog_context = models.TextField(null=True, blank=True)
     schema_version = models.SmallIntegerField(default=1)
 
@@ -51,6 +53,12 @@ class CeleryOutbox(models.Model):
     def inspection_kwargs(self) -> dict:
         return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
 
+    @property
+    def inspection_options(self) -> dict[str, Any]:
+        from django_celery_outbox.app import _redact_options_for_inspection
+
+        return _redact_options_for_inspection(self.task_name, self.options)
+
 
 class CeleryOutboxDeadLetter(models.Model):
     objects = models.Manager()
@@ -68,7 +76,7 @@ class CeleryOutboxDeadLetter(models.Model):
     options = models.JSONField(default=dict)
 
     sentry_trace_id = models.CharField(max_length=512, null=True, blank=True)
-    sentry_baggage = models.CharField(max_length=2048, null=True, blank=True)
+    sentry_baggage = models.TextField(null=True, blank=True)
     structlog_context = models.TextField(null=True, blank=True)
 
     failure_reason = models.TextField(null=True, blank=True)
@@ -90,3 +98,9 @@ class CeleryOutboxDeadLetter(models.Model):
     @property
     def inspection_kwargs(self) -> dict:
         return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
+
+    @property
+    def inspection_options(self) -> dict[str, Any]:
+        from django_celery_outbox.app import _redact_options_for_inspection
+
+        return _redact_options_for_inspection(self.task_name, self.options)

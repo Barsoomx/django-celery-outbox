@@ -14,6 +14,7 @@ from celery import Celery
 from celery.canvas import Signature
 from django.conf import LazySettings
 from django.db import transaction
+from django.test import override_settings
 
 from django_celery_outbox.app import OutboxCelery
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
@@ -423,11 +424,18 @@ def test_e2e_relay_uses_original_payload_when_redacted_copy_exists(
         kwargs['email'] = '[REDACTED]'
         return args, kwargs
 
-    with patch('django_celery_outbox.app.settings') as m_settings:
-        m_settings.CELERY_OUTBOX_PII_REDACTOR = redactor
-        m_settings.CELERY_OUTBOX_EXCLUDE_TASKS = set()
-        with transaction.atomic():
-            f_outbox_app.send_task('my.task', kwargs={'email': 'user@example.com'})
+    from django_celery_outbox.app import _get_redactor
+
+    _get_redactor.cache_clear()
+    try:
+        with override_settings(
+            CELERY_OUTBOX_PII_REDACTOR=redactor,
+            CELERY_OUTBOX_EXCLUDE_TASKS=set(),
+        ):
+            with transaction.atomic():
+                f_outbox_app.send_task('my.task', kwargs={'email': 'user@example.com'})
+    finally:
+        _get_redactor.cache_clear()
 
     msg = CeleryOutbox.objects.get()
     assert msg.kwargs == {'email': 'user@example.com'}
@@ -503,6 +511,24 @@ def test_sentry_relay_restores_headers(
     assert 'baggage' in headers
     parts = headers['sentry-trace'].split('-')
     assert len(parts) >= 2
+
+
+@pytest.mark.django_db
+def test_e2e_dead_letter_preserves_long_sentry_baggage(f_relay: Relay) -> None:
+    baggage = 'x' * 3000
+    CeleryOutbox.objects.create(
+        task_id='dead-letter-baggage-1',
+        task_name='my.task',
+        options={},
+        retries=2,
+        sentry_baggage=baggage,
+    )
+
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task', side_effect=RuntimeError('fail')):
+        _process_relay_with_connection_patch(f_relay)
+
+    dead = CeleryOutboxDeadLetter.objects.get(task_id='dead-letter-baggage-1')
+    assert dead.sentry_baggage == baggage
 
 
 @pytest.mark.django_db

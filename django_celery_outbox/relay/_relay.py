@@ -231,8 +231,8 @@ class Relay:
                 for msg in exceeded:
                     self._send_signal_safe(
                         outbox_message_dead_lettered,
-                        msg.task_id,
-                        msg.task_name,
+                        None,
+                        None,
                         task_ids=[msg.task_id],
                         task_names=[msg.task_name],
                     )
@@ -387,14 +387,21 @@ class Relay:
         self._config.liveness_file.touch()
 
     @staticmethod
-    def _send_signal_safe(sig: Signal, task_id: str, task_name: str, **kwargs: object) -> None:
+    def _send_signal_safe(sig: Signal, task_id: str | None, task_name: str | None, **kwargs: object) -> None:
         try:
-            sig.send(sender=Relay, task_id=task_id, task_name=task_name, **kwargs)
+            payload = dict(kwargs)
+            if task_id is not None:
+                payload['task_id'] = task_id
+            if task_name is not None:
+                payload['task_name'] = task_name
+            sig.send(sender=Relay, **payload)
         except Exception:
-            _logger.error(
-                'celery_outbox_signal_error',
-                signal=getattr(sig, 'providing_args', str(sig)),
-                task_id=task_id,
-                task_name=task_name,
-                exc_info=True,
-            )
+            log_kwargs: dict[str, object] = {
+                'signal': getattr(sig, 'providing_args', str(sig)),
+                'exc_info': True,
+            }
+            if task_id is not None:
+                log_kwargs['task_id'] = task_id
+            if task_name is not None:
+                log_kwargs['task_name'] = task_name
+            _logger.error('celery_outbox_signal_error', **log_kwargs)

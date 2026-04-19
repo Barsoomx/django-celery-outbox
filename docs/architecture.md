@@ -140,7 +140,7 @@ Pending messages waiting for relay:
 | created_at | DateTimeField | When queued |
 | updated_at | DateTimeField | Last attempt timestamp |
 | sentry_trace_id | CharField(512) | Sentry trace propagation header |
-| sentry_baggage | CharField(2048) | Sentry baggage header |
+| sentry_baggage | TextField | Sentry baggage header |
 | structlog_context | TextField | Captured structlog context (JSON) |
 
 ### celery_outbox_dead_letter
@@ -158,7 +158,7 @@ Failed messages exceeding max retries:
 | redacted_kwargs | JSONField | Optional sanitized keyword arguments for inspection; falls back to original when `NULL` |
 | options | JSONField | Task options (serialized) |
 | sentry_trace_id | CharField(512) | Sentry trace propagation header |
-| sentry_baggage | CharField(2048) | Sentry baggage header |
+| sentry_baggage | TextField | Sentry baggage header |
 | structlog_context | TextField | Captured structlog context (JSON) |
 | schema_version | SmallIntegerField | Serialized payload format version |
 | retries | SmallIntegerField | Final retry count |
@@ -243,6 +243,19 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 | Sentry trace | `sentry_sdk.get_traceparent()` | `sentry-trace` header |
 | Sentry baggage | `sentry_sdk.get_baggage()` | `baggage` header |
 | structlog | `structlog.contextvars.get_contextvars()` | `bound_contextvars()` inside the relay publish path |
+
+## Signal Contracts
+
+The package emits Django signals around enqueue and relay operations. The signal kwargs are part of the documented integration contract:
+
+| Signal | Sender | Kwargs |
+|--------|--------|--------|
+| `outbox_message_created` | `OutboxCelery` | `task_id`, `task_name` |
+| `outbox_message_sent` | `Relay` | `task_id`, `task_name` |
+| `outbox_message_failed` | `Relay` | `task_id`, `task_name`, `retries` |
+| `outbox_message_dead_lettered` | `Relay` | `task_ids`, `task_names` |
+
+`outbox_message_created` is emitted after the outbox row is written but before transaction commit. Use `transaction.on_commit()` if downstream work must observe only committed rows.
 
 ## Delivery Guarantees
 
