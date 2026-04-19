@@ -268,6 +268,21 @@ def test_dead_letter_readonly_fields_use_display_options() -> None:
 
 
 @pytest.mark.django_db
+def test_dead_letter_retry_selected_uses_replay_helper(f_user: 'User') -> None:
+    dead = CeleryOutboxDeadLetterFactory.create(task_id='task-retry-helper')
+
+    admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
+    queryset = CeleryOutboxDeadLetter.objects.filter(pk=dead.pk)
+    m_request = MagicMock()
+    m_request.user = f_user
+
+    with patch('django_celery_outbox.admin.replay_dead_letters', return_value=1) as m_replay:
+        admin_instance.retry_selected(m_request, queryset)
+
+    m_replay.assert_called_once_with([dead.pk])
+
+
+@pytest.mark.django_db
 def test_dead_letter_retry_selected_moves_to_outbox(f_user: 'User') -> None:
     dead1 = CeleryOutboxDeadLetterFactory.create(
         task_id='task-retry-1',

@@ -9,6 +9,7 @@ from django.db.models import QuerySet
 from django.http import HttpRequest, HttpResponse
 
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.replay import replay_dead_letters
 from django_celery_outbox.stats import get_queue_stats
 
 
@@ -167,25 +168,7 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         dead_letter_entries = list(queryset.values_list('pk', 'task_id'))
         user_id = _get_log_entry_user_id(request)
         with transaction.atomic():
-            outbox_messages = [
-                CeleryOutbox(
-                    task_id=dl.task_id,
-                    task_name=dl.task_name,
-                    args=dl.args,
-                    kwargs=dl.kwargs,
-                    redacted_args=dl.redacted_args,
-                    redacted_kwargs=dl.redacted_kwargs,
-                    options=dl.options,
-                    schema_version=dl.schema_version,
-                    sentry_trace_id=dl.sentry_trace_id,
-                    sentry_baggage=dl.sentry_baggage,
-                    structlog_context=dl.structlog_context,
-                )
-                for dl in queryset
-            ]
-            CeleryOutbox.objects.bulk_create(outbox_messages)
-            count = len(outbox_messages)
-            queryset.delete()
+            count = replay_dead_letters([pk for pk, _task_id in dead_letter_entries])
 
             for pk, task_id in dead_letter_entries:
                 LogEntry.objects.create(
