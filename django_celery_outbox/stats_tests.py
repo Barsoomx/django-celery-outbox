@@ -2,6 +2,7 @@ import json
 
 import pytest
 from django.db import connection
+from django.test import override_settings
 from django.test.utils import CaptureQueriesContext
 
 
@@ -226,3 +227,25 @@ def test_get_queue_stats_top_n_zero_does_not_run_group_by() -> None:
 
     assert result.top_failing == []
     assert not any('GROUP BY' in query['sql'].upper() for query in ctx.captured_queries)
+
+
+@pytest.mark.django_db
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=900)
+def test_get_queue_stats_uses_configured_stale_timeout() -> None:
+    from datetime import timedelta
+
+    from django.utils import timezone
+
+    from django_celery_outbox.factories import CeleryOutboxFactory
+    from django_celery_outbox.stats import get_queue_stats
+
+    CeleryOutboxFactory.create(
+        task_name='app.tasks.inflight',
+        updated_at=timezone.now() - timedelta(minutes=10),
+        retry_after=None,
+    )
+
+    result = get_queue_stats(top_n=0)
+
+    assert result.queue_depth == 0
+    assert result.oldest_pending_seconds is None

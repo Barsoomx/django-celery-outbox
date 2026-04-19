@@ -236,6 +236,25 @@ def test_relay_config_accepts_publish_concurrency() -> None:
     assert config.publish_concurrency == 4
 
 
+def test_relay_config_from_options_defaults_publish_concurrency_when_missing() -> None:
+    config = RelayConfig.from_options(
+        {
+            'batch_size': 100,
+            'idle_time': 1.0,
+            'backoff_time': 120,
+            'max_retries': 3,
+            'stale_timeout_seconds': 300,
+            'send_timeout': 10.0,
+            'shutdown_timeout': 30.0,
+            'broker_outage_cooldown': 30.0,
+            'max_backoff': 3600.0,
+            'liveness_file': None,
+        }
+    )
+
+    assert config.publish_concurrency == 1
+
+
 @pytest.mark.django_db
 def test_parallel_mode_one_is_identical_to_serial_path(
     m_celery_app: MagicMock,
@@ -741,6 +760,29 @@ def test_relay_uses_cached_queue_snapshot_between_refreshes(
                         relay._processing()
 
     assert m_stats.call_count == 1
+
+
+@pytest.mark.django_db
+def test_should_continue_draining_respects_configured_stale_timeout(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(batch_size=10, idle_time=0, max_retries=3, stale_timeout_seconds=900),
+    )
+    CeleryOutboxFactory.create(
+        task_id='drain-configured-timeout-1',
+        task_name='some.task',
+        updated_at=django_timezone.now() - timedelta(minutes=10),
+        retry_after=None,
+        options={},
+    )
+    relay._policy.begin_shutdown(now_monotonic=0.0)
+
+    with patch('django_celery_outbox.relay._relay.time.monotonic', return_value=1.0):
+        assert relay._should_continue_draining() is False
 
 
 @pytest.mark.django_db

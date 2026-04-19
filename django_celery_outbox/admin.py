@@ -8,6 +8,7 @@ from django.db import transaction
 from django.db.models import QuerySet
 from django.http import HttpRequest, HttpResponse
 
+from django_celery_outbox._settings import load_stale_timeout_seconds_setting
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.replay import replay_dead_letters
 from django_celery_outbox.stats import get_queue_stats
@@ -75,7 +76,8 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
 
     def changelist_view(self, request: HttpRequest, extra_context: dict | None = None) -> HttpResponse:
         extra_context = extra_context or {}
-        stats = get_queue_stats(top_n=0)
+        stale_timeout = timedelta(seconds=load_stale_timeout_seconds_setting())
+        stats = get_queue_stats(top_n=0, stale_timeout=stale_timeout)
         extra_context['live_backlog'] = stats.queue_depth
         extra_context['never_attempted'] = CeleryOutbox.objects.filter(updated_at__isnull=True).count()
         extra_context['failed_count'] = CeleryOutbox.objects.filter(retries__gt=0).count()

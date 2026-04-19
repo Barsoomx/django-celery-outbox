@@ -3,7 +3,7 @@ from typing import Any
 from celery import Celery
 from django.core.management.base import BaseCommand, CommandParser
 
-from django_celery_outbox._settings import load_celery_app_setting
+from django_celery_outbox._settings import load_celery_app_setting, load_stale_timeout_seconds_setting
 from django_celery_outbox.relay import Relay, RelayConfig
 
 
@@ -37,7 +37,7 @@ class Command(BaseCommand):
         parser.add_argument(
             '--stale-timeout-seconds',
             type=int,
-            default=300,
+            default=load_stale_timeout_seconds_setting(),
         )
         parser.add_argument(
             '--send-timeout',

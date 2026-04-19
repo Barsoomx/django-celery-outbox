@@ -10,6 +10,7 @@ from django_celery_outbox._settings import (
     load_celery_app_setting,
     load_dlq_retention_setting,
     load_pii_redactor_setting,
+    load_stale_timeout_seconds_setting,
 )
 
 valid_celery_app = Celery('settings-tests')
@@ -182,3 +183,14 @@ def test_load_dlq_retention_setting_requires_a_threshold() -> None:
 def test_load_dlq_retention_setting_rejects_invalid_duration() -> None:
     with pytest.raises(ValueError, match="Invalid duration format: '30x'"):
         load_dlq_retention_setting()
+
+
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=900)
+def test_load_stale_timeout_seconds_setting_returns_configured_value() -> None:
+    assert load_stale_timeout_seconds_setting() == 900
+
+
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=0)
+def test_load_stale_timeout_seconds_setting_rejects_non_positive_values() -> None:
+    with pytest.raises(ValueError, match='CELERY_OUTBOX_STALE_TIMEOUT_SECONDS must be > 0'):
+        load_stale_timeout_seconds_setting()

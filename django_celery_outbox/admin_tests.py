@@ -191,6 +191,28 @@ def test_changelist_view_oldest_pending_uses_shared_queue_stats_snapshot() -> No
 
 
 @pytest.mark.django_db
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=900)
+def test_changelist_view_uses_configured_stale_timeout_for_live_backlog() -> None:
+    CeleryOutboxFactory.create(
+        task_id='inflight-configured-timeout-1',
+        task_name='some.task',
+        updated_at=timezone.now() - timedelta(minutes=10),
+        retry_after=None,
+    )
+
+    admin_instance = admin.site._registry[CeleryOutbox]
+    m_request = MagicMock()
+    m_request.GET = {}
+
+    with patch.object(admin.ModelAdmin, 'changelist_view', return_value=MagicMock()) as m_super:
+        admin_instance.changelist_view(m_request)
+
+    extra_context = m_super.call_args.kwargs['extra_context']
+    assert extra_context['live_backlog'] == 0
+    assert extra_context['oldest_pending'] is None
+
+
+@pytest.mark.django_db
 def test_reset_retries_action(f_user: 'User') -> None:
     entry1 = CeleryOutboxFactory.create(retries=5, retry_after=timezone.now(), updated_at=timezone.now())
     entry2 = CeleryOutboxFactory.create(retries=3, retry_after=timezone.now(), updated_at=timezone.now())

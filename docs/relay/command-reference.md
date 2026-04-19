@@ -16,7 +16,7 @@ python manage.py celery_outbox_relay [OPTIONS]
 | `--idle-time` | float | 1.0 | Seconds to sleep when queue empty |
 | `--backoff-time` | int | 120 | Base seconds for exponential backoff |
 | `--max-retries` | int | 5 | Retries before dead letter |
-| `--stale-timeout-seconds` | int | 300 | Seconds before in-flight rows are considered stale |
+| `--stale-timeout-seconds` | int | `CELERY_OUTBOX_STALE_TIMEOUT_SECONDS` or 300 | Seconds before in-flight rows are considered stale |
 | `--send-timeout` | float | 10.0 | Timeout passed to broker publish |
 | `--shutdown-timeout` | float | 30.0 | Drain window for starting additional sends after SIGTERM |
 | `--broker-outage-cooldown` | float | 30.0 | Breaker cooldown before the next batch attempt |
@@ -51,7 +51,7 @@ python manage.py celery_outbox_relay \
 Show outbox statistics.
 
 ```bash
-python manage.py celery_outbox_stats [--format text|json] [--top N]
+python manage.py celery_outbox_stats [--format text|json] [--top N] [--stale-timeout-seconds N]
 ```
 
 ### Options
@@ -60,6 +60,7 @@ python manage.py celery_outbox_stats [--format text|json] [--top N]
 |--------|------|---------|-------------|
 | `--format` | `text` \| `json` | `text` | Render human-readable or JSON output |
 | `--top` | int | `10` | Number of top failing task groups to include |
+| `--stale-timeout-seconds` | int | `CELERY_OUTBOX_STALE_TIMEOUT_SECONDS` or `300` | Recovery window used when classifying stale in-flight rows as live backlog |
 
 Text output:
 

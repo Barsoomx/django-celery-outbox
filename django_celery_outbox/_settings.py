@@ -105,6 +105,19 @@ def load_dlq_retention_setting() -> dict[str, timedelta | str | None] | None:
     }
 
 
+def load_stale_timeout_seconds_setting(default: int = 300) -> int:
+    value = getattr(settings, 'CELERY_OUTBOX_STALE_TIMEOUT_SECONDS', default)
+    try:
+        stale_timeout_seconds = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError('CELERY_OUTBOX_STALE_TIMEOUT_SECONDS must be an integer.') from exc
+
+    if stale_timeout_seconds <= 0:
+        raise ValueError('CELERY_OUTBOX_STALE_TIMEOUT_SECONDS must be > 0.')
+
+    return stale_timeout_seconds
+
+
 def get_outbox_db_alias() -> str:
     from django_celery_outbox.models import CeleryOutbox
 

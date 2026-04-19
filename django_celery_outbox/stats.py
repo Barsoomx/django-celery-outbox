@@ -3,14 +3,12 @@ from dataclasses import dataclass
 from datetime import timedelta
 from typing import TypedDict, cast
 
-from django.db.models import Q, Sum
-from django.db.models.functions import Now
+from django.db.models import Sum
 from django.utils import timezone
 
+from django_celery_outbox._pending import get_pending_filter
+from django_celery_outbox._settings import load_stale_timeout_seconds_setting
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
-from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_VERSION
-
-_STALE_TIMEOUT = timedelta(minutes=5)
 
 
 class TopFailingTask(TypedDict):
@@ -67,13 +65,11 @@ class QueueStats:
         return f'{secs}s'
 
 
-def get_queue_stats(top_n: int = 10) -> QueueStats:
-    pending_filter = (
-        Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | Q(updated_at__lte=Now() - _STALE_TIMEOUT, retry_after__isnull=True)
-    ) & Q(
-        schema_version__gte=MIN_SUPPORTED_VERSION,
-        schema_version__lte=CURRENT_SCHEMA_VERSION,
-    )
+def get_queue_stats(top_n: int = 10, *, stale_timeout: timedelta | None = None) -> QueueStats:
+    if stale_timeout is None:
+        stale_timeout = timedelta(seconds=load_stale_timeout_seconds_setting())
+
+    pending_filter = get_pending_filter(stale_timeout)
     pending_qs = CeleryOutbox.objects.filter(pending_filter)
     queue_depth = pending_qs.count()
     dlq_count = CeleryOutboxDeadLetter.objects.count()

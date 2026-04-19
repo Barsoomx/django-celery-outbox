@@ -15,10 +15,11 @@ from kombu.transport.native_delayed_delivery import (
 )
 
 from django_celery_outbox import metrics
+from django_celery_outbox._pending import get_pending_filter
 from django_celery_outbox.metrics import get_task_tag
 from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.relay._config import RelayConfig
-from django_celery_outbox.relay._message_selector import MessageSelector, get_pending_filter
+from django_celery_outbox.relay._message_selector import MessageSelector
 from django_celery_outbox.relay._mutations import RelayMutations
 from django_celery_outbox.relay._policy import RelayPolicy, is_broker_outage
 from django_celery_outbox.relay._publisher import RelayPublisher
@@ -34,8 +35,9 @@ _logger = structlog.getLogger(__name__)
 
 
 class QueueSnapshotSampler:
-    def __init__(self, *, refresh_interval_seconds: float = 5.0) -> None:
+    def __init__(self, *, refresh_interval_seconds: float = 5.0, stale_timeout: timedelta | None = None) -> None:
         self._refresh_interval_seconds = refresh_interval_seconds
+        self._stale_timeout = stale_timeout
         self._last_sampled_at: float | None = None
         self._last_stats = QueueStats(
             queue_depth=0,
@@ -46,7 +48,7 @@ class QueueSnapshotSampler:
 
     def get(self, *, now_monotonic: float) -> QueueStats:
         if self._last_sampled_at is None or now_monotonic - self._last_sampled_at >= self._refresh_interval_seconds:
-            self._last_stats = get_queue_stats(top_n=0)
+            self._last_stats = get_queue_stats(top_n=0, stale_timeout=self._stale_timeout)
             self._last_sampled_at = now_monotonic
         return self._last_stats
 
@@ -69,9 +71,10 @@ class Relay:
 
         self._app = app
         self._config = config
+        self._stale_timeout = timedelta(seconds=config.stale_timeout_seconds)
         self._selector = selector or MessageSelector(
             batch_size=config.batch_size,
-            stale_timeout=timedelta(seconds=config.stale_timeout_seconds),
+            stale_timeout=self._stale_timeout,
         )
         self._publisher = RelayPublisher(app=app, send_timeout=config.send_timeout)
         self._mutations = RelayMutations(
@@ -82,7 +85,7 @@ class Relay:
             broker_outage_cooldown=config.broker_outage_cooldown,
             shutdown_timeout=config.shutdown_timeout,
         )
-        self._queue_snapshot_sampler = QueueSnapshotSampler()
+        self._queue_snapshot_sampler = QueueSnapshotSampler(stale_timeout=self._stale_timeout)
         self._running = True
 
     def start(self) -> None:
@@ -143,7 +146,7 @@ class Relay:
         if self._policy.shutdown_deadline_exceeded(time.monotonic()):
             return False
 
-        return CeleryOutbox.objects.filter(get_pending_filter()).exists()
+        return CeleryOutbox.objects.filter(get_pending_filter(self._stale_timeout)).exists()
 
     def _finalize_processing_cycle(
         self,

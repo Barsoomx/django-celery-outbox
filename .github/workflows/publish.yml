@@ -39,21 +39,7 @@ jobs:
       - name: Smoke installed wheel
         run: |
           cd /tmp
-          python - <<'PY'
-          import importlib.metadata as metadata
-          import json
-          import django_celery_outbox
-          import django_celery_outbox.management.commands.celery_outbox_purge_dead_letter
-          import django_celery_outbox.management.commands.celery_outbox_relay
-          import django_celery_outbox.management.commands.celery_outbox_stats
-          from importlib.metadata import entry_points
-
-          data = json.loads(metadata.distribution('django-celery-outbox').read_text('direct_url.json'))
-          assert data['url'].endswith('.whl'), data
-          pytest11 = entry_points(group='pytest11')
-          assert any(ep.name == 'django_celery_outbox' for ep in pytest11)
-          print(django_celery_outbox.__file__)
-          PY
+          python "${GITHUB_WORKSPACE}/scripts/smoke_installed_wheel.py" --expect-wheel-origin
       - name: Upload smoke-tested artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
@@ -138,7 +124,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Check changelog release contract
-        run: python scripts/check_release_contract.py CHANGELOG.md
+        run: python scripts/check_release_contract.py --version "${GITHUB_REF_NAME#v}" CHANGELOG.md
 
   build-and-publish:
     needs: [release_contract]
