@@ -2,23 +2,9 @@ name: Test Example Project
 
 on:
   push:
-    paths:
-      - 'django_celery_outbox/**'
-      - 'pyproject.toml'
-      - 'setup.py'
-      - 'MANIFEST.in'
-      - 'Dockerfile'
-      - '.github/workflows/example.yml'
-      - 'examples/**'
+    branches:
+      - master
   pull_request:
-    paths:
-      - 'django_celery_outbox/**'
-      - 'pyproject.toml'
-      - 'setup.py'
-      - 'MANIFEST.in'
-      - 'Dockerfile'
-      - '.github/workflows/example.yml'
-      - 'examples/**'
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true

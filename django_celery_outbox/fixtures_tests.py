@@ -195,7 +195,7 @@ def test_fake_relay_uses_fixture_support_patch_target(monkeypatch: pytest.Monkey
         raising=False,
     )
 
-    generator = fixtures_module.fake_relay.__wrapped__()
+    generator = cast(Any, fixtures_module.fake_relay).__wrapped__()
     recorder = next(generator)
 
     assert called == [recorder]
@@ -218,7 +218,7 @@ def test_drain_outbox_uses_fixture_support_run_once(monkeypatch: pytest.MonkeyPa
         raising=False,
     )
 
-    drain_outbox = fixtures_module.drain_outbox_fixture.__wrapped__(outbox=CeleryOutbox)
+    drain_outbox = cast(Any, fixtures_module.drain_outbox_fixture).__wrapped__(outbox=CeleryOutbox)
 
     with patch.object(CeleryOutbox.objects, 'count', side_effect=[1, 0]):
         drain_outbox()

@@ -94,6 +94,7 @@ def test_installed_wheel_smoke_script_accepts_wheel_origin(monkeypatch: pytest.M
 def test_release_workflows_include_contract_and_live_broker_gates() -> None:
     publish_workflow = Path('.github/workflows/publish.yml').read_text(encoding='utf-8')
     tests_workflow = Path('.github/workflows/tests.yml').read_text(encoding='utf-8')
+    example_workflow = Path('.github/workflows/example.yml').read_text(encoding='utf-8')
     docker_compose = Path('docker-compose.yml').read_text(encoding='utf-8')
     pyproject = Path('pyproject.toml').read_text(encoding='utf-8')
     smoke_script = Path('scripts/smoke_installed_wheel.py').read_text(encoding='utf-8')
@@ -116,6 +117,13 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
     assert "django: '5.0'" in tests_workflow or 'django: "5.0"' in tests_workflow
     assert "django: '5.1'" in tests_workflow or 'django: "5.1"' in tests_workflow
     assert 'pytest -m "not release_artifact and not live_broker_smoke" -v' in tests_workflow
+
+    assert 'name: Test Example Project' in example_workflow
+    assert 'push:\n    branches:\n      - master' in example_workflow
+    assert 'pull_request:' in example_workflow
+    assert 'paths:' not in example_workflow
+    assert 'Create order' in example_workflow
+    assert 'Verify outbox processed' in example_workflow
 
     assert 'rabbitmq:' in docker_compose
     assert 'rabbitmq:\n        condition: service_healthy' in docker_compose
