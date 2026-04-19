@@ -231,11 +231,9 @@ def test_example_workflow_uses_built_artifact() -> None:
     compose = Path('examples/minimal_django/docker-compose.yml').read_text(encoding='utf-8')
     readme = Path('examples/minimal_django/README.md').read_text(encoding='utf-8')
 
-    assert 'django_celery_outbox/**' in workflow
-    assert 'pyproject.toml' in workflow
-    assert 'MANIFEST.in' in workflow
-    assert 'setup.py' in workflow
-    assert 'Dockerfile' in workflow
+    assert 'push:\n    branches:\n      - master' in workflow
+    assert 'pull_request:' in workflow
+    assert 'paths:' not in workflow
     assert 'rm -rf dist/example' in workflow
     assert 'python -m build --outdir dist/example' in workflow
     assert '/package/dist/example/django_celery_outbox-*.whl' in compose
