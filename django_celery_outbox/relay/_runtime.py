@@ -1,13 +1,4 @@
-from enum import Enum, auto
-
 from django.conf import settings
-
-
-class ProcessResult(Enum):
-    PUBLISHED = auto()
-    FAILED = auto()
-    EXCEEDED = auto()
-
 
 _EXCEPTION_CATEGORIES: dict[type[Exception], str] = {
     ConnectionError: 'connection',

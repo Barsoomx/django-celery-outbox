@@ -1043,7 +1043,7 @@ def test_select_messages_skips_deprecated_versions(f_message_selector: MessageSe
 
 
 @pytest.mark.django_db
-def test_failed_message_includes_exception_type_in_metrics(
+def test_builtin_connection_error_is_treated_as_broker_outage(
     f_relay: Relay,
     m_metrics: MagicMock,
 ) -> None:
@@ -1054,32 +1054,16 @@ def test_failed_message_includes_exception_type_in_metrics(
     )
 
     with patch.object(f_relay._publisher, 'publish', side_effect=ConnectionError('broker down')):
-        f_relay._process_messages([msg])
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = f_relay._process_messages([msg])
 
-    m_metrics.increment.assert_any_call(
-        'messages.failed',
-        tags={'task_name': msg.task_name, 'exception_type': 'connection'},
-    )
-
-
-@pytest.mark.django_db
-def test_exceeded_message_includes_exception_type_in_metrics(
-    f_relay: Relay,
-    m_metrics: MagicMock,
-) -> None:
-    msg = CeleryOutbox.objects.create(
-        task_id='task-1',
-        task_name='some.task',
-        retries=f_relay._config.max_retries - 1,
-    )
-
-    with patch.object(f_relay._publisher, 'publish', side_effect=ConnectionError('broker down')):
-        f_relay._process_messages([msg])
-
-    m_metrics.increment.assert_any_call(
-        'messages.exceeded',
-        tags={'task_name': msg.task_name, 'exception_type': 'connection'},
-    )
+    assert published == []
+    assert failed == []
+    assert exceeded == []
+    assert deferred_due_to_outage == [msg.id]
+    assert shutdown_aborted == []
+    metric_names = [c[0][0] for c in m_metrics.increment.call_args_list]
+    assert 'messages.failed' not in metric_names
+    assert 'messages.exceeded' not in metric_names
 
 
 @pytest.mark.django_db

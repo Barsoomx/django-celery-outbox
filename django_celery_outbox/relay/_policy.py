@@ -7,16 +7,17 @@ from kombu.exceptions import OperationalError
 _BROKER_OUTAGE_EXCEPTIONS = (
     TimeoutError,
     OperationalError,
+    ConnectionError,
     AmqpConnectionError,
     AmqpChannelError,
 )
 
 
 def is_broker_outage(exc: Exception) -> bool:
-    if isinstance(exc, _BROKER_OUTAGE_EXCEPTIONS[:2]):
+    if isinstance(exc, _BROKER_OUTAGE_EXCEPTIONS[:3]):
         return True
 
-    return type(exc) in _BROKER_OUTAGE_EXCEPTIONS[2:]
+    return type(exc) in _BROKER_OUTAGE_EXCEPTIONS[3:]
 
 
 class RelayPolicy:

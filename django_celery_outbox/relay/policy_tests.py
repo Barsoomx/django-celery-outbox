@@ -10,6 +10,18 @@ def test_is_broker_outage_timeout_error() -> None:
     assert is_broker_outage(TimeoutError('timed out')) is True
 
 
+def test_is_broker_outage_builtin_connection_error() -> None:
+    assert is_broker_outage(ConnectionError('broker down')) is True
+
+
+def test_is_broker_outage_broken_pipe_error() -> None:
+    assert is_broker_outage(BrokenPipeError('pipe broken')) is True
+
+
+def test_is_broker_outage_connection_reset_error() -> None:
+    assert is_broker_outage(ConnectionResetError('connection reset')) is True
+
+
 def test_is_broker_outage_kombu_operational_error() -> None:
     assert is_broker_outage(OperationalError('down')) is True
 

@@ -1,16 +1,9 @@
 from django.test import override_settings
 
 from django_celery_outbox.relay._runtime import (
-    ProcessResult,
     classify_exception,
     should_log_traceback,
 )
-
-
-def test_process_result_enum_members() -> None:
-    assert ProcessResult.PUBLISHED.name == 'PUBLISHED'
-    assert ProcessResult.FAILED.name == 'FAILED'
-    assert ProcessResult.EXCEEDED.name == 'EXCEEDED'
 
 
 def test_classify_exception_connection_error() -> None:
