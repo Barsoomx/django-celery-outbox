@@ -174,6 +174,58 @@ def test_fixture_types_are_importable() -> None:
     assert RecordedRelayCall is not None
 
 
+def test_fake_relay_uses_fixture_support_patch_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[FakeRelayRecorder] = []
+
+    class _PatchContext:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            del exc_type, exc, tb
+
+    def fake_patch_fake_relay_send_task(recorder: FakeRelayRecorder) -> _PatchContext:
+        called.append(recorder)
+        return _PatchContext()
+
+    monkeypatch.setattr(
+        fixtures_module,
+        'patch_fake_relay_send_task',
+        fake_patch_fake_relay_send_task,
+        raising=False,
+    )
+
+    generator = fixtures_module.fake_relay.__wrapped__()
+    recorder = next(generator)
+
+    assert called == [recorder]
+
+    with pytest.raises(StopIteration):
+        next(generator)
+
+
+@pytest.mark.django_db
+def test_drain_outbox_uses_fixture_support_run_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[tuple[object, float]] = []
+
+    def fake_run_drain_outbox_once(app: object, *, idle_time: float = 0.0) -> None:
+        called.append((app, idle_time))
+
+    monkeypatch.setattr(
+        fixtures_module,
+        'run_drain_outbox_once',
+        fake_run_drain_outbox_once,
+        raising=False,
+    )
+
+    drain_outbox = fixtures_module.drain_outbox_fixture.__wrapped__(outbox=CeleryOutbox)
+
+    with patch.object(CeleryOutbox.objects, 'count', side_effect=[1, 0]):
+        drain_outbox()
+
+    assert len(called) == 1
+
+
 @dataclass(slots=True)
 class FakeQueuedMessage:
     id: int

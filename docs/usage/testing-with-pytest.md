@@ -3,6 +3,7 @@
 `django-celery-outbox` ships a pytest plugin that exposes test helpers for the outbox and relay flow.
 
 When the package is installed, pytest discovers the plugin through `pytest11`. The fixtures are available without adding `pytest_plugins` in your test suite.
+The shipped fixtures delegate to an internal package-owned support module, but downstream test suites should still import and use the fixtures themselves rather than private helpers.
 
 If your test environment disables plugin autoload, for example with `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1`, pytest will not load the plugin automatically. In that case, explicitly register `django_celery_outbox.fixtures` in your test configuration.
 

@@ -1,6 +1,8 @@
+import ast
 import json
 from collections.abc import Generator
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -50,10 +52,9 @@ def m_celery_send() -> Generator[MagicMock]:
         yield mock
 
 
-@pytest.fixture(autouse=True)
-def m_close_old_connections() -> Generator[MagicMock]:
-    with patch('django_celery_outbox.relay._relay.close_old_connections') as mock:
-        yield mock
+def _process_relay_with_connection_patch(relay: Relay) -> None:
+    with patch('django_celery_outbox.relay._relay.close_old_connections'):
+        relay._processing()
 
 
 class _NoopTransport(sentry_sdk.transport.Transport):
@@ -91,6 +92,26 @@ def clear_redactor_cache() -> Generator[None]:
     _get_redactor.cache_clear()
 
 
+def test_integration_tests_patch_close_old_connections_is_local() -> None:
+    source = Path(__file__).read_text(encoding='utf-8')
+    tree = ast.parse(source)
+    function_defs = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+
+    assert 'm_close_old_connections' not in function_defs
+    assert '_process_relay_with_connection_patch' in function_defs
+
+    helper = next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == '_process_relay_with_connection_patch')
+    assert any(
+        isinstance(call.func, ast.Name)
+        and call.func.id == 'patch'
+        and call.args
+        and isinstance(call.args[0], ast.Constant)
+        and call.args[0].value == 'django_celery_outbox.relay._relay.close_old_connections'
+        for call in ast.walk(helper)
+        if isinstance(call, ast.Call)
+    )
+
+
 # ============================================================
 # E2E Flow Tests
 # ============================================================
@@ -110,7 +131,7 @@ def test_e2e_basic_flow_preserves_task_data(
             task_id='test-task-id-001',
         )
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     m_celery_send.assert_called_once()
     call_kwargs = m_celery_send.call_args
@@ -133,7 +154,7 @@ def test_e2e_countdown_converts_to_eta(
     msg = CeleryOutbox.objects.get()
     stored_eta = datetime.fromisoformat(msg.options['eta'])
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     eta = call_kwargs.kwargs['eta']
@@ -152,7 +173,7 @@ def test_e2e_eta_datetime_roundtrip(
     with transaction.atomic():
         f_outbox_app.send_task('my.task', eta=original_eta)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     eta = call_kwargs.kwargs['eta']
@@ -172,7 +193,7 @@ def test_e2e_link_signature_roundtrip(
     with transaction.atomic():
         f_outbox_app.send_task('my.task', link=link_sig)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     restored_links = call_kwargs.kwargs['link']
@@ -199,7 +220,7 @@ def test_e2e_chain_signatures_roundtrip(
     with transaction.atomic():
         f_outbox_app.send_task('my.task', chain=chain_sigs)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     restored_chain = call_kwargs.kwargs['chain']
@@ -221,7 +242,7 @@ def test_e2e_chord_signature_roundtrip(
     with transaction.atomic():
         f_outbox_app.send_task('my.task', chord=chord_sig)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     restored_chord = call_kwargs.kwargs['chord']
@@ -239,7 +260,7 @@ def test_e2e_expires_int_roundtrip(
     with transaction.atomic():
         f_outbox_app.send_task('my.task', expires=300)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     assert call_kwargs.kwargs['expires'] == 300
@@ -256,7 +277,7 @@ def test_e2e_expires_datetime_roundtrip(
     with transaction.atomic():
         f_outbox_app.send_task('my.task', expires=original_expires)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     restored_expires = call_kwargs.kwargs['expires']
@@ -273,7 +294,7 @@ def test_e2e_time_limit_and_soft_time_limit_roundtrip(
     with transaction.atomic():
         f_outbox_app.send_task('my.task', time_limit=600, soft_time_limit=300)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     assert call_kwargs.kwargs['time_limit'] == 600
@@ -295,7 +316,7 @@ def test_e2e_combined_options_roundtrip(
             time_limit=120,
         )
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     assert call_kwargs.kwargs['group_id'] == 'group-1'
@@ -315,7 +336,7 @@ def test_e2e_processing_deletes_published_message(
 
     assert CeleryOutbox.objects.count() == 1
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     assert CeleryOutbox.objects.count() == 0
 
@@ -331,7 +352,7 @@ def test_e2e_broker_outage_defers_message_without_incrementing_retries(
     with transaction.atomic():
         f_outbox_app.send_task('my.task', args=(1,))
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     msg = CeleryOutbox.objects.get()
     assert msg.retries == 0
@@ -349,7 +370,7 @@ def test_e2e_dead_letter_on_max_retries_exceeded(
 
     CeleryOutbox.objects.update(retries=3)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     assert CeleryOutbox.objects.count() == 0
     dead = CeleryOutboxDeadLetter.objects.get()
@@ -376,7 +397,7 @@ def test_e2e_dead_letter_preserves_all_data(
 
     CeleryOutbox.objects.update(retries=3)
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     dead = CeleryOutboxDeadLetter.objects.get()
     assert dead.task_id == 'dead-preserve-1'
@@ -412,7 +433,7 @@ def test_e2e_relay_uses_original_payload_when_redacted_copy_exists(
     assert msg.kwargs == {'email': 'user@example.com'}
     assert msg.redacted_kwargs == {'email': '[REDACTED]'}
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     assert call_kwargs.kwargs['kwargs'] == {'email': 'user@example.com'}
@@ -429,7 +450,7 @@ def test_e2e_multiple_messages_batch_processing(
         f_outbox_app.send_task('task.two', args=(2,))
         f_outbox_app.send_task('task.three', args=(3,))
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     assert m_celery_send.call_count == 3
     task_names = {call.kwargs['name'] for call in m_celery_send.call_args_list}
@@ -474,7 +495,7 @@ def test_sentry_relay_restores_headers(
         with transaction.atomic():
             f_outbox_app.send_task('my.task', task_id='sentry-relay-1')
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     headers = call_kwargs.kwargs['headers']
@@ -504,7 +525,7 @@ def test_sentry_full_trace_id_consistency(
     stored_trace_id = msg.sentry_trace_id.split('-')[0]
     assert stored_trace_id == trace_id
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     relay_trace = call_kwargs.kwargs['headers']['sentry-trace']
@@ -527,7 +548,7 @@ def test_sentry_no_trace_data_no_headers(
         sentry_baggage=None,
     )
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     call_kwargs = m_celery_send.call_args
     headers = call_kwargs.kwargs['headers']
@@ -560,7 +581,7 @@ def test_structlog_context_captured_and_restored(
 
     structlog.contextvars.clear_contextvars()
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     assert captured_ctx['request_id'] == 'req-123'
     assert captured_ctx['user_id'] == 'user-456'
@@ -588,7 +609,7 @@ def test_structlog_key_filtering(
 
     structlog.contextvars.clear_contextvars()
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     assert captured_ctx.get('request_id') == 'req-filtered'
     assert 'user_id' not in captured_ctx
@@ -634,7 +655,7 @@ def test_structlog_context_isolation_between_messages(
 
     structlog.contextvars.clear_contextvars()
 
-    f_relay._processing()
+    _process_relay_with_connection_patch(f_relay)
 
     assert len(captured_contexts) == 2
     ctx_a = next(c for c in captured_contexts if c.get('request_id') == 'req-A')

@@ -24,7 +24,13 @@ The example declares RabbitMQ quorum queues explicitly and enables publisher con
 
 ## Quick Start
 
+The compose services install the built wheel from `/package/dist`, so build the package from the repository root before starting the example.
+
 ```bash
+# From the repository root
+python -m pip install -q build
+python -m build
+
 # Start all services
 docker compose up -d
 

@@ -224,3 +224,18 @@ def test_outbox_fixture_cleans_between_tests(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_example_workflow_uses_built_artifact() -> None:
+    workflow = Path('.github/workflows/example.yml').read_text(encoding='utf-8')
+    compose = Path('examples/minimal_django/docker-compose.yml').read_text(encoding='utf-8')
+    readme = Path('examples/minimal_django/README.md').read_text(encoding='utf-8')
+
+    assert 'django_celery_outbox/**' in workflow
+    assert 'pyproject.toml' in workflow
+    assert 'MANIFEST.in' in workflow
+    assert 'Dockerfile' in workflow
+    assert 'python -m build' in workflow
+    assert 'pip install /package/dist/*.whl' in compose
+    assert 'cp -r /package /tmp/package && pip install /tmp/package' not in compose
+    assert 'python -m build' in readme
