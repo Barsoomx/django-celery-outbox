@@ -32,7 +32,7 @@ def test_get_celery_app_raises_without_setting() -> None:
 
 @patch.object(Command, '_get_celery_app')
 @patch('django_celery_outbox.management.commands.celery_outbox_relay.Relay')
-def test_handle_creates_relay_with_correct_params(
+def test_handle_creates_relay_with_reliability_params(
     m_relay_cls: MagicMock,
     m_get_celery_app: MagicMock,
 ) -> None:
@@ -46,6 +46,10 @@ def test_handle_creates_relay_with_correct_params(
         backoff_time=60,
         max_retries=3,
         stale_timeout_seconds=300,
+        send_timeout=10.0,
+        shutdown_timeout=30.0,
+        broker_outage_cooldown=30.0,
+        max_backoff=3600.0,
         liveness_file='/var/run/celery-outbox-alive',
     )
 
@@ -57,6 +61,10 @@ def test_handle_creates_relay_with_correct_params(
             backoff_time=60,
             max_retries=3,
             stale_timeout_seconds=300,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
             liveness_file='/var/run/celery-outbox-alive',
         ),
     )
@@ -75,17 +83,34 @@ def test_get_celery_app_nonexistent_module_raises_value_error() -> None:
         Command._get_celery_app()
 
 
-def test_add_arguments_registers_all_params() -> None:
+def test_add_arguments_registers_reliability_params() -> None:
     command = Command()
-    parser = MagicMock()
+    parser = command.create_parser('manage.py', 'celery_outbox_relay')
+    defaults = parser.parse_args([])
+    parsed = parser.parse_args(
+        [
+            '--send-timeout',
+            '12.5',
+            '--shutdown-timeout',
+            '45.0',
+            '--broker-outage-cooldown',
+            '90.5',
+            '--max-backoff',
+            '7200.0',
+        ],
+    )
 
-    command.add_arguments(parser)
+    assert vars(defaults)['send_timeout'] == 10.0
+    assert vars(defaults)['shutdown_timeout'] == 30.0
+    assert vars(defaults)['broker_outage_cooldown'] == 30.0
+    assert vars(defaults)['max_backoff'] == 3600.0
 
-    assert parser.add_argument.call_count == 6
-    arg_names = [c.args[0] for c in parser.add_argument.call_args_list]
-    assert '--batch-size' in arg_names
-    assert '--idle-time' in arg_names
-    assert '--backoff-time' in arg_names
-    assert '--max-retries' in arg_names
-    assert '--stale-timeout-seconds' in arg_names
-    assert '--liveness-file' in arg_names
+    assert vars(parsed)['send_timeout'] == 12.5
+    assert vars(parsed)['shutdown_timeout'] == 45.0
+    assert vars(parsed)['broker_outage_cooldown'] == 90.5
+    assert vars(parsed)['max_backoff'] == 7200.0
+
+    assert isinstance(parsed.send_timeout, float)
+    assert isinstance(parsed.shutdown_timeout, float)
+    assert isinstance(parsed.broker_outage_cooldown, float)
+    assert isinstance(parsed.max_backoff, float)

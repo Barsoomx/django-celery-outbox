@@ -1,18 +1,12 @@
-import json
-import random
 import signal
 import time
 from datetime import timedelta
-from enum import Enum, auto
 from types import FrameType
 
 import sentry_sdk
 import structlog
 from celery import Celery
-from django.conf import settings
 from django.db import close_old_connections, connections, transaction
-from django.db.models import F
-from django.db.models.functions import Now
 from django.dispatch import Signal
 from django.utils import timezone
 from kombu.transport.native_delayed_delivery import (
@@ -24,7 +18,10 @@ from django_celery_outbox.metrics import get_task_tag
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay._config import RelayConfig
 from django_celery_outbox.relay._message_selector import MessageSelector, get_pending_filter
-from django_celery_outbox.serialization import deserialize_options
+from django_celery_outbox.relay._mutations import RelayMutations
+from django_celery_outbox.relay._policy import RelayPolicy, is_broker_outage
+from django_celery_outbox.relay._publisher import RelayPublisher
+from django_celery_outbox.relay._runtime import classify_exception, should_log_traceback
 from django_celery_outbox.signals import (
     outbox_message_dead_lettered,
     outbox_message_failed,
@@ -32,32 +29,6 @@ from django_celery_outbox.signals import (
 )
 
 _logger = structlog.getLogger(__name__)
-
-
-class ProcessResult(Enum):
-    PUBLISHED = auto()
-    FAILED = auto()
-    EXCEEDED = auto()
-
-
-# Order matters: subclasses before parents (ConnectionError, TimeoutError < OSError)
-_EXCEPTION_CATEGORIES: dict[type[Exception], str] = {
-    ConnectionError: 'connection',
-    TimeoutError: 'timeout',
-    OSError: 'os_error',
-}
-
-
-def _classify_exception(exc: Exception) -> str:
-    for exc_class, label in _EXCEPTION_CATEGORIES.items():
-        if isinstance(exc, exc_class):
-            return label
-
-    return 'unknown'
-
-
-def _should_log_traceback() -> bool:
-    return getattr(settings, 'CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK', True)
 
 
 class Relay:
@@ -82,7 +53,15 @@ class Relay:
             batch_size=config.batch_size,
             stale_timeout=timedelta(seconds=config.stale_timeout_seconds),
         )
-
+        self._publisher = RelayPublisher(app=app, send_timeout=config.send_timeout)
+        self._mutations = RelayMutations(
+            backoff_time=config.backoff_time,
+            max_backoff=config.max_backoff,
+        )
+        self._policy = RelayPolicy(
+            broker_outage_cooldown=config.broker_outage_cooldown,
+            shutdown_timeout=config.shutdown_timeout,
+        )
         self._running = True
 
     def start(self) -> None:
@@ -97,8 +76,22 @@ class Relay:
             max_retries=self._config.max_retries,
         )
 
-        while self._running:
-            self._processing()
+        while self._running or self._should_continue_draining():
+            try:
+                self._processing()
+            except Exception as exc:
+                sentry_sdk.capture_exception(exc)
+                log_kwargs = {
+                    'exception_type': type(exc).__name__,
+                    'exception_message': str(exc),
+                }
+                if should_log_traceback():
+                    _logger.error('celery_outbox_relay_iteration_failed', **log_kwargs, exc_info=True)
+                else:
+                    _logger.error('celery_outbox_relay_iteration_failed', **log_kwargs)
+
+                if self._running or self._should_continue_draining():
+                    time.sleep(self._config.idle_time)
 
     def _setup_signals(self) -> None:
         signal.signal(signal.SIGTERM, self._handle_signal)
@@ -119,35 +112,28 @@ class Relay:
 
     def _handle_signal(self, signum: int, frame: FrameType | None) -> None:
         _logger.info('celery_outbox_relay_shutdown', signal=signum)
+        self._policy.begin_shutdown(time.monotonic())
         self._running = False
 
-    def _processing(self) -> None:
-        start_time = time.monotonic()
-        close_old_connections()
+    def _should_continue_draining(self) -> bool:
+        if not self._policy.shutdown_requested():
+            return False
 
-        with sentry_sdk.start_span(op='queue.process', name='celery_outbox.relay.batch') as batch_span:
-            with transaction.atomic():
-                messages = self._selector.run()
+        if self._policy.shutdown_deadline_exceeded(time.monotonic()):
+            return False
 
-            published, failed, exceeded = self._process_messages(messages)
+        return CeleryOutbox.objects.filter(get_pending_filter()).exists()
 
-            close_old_connections()
-
-            with transaction.atomic():
-                self._update_failed(failed)
-                self._delete_done(published)
-                self._move_to_dead_letter(exceeded)
-
-            batch_span.set_data('celery_outbox.published', len(published))
-            batch_span.set_data('celery_outbox.failed', len(failed))
-            batch_span.set_data('celery_outbox.exceeded', len(exceeded))
-            batch_span.set_data('celery_outbox.batch_size', len(messages))
-
-            if failed or exceeded:
-                batch_span.set_status('internal_error')
-            else:
-                batch_span.set_status('ok')
-
+    def _finalize_processing_cycle(
+        self,
+        *,
+        start_time: float,
+        published: int,
+        failed: int,
+        exceeded: int,
+        deferred_due_to_outage: int,
+        shutdown_aborted: int,
+    ) -> None:
         queue_depth = CeleryOutbox.objects.count()
         metrics.gauge('queue.depth', queue_depth)
         metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
@@ -162,16 +148,99 @@ class Relay:
 
         _logger.info(
             'celery_outbox_batch_processed',
-            published=len(published),
-            failed=len(failed),
-            exceeded=len(exceeded),
+            published=published,
+            failed=failed,
+            exceeded=exceeded,
+            deferred_due_to_outage=deferred_due_to_outage,
+            shutdown_aborted=shutdown_aborted,
             queue_depth=queue_depth,
         )
 
         self._touch_liveness()
 
-        batch_total = len(published) + len(failed) + len(exceeded)
-        if batch_total < self._config.batch_size:
+    def _processing(self) -> None:
+        start_time = time.monotonic()
+        now_monotonic = time.monotonic()
+        with sentry_sdk.start_span(op='queue.process', name='celery_outbox.relay.batch') as batch_span:
+            if self._policy.should_skip_batch(now_monotonic):
+                sleep_for = self._policy.seconds_until_batch_retry(now_monotonic)
+                if self._policy.shutdown_requested():
+                    sleep_for = min(
+                        sleep_for,
+                        self._policy.seconds_until_shutdown_deadline(time.monotonic()),
+                    )
+                _logger.warning(
+                    'celery_outbox_relay_breaker_open',
+                    cooldown_seconds=sleep_for,
+                )
+                batch_span.set_data('celery_outbox.published', 0)
+                batch_span.set_data('celery_outbox.failed', 0)
+                batch_span.set_data('celery_outbox.exceeded', 0)
+                batch_span.set_data('celery_outbox.deferred_due_to_outage', 0)
+                batch_span.set_data('celery_outbox.shutdown_aborted', 0)
+                batch_span.set_data('celery_outbox.batch_size', 0)
+                batch_span.set_status('ok')
+                close_old_connections()
+                time.sleep(sleep_for)
+                close_old_connections()
+                self._finalize_processing_cycle(
+                    start_time=start_time,
+                    published=0,
+                    failed=0,
+                    exceeded=0,
+                    deferred_due_to_outage=0,
+                    shutdown_aborted=0,
+                )
+                return
+
+            close_old_connections()
+
+            with transaction.atomic():
+                messages = self._selector.run()
+
+            published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = self._process_messages(messages)
+
+            close_old_connections()
+
+            with transaction.atomic():
+                self._mutations.update_failed(failed)
+                self._mutations.delete_published(published)
+                self._mutations.move_exceeded_to_dead_letter(exceeded)
+                self._mutations.defer_due_to_outage(
+                    deferred_due_to_outage,
+                    cooldown_seconds=self._config.broker_outage_cooldown,
+                )
+                for msg in exceeded:
+                    self._send_signal_safe(
+                        outbox_message_dead_lettered,
+                        msg.task_id,
+                        msg.task_name,
+                        task_ids=[msg.task_id],
+                        task_names=[msg.task_name],
+                    )
+
+            batch_span.set_data('celery_outbox.published', len(published))
+            batch_span.set_data('celery_outbox.failed', len(failed))
+            batch_span.set_data('celery_outbox.exceeded', len(exceeded))
+            batch_span.set_data('celery_outbox.deferred_due_to_outage', len(deferred_due_to_outage))
+            batch_span.set_data('celery_outbox.shutdown_aborted', len(shutdown_aborted))
+            batch_span.set_data('celery_outbox.batch_size', len(messages))
+
+            if failed or exceeded or deferred_due_to_outage:
+                batch_span.set_status('internal_error')
+            else:
+                batch_span.set_status('ok')
+
+        self._finalize_processing_cycle(
+            start_time=start_time,
+            published=len(published),
+            failed=len(failed),
+            exceeded=len(exceeded),
+            deferred_due_to_outage=len(deferred_due_to_outage),
+            shutdown_aborted=len(shutdown_aborted),
+        )
+
+        if len(messages) < self._config.batch_size:
             _logger.debug('celery_outbox_relay_idle')
             time.sleep(self._config.idle_time)
         else:
@@ -180,12 +249,26 @@ class Relay:
     def _process_messages(
         self,
         messages: list[CeleryOutbox],
-    ) -> tuple[list[int], list[tuple[int, int]], list[int]]:
+    ) -> tuple[list[int], list[tuple[int, int]], list[CeleryOutbox], list[int], list[CeleryOutbox]]:
         published: list[int] = []
         failed: list[tuple[int, int]] = []
-        exceeded: list[int] = []
+        exceeded: list[CeleryOutbox] = []
+        deferred_due_to_outage: list[int] = []
+        shutdown_aborted: list[CeleryOutbox] = []
 
-        for msg in messages:
+        self._policy.begin_batch()
+
+        for index, msg in enumerate(messages):
+            if self._policy.shutdown_deadline_exceeded(time.monotonic()):
+                shutdown_aborted = messages[index:]
+                _logger.warning(
+                    'celery_outbox_relay_shutdown_deadline_exceeded',
+                    aborted_count=len(shutdown_aborted),
+                    aborted_task_ids=[item.task_id for item in shutdown_aborted],
+                    aborted_task_names=[item.task_name for item in shutdown_aborted],
+                )
+                break
+
             msg_context = {
                 'outbox_id': msg.id,
                 'task_name': msg.task_name,
@@ -194,98 +277,86 @@ class Relay:
             }
 
             with structlog.contextvars.bound_contextvars(**msg_context):
-                process_result = self._process_message(msg)
-                match process_result:
-                    case ProcessResult.EXCEEDED:
-                        exceeded.append(msg.id)
-                    case ProcessResult.FAILED:
-                        failed.append((msg.id, msg.retries))
-                    case ProcessResult.PUBLISHED:
-                        published.append(msg.id)
-
-        return published, failed, exceeded
-
-    def _process_message(self, msg: CeleryOutbox) -> ProcessResult:
-        if msg.retries >= self._config.max_retries:
-            _logger.warning(
-                'celery_outbox_max_retries_exceeded',
-                exception_type='pre_exceeded',
-                exception_message='message already exceeded max retries before send attempt',
-            )
-            tags = get_task_tag(msg.task_name)
-            tags['exception_type'] = 'pre_exceeded'
-            metrics.increment('messages.exceeded', tags=tags)
-            return ProcessResult.EXCEEDED
-
-        with sentry_sdk.start_span(op='celery_outbox.relay.send', name=msg.task_name) as span:
-            span.set_data('messaging.message.id', msg.task_id)
-            span.set_data('messaging.message.retry.count', msg.retries)
-
-            try:
-                self._send_task(msg)
-            except Exception as e:
-                span.set_status('internal_error')
-                exc_type = _classify_exception(e)
-
-                log_kwargs = {
-                    'exception_type': exc_type,
-                    'exception_message': str(e),
-                }
-
-                if _should_log_traceback():
-                    _logger.error('celery_outbox_send_failed', **log_kwargs, exc_info=True)
-                else:
-                    _logger.error('celery_outbox_send_failed', **log_kwargs)
-
-                if msg.retries >= self._config.max_retries - 1:
+                if msg.retries >= self._config.max_retries:
                     _logger.warning(
                         'celery_outbox_max_retries_exceeded',
-                        exception_type=exc_type,
-                        exception_message=str(e),
+                        exception_type='pre_exceeded',
+                        exception_message='message already exceeded max retries before send attempt',
                     )
                     tags = get_task_tag(msg.task_name)
-                    tags['exception_type'] = exc_type
+                    tags['exception_type'] = 'pre_exceeded'
                     metrics.increment('messages.exceeded', tags=tags)
-                    return ProcessResult.EXCEEDED
-                else:
-                    tags = get_task_tag(msg.task_name)
-                    tags['exception_type'] = exc_type
-                    metrics.increment('messages.failed', tags=tags)
-                    self._send_signal_safe(outbox_message_failed, msg.task_id, msg.task_name, retries=msg.retries)
-                    return ProcessResult.FAILED
-            else:
-                span.set_status('ok')
-                latency_ms = (time.time() - msg.created_at.timestamp()) * 1000
-                tags = get_task_tag(msg.task_name)
-                metrics.timing('send_latency_ms', latency_ms, tags=tags)
-                metrics.increment('messages.published', tags=tags)
-                self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
-                return ProcessResult.PUBLISHED
+                    exceeded.append(msg)
+                    continue
 
-    def _send_task(self, msg: CeleryOutbox) -> None:
-        options = deserialize_options(msg.options, self._app, msg.schema_version)
+                with sentry_sdk.start_span(op='celery_outbox.relay.send', name=msg.task_name) as span:
+                    span.set_data('messaging.message.id', msg.task_id)
+                    span.set_data('messaging.message.retry.count', msg.retries)
 
-        headers = options.pop('headers', {}) or {}
-        if msg.sentry_trace_id:
-            headers['sentry-trace'] = msg.sentry_trace_id
-        if msg.sentry_baggage:
-            headers['baggage'] = msg.sentry_baggage
+                    try:
+                        self._publisher.publish(msg)
+                    except Exception as exc:
+                        span.set_status('internal_error')
 
-        eta = options.pop('eta', None)
+                        if is_broker_outage(exc):
+                            deferred_due_to_outage.append(msg.id)
+                            breaker_opened = self._policy.record_outage(time.monotonic())
+                            if breaker_opened:
+                                remaining_messages = messages[index + 1 :]
+                                deferred_due_to_outage.extend(item.id for item in remaining_messages)
+                                _logger.warning(
+                                    'celery_outbox_relay_breaker_trip',
+                                    deferred_count=len(deferred_due_to_outage),
+                                    exception_type=type(exc).__name__,
+                                    exception_message=str(exc),
+                                )
+                                break
+                            continue
 
-        ctx = self._parse_structlog_context(msg.structlog_context)
+                        self._policy.record_success()
+                        exc_type = classify_exception(exc)
+                        log_kwargs = {
+                            'exception_type': exc_type,
+                            'exception_message': str(exc),
+                        }
 
-        with structlog.contextvars.bound_contextvars(**ctx):
-            Celery.send_task(
-                self._app,
-                name=msg.task_name,
-                args=msg.args,
-                kwargs=msg.kwargs,
-                task_id=msg.task_id,
-                eta=eta,
-                headers=headers,
-                **options,
-            )
+                        if should_log_traceback():
+                            _logger.error('celery_outbox_send_failed', **log_kwargs, exc_info=True)
+                        else:
+                            _logger.error('celery_outbox_send_failed', **log_kwargs)
+
+                        if msg.retries >= self._config.max_retries - 1:
+                            _logger.warning(
+                                'celery_outbox_max_retries_exceeded',
+                                exception_type=exc_type,
+                                exception_message=str(exc),
+                            )
+                            tags = get_task_tag(msg.task_name)
+                            tags['exception_type'] = exc_type
+                            metrics.increment('messages.exceeded', tags=tags)
+                            exceeded.append(msg)
+                        else:
+                            tags = get_task_tag(msg.task_name)
+                            tags['exception_type'] = exc_type
+                            metrics.increment('messages.failed', tags=tags)
+                            self._send_signal_safe(
+                                outbox_message_failed,
+                                msg.task_id,
+                                msg.task_name,
+                                retries=msg.retries,
+                            )
+                            failed.append((msg.id, msg.retries))
+                    else:
+                        span.set_status('ok')
+                        self._policy.record_success()
+                        latency_ms = (time.time() - msg.created_at.timestamp()) * 1000
+                        tags = get_task_tag(msg.task_name)
+                        metrics.timing('send_latency_ms', latency_ms, tags=tags)
+                        metrics.increment('messages.published', tags=tags)
+                        self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
+                        published.append(msg.id)
+
+        return published, failed, exceeded, deferred_due_to_outage, shutdown_aborted
 
     def _touch_liveness(self) -> None:
         if self._config.liveness_file is None:
@@ -304,71 +375,4 @@ class Relay:
                 task_id=task_id,
                 task_name=task_name,
                 exc_info=True,
-            )
-
-    @staticmethod
-    def _parse_structlog_context(raw: str | None) -> dict:
-        if not raw:
-            return {}
-
-        try:
-            return json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
-            return {}
-
-    def _update_failed(self, failed_messages: list[tuple[int, int]]) -> None:
-        if not failed_messages:
-            return
-
-        for msg_id, retries in failed_messages:
-            jitter = random.uniform(0, self._config.backoff_time * 0.1)  # noqa: S311
-            delay = timedelta(seconds=self._config.backoff_time * (2**retries) + jitter)
-            CeleryOutbox.objects.filter(pk=msg_id).update(
-                retries=F('retries') + 1,
-                updated_at=Now(),
-                retry_after=Now() + delay,
-            )
-
-    def _delete_done(self, message_ids: list[int]) -> None:
-        if not message_ids:
-            return
-
-        CeleryOutbox.objects.filter(pk__in=message_ids).delete()
-
-    def _move_to_dead_letter(self, exceeded_ids: list[int]) -> None:
-        if not exceeded_ids:
-            return
-
-        messages = CeleryOutbox.objects.filter(pk__in=exceeded_ids)
-        dead_letters = []
-        for msg in messages:
-            dead_letters.append(
-                CeleryOutboxDeadLetter(
-                    created_at=msg.created_at,
-                    retries=msg.retries,
-                    task_id=msg.task_id,
-                    task_name=msg.task_name,
-                    args=msg.args,
-                    kwargs=msg.kwargs,
-                    redacted_args=msg.redacted_args,
-                    redacted_kwargs=msg.redacted_kwargs,
-                    options=msg.options,
-                    sentry_trace_id=msg.sentry_trace_id,
-                    sentry_baggage=msg.sentry_baggage,
-                    structlog_context=msg.structlog_context,
-                    schema_version=msg.schema_version,
-                    failure_reason='max retries exceeded',
-                )
-            )
-
-        CeleryOutboxDeadLetter.objects.bulk_create(dead_letters)
-        CeleryOutbox.objects.filter(pk__in=exceeded_ids).delete()
-
-        for msg in messages:
-            self._send_signal_safe(
-                outbox_message_dead_lettered,
-                msg.task_id,
-                msg.task_name,
-                task_ids=[msg.task_id],
-                task_names=[msg.task_name],
             )

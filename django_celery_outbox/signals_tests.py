@@ -2,8 +2,10 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from celery import Celery
+from django.db import connections
 
 from django_celery_outbox.factories import CeleryOutboxFactory
+from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.relay import Relay, RelayConfig
 from django_celery_outbox.signals import (
     outbox_message_created,
@@ -20,8 +22,14 @@ def m_celery_app() -> MagicMock:
     return app
 
 
+def _enable_relay_for_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = connections[CeleryOutbox.objects.db]
+    monkeypatch.setattr(connection.features, 'has_select_for_update_skip_locked', True, raising=False)
+
+
 @pytest.fixture()
-def f_relay(m_celery_app: MagicMock) -> Relay:
+def f_relay(m_celery_app: MagicMock, monkeypatch: pytest.MonkeyPatch) -> Relay:
+    _enable_relay_for_sqlite(monkeypatch)
     config = RelayConfig.init(
         batch_size=10,
         idle_time=0.01,
@@ -71,7 +79,7 @@ def test_outbox_message_sent_fires_on_successful_relay(f_relay: Relay) -> None:
 
     outbox_message_sent.connect(handler)
     try:
-        with patch.object(f_relay, '_send_task'):
+        with patch.object(f_relay._publisher, 'publish'):
             f_relay._process_messages([msg])
     finally:
         outbox_message_sent.disconnect(handler)
@@ -97,7 +105,7 @@ def test_outbox_message_failed_fires_on_relay_failure(f_relay: Relay) -> None:
 
     outbox_message_failed.connect(handler)
     try:
-        with patch.object(f_relay, '_send_task', side_effect=RuntimeError('broker down')):
+        with patch.object(f_relay._publisher, 'publish', side_effect=RuntimeError('broker down')):
             f_relay._process_messages([msg])
     finally:
         outbox_message_failed.disconnect(handler)
@@ -128,7 +136,7 @@ def test_outbox_message_dead_lettered_fires_on_exceeded(m_celery_app: MagicMock)
 
     outbox_message_dead_lettered.connect(handler)
     try:
-        with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
             with patch('django_celery_outbox.relay._relay.time.sleep'):
                 with patch('django_celery_outbox.relay._relay.close_old_connections'):
                     relay._processing()
@@ -156,12 +164,98 @@ def test_outbox_message_failed_not_fired_when_max_retries_exceeded(f_relay: Rela
 
     outbox_message_failed.connect(handler)
     try:
-        with patch.object(f_relay, '_send_task', side_effect=RuntimeError('fail')):
+        with patch.object(f_relay._publisher, 'publish', side_effect=RuntimeError('fail')):
             f_relay._process_messages([msg])
     finally:
         outbox_message_failed.disconnect(handler)
 
     assert len(received) == 0
+
+
+@pytest.mark.django_db
+def test_outbox_message_failed_not_fired_on_broker_outage_deferral(f_relay: Relay) -> None:
+    msg1 = CeleryOutboxFactory.create(
+        task_id='outage-signal-1',
+        task_name='some.task',
+        options={},
+        retries=0,
+    )
+    msg2 = CeleryOutboxFactory.create(
+        task_id='outage-signal-2',
+        task_name='some.task',
+        options={},
+        retries=0,
+    )
+
+    received = []
+
+    def handler(sender: type, **kwargs: object) -> None:
+        received.append(kwargs)
+
+    outbox_message_failed.connect(handler)
+    try:
+        with patch.object(
+            f_relay._publisher,
+            'publish',
+            side_effect=[TimeoutError('timed out'), TimeoutError('timed out again')],
+        ):
+            f_relay._process_messages([msg1, msg2])
+    finally:
+        outbox_message_failed.disconnect(handler)
+
+    assert received == []
+
+
+@pytest.mark.django_db
+def test_shutdown_deadline_aborted_rows_emit_no_relay_signals(f_relay: Relay) -> None:
+    CeleryOutboxFactory.create(
+        task_id='shutdown-signal-1',
+        task_name='some.task',
+        options={},
+        retries=0,
+    )
+    CeleryOutboxFactory.create(
+        task_id='shutdown-signal-2',
+        task_name='some.task',
+        options={},
+        retries=0,
+    )
+
+    sent_received = []
+    failed_received = []
+    dead_lettered_received = []
+
+    def sent_handler(sender: type, **kwargs: object) -> None:
+        sent_received.append(kwargs)
+
+    def failed_handler(sender: type, **kwargs: object) -> None:
+        failed_received.append(kwargs)
+
+    def dead_lettered_handler(sender: type, **kwargs: object) -> None:
+        dead_lettered_received.append(kwargs)
+
+    f_relay._policy.begin_shutdown(now_monotonic=0.0)
+
+    outbox_message_sent.connect(sent_handler)
+    outbox_message_failed.connect(failed_handler)
+    outbox_message_dead_lettered.connect(dead_lettered_handler)
+    try:
+        with patch.object(f_relay._publisher, 'publish'):
+            with patch(
+                'django_celery_outbox.relay._relay.time.monotonic',
+                side_effect=[0.0, 0.0, 0.0, 31.0, 31.0],
+            ):
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    with patch('django_celery_outbox.relay._relay.time.sleep'):
+                        f_relay._processing()
+    finally:
+        outbox_message_sent.disconnect(sent_handler)
+        outbox_message_failed.disconnect(failed_handler)
+        outbox_message_dead_lettered.disconnect(dead_lettered_handler)
+
+    assert [item['task_id'] for item in sent_received] == ['shutdown-signal-1']
+    assert failed_received == []
+    assert dead_lettered_received == []
 
 
 @pytest.mark.django_db
@@ -180,7 +274,7 @@ def test_outbox_message_sent_not_fired_on_failure(f_relay: Relay) -> None:
 
     outbox_message_sent.connect(handler)
     try:
-        with patch.object(f_relay, '_send_task', side_effect=RuntimeError('fail')):
+        with patch.object(f_relay._publisher, 'publish', side_effect=RuntimeError('fail')):
             f_relay._process_messages([msg])
     finally:
         outbox_message_sent.disconnect(handler)

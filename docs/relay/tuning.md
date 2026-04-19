@@ -30,21 +30,28 @@ How long to sleep when the queue is empty.
 
 ## Backoff Time
 
-Base seconds for exponential backoff on failed messages.
+Base seconds for exponential backoff on ordinary publish failures.
 
-Formula: `delay = backoff_time * 2^retries + jitter`
+Formula: `delay = min(backoff_time * 2^retries + jitter, max_backoff)`
 
-| Retries | Delay (5s base) |
-|---------|-----------------|
-| 0 | 5s |
-| 1 | 10s |
-| 2 | 20s |
-| 3 | 40s |
-| 4 | 80s |
+With the defaults, `backoff_time=120`, jitter is up to 10% of `backoff_time`, and
+`max_backoff=3600.0`.
+
+| Retries | Delay range (120s base) |
+|---------|--------------------------|
+| 0 | 120-132s |
+| 1 | 240-252s |
+| 2 | 480-492s |
+| 3 | 960-972s |
+| 4 | 1920-1932s |
 
 ```bash
---backoff-time 5.0
+--backoff-time 120
+--max-backoff 3600.0
 ```
+
+If you raise `--max-retries` above the default, later failures still cap at `--max-backoff`
+instead of growing without bound.
 
 ## Max Retries
 
@@ -53,6 +60,43 @@ After this many failures, the message moves to dead letter.
 ```bash
 --max-retries 5
 ```
+
+## Broker Outage Cooldown
+
+`--broker-outage-cooldown` is separate from retry backoff.
+
+- It applies only when the relay classifies the failure as a broker outage.
+- The relay defers the already-selected rows for the cooldown window.
+- It does not increment `retries`.
+- It does not consume retry budget from `--max-retries`.
+- The breaker is process-local, so each relay process tracks its own cooldown.
+
+```bash
+--broker-outage-cooldown 30.0
+```
+
+## Stale Timeout
+
+`--stale-timeout-seconds` controls when rows stamped as in-flight become reclaimable again.
+The default is `300` seconds.
+
+This is recovery logic, not normal retry logic:
+
+- It is used for rows that were selected but never completed because a relay crashed or was interrupted.
+- It is how selected-but-not-yet-started rows become visible again after shutdown deadline aborts.
+- It does not change `retries` on its own.
+
+```bash
+--stale-timeout-seconds 300
+```
+
+## Send Timeout and Shutdown Timeout
+
+`--send-timeout` bounds a single `Celery.send_task()` publish attempt. `--shutdown-timeout`
+controls how long the relay may keep starting additional sends after `SIGTERM` or `SIGINT`.
+
+Pick `--shutdown-timeout` to cover a healthy drain window, and size `--send-timeout` to the
+slowest broker publish you still consider healthy.
 
 ## Monitoring Metrics
 

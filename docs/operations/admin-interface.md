@@ -33,6 +33,13 @@ Available filters: `task_name`, `retries`, `schema_version`
 
 Search fields: `task_id`, `task_name`
 
+The changelist also shows an outbox summary panel with:
+
+- total outbox rows
+- pending rows (`updated_at IS NULL`)
+- failed rows (`retries > 0`)
+- age of the oldest pending row
+
 Bulk action:
 
 - `reset_retries` resets `retries`, `retry_after`, and `updated_at` for the selected rows.
@@ -57,7 +64,7 @@ Search fields: `task_id`, `task_name`, `failure_reason`
 
 Bulk action:
 
-- `retry_selected` copies the selected dead-letter rows back into `celery_outbox` for another send attempt and removes them from the dead-letter table.
+- `retry_selected` copies the selected dead-letter rows back into `celery_outbox` for another send attempt, preserves stored payload/schema/context fields, and removes them from the dead-letter table.
 
 ## Read-Only Record Views
 
@@ -66,5 +73,7 @@ The admin does not allow add/change/delete from object detail pages. That is del
 - Duplicate task execution
 - Lost tasks
 - Inconsistent state
+
+Detail pages still expose inspection payloads through the read-only `args` / `kwargs` views, which prefer redacted inspection copies when available.
 
 Operational changes are exposed only through the dedicated bulk actions above.

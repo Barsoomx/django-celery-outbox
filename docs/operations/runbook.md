@@ -15,6 +15,8 @@ Use these tables as a reference while following any playbook.
 | mtime of `--liveness-file` | within your configured freshness threshold            | older → relay stalled or dead → [Relay hanging](#relay-hanging) |
 
 See [Health Checks](health-checks.md) for the `--liveness-file` flag details.
+Size that freshness threshold to cover healthy idle gaps and broker-outage cooldown windows, not
+just steady-state queue drain.
 
 ### `celery_outbox_stats` snapshot
 
@@ -25,6 +27,7 @@ See [Health Checks](health-checks.md) for the `--liveness-file` flag details.
 | `queue_depth`             | rows in `celery_outbox` awaiting send             | trending up → [Queue growing](#queue-growing)        |
 | `oldest_pending_seconds`  | age of the oldest pending row (delivery latency)  | above your SLO → [Queue growing](#queue-growing)     |
 | `dlq_count`               | rows in `celery_outbox_dead_letter`               | delta from baseline → [Dead-letter queue growing](#dead-letter-queue-growing) |
+| `top_failing`             | current outbox task groups with the highest cumulative retry counts | one task dominating retries → [Queue growing](#queue-growing) or [Dead-letter queue growing](#dead-letter-queue-growing) |
 
 ### Metrics for graphing and alerting
 
@@ -43,6 +46,9 @@ Full catalogue: [Metrics](../observability/metrics.md).
 
 - `celery_outbox_relay_started`
 - `celery_outbox_batch_processed` — absence during steady send is a stall signal
+- `celery_outbox_relay_breaker_trip`
+- `celery_outbox_relay_breaker_open`
+- `celery_outbox_relay_shutdown_deadline_exceeded`
 - `celery_outbox_send_failed`
 - `celery_outbox_max_retries_exceeded`
 
@@ -81,11 +87,39 @@ Full catalogue: [Logging Events](../observability/logging-events.md).
 **Fix** (by triage result):
 
 - Relay is down → follow [Relay hanging](#relay-hanging).
-- Broker unreachable → operations-side issue on the broker. The relay will catch up on its next poll once the broker returns.
+- Broker unreachable → follow [Broker unreachable / outage cooldown active](#broker-unreachable-outage-cooldown-active).
 - One task dominates → fix the producing code, or add the task name to `CELERY_OUTBOX_EXCLUDE_TASKS` temporarily if the library is not a fit for that workload.
 - Legitimate throughput → scale relay replicas and/or increase `batch_size`. See [Relay Tuning](../relay/tuning.md).
 
 **Verify.** `celery_outbox_oldest_pending_age_seconds` trending down; `celery_outbox_queue_depth` draining.
+
+### Broker unreachable / outage cooldown active
+
+**Detect.** Any of:
+
+- `celery_outbox_relay_breaker_trip` in the relay log.
+- Repeated `celery_outbox_relay_breaker_open` while queue depth is flat or rising.
+- Broker ping from the relay container fails.
+
+**Triage:**
+
+1. **Confirm the relay is still alive.** Check the `--liveness-file` mtime using a freshness threshold sized per [Health Checks](health-checks.md).
+2. **Confirm the broker outage.** From inside the relay container, run `celery -A <your_celery_app> inspect ping` or the broker's equivalent connectivity check.
+3. **Check whether retries are climbing.** Broker-outage deferral should not increment `retries` or consume retry budget.
+4. **Look for scope.** Is this one relay process, one AZ, or the whole broker fleet? The breaker is process-local, so different relay pods may trip independently.
+
+**Fix:**
+
+- Restore broker connectivity, authentication, or network reachability.
+- Leave the selected outbox rows alone. The relay already deferred them by `--broker-outage-cooldown`.
+- Do not interpret one cooldown window without queue drain as a dead relay if the liveness file is still fresh.
+- Once the broker recovers, the relay resumes on the next eligible batch attempt after the cooldown expires.
+
+**Verify.**
+
+- `celery_outbox_relay_breaker_open` stops repeating.
+- `celery_outbox_batch_processed` resumes showing normal publish counts.
+- `celery_outbox_queue_depth` and `celery_outbox_oldest_pending_age_seconds` trend down.
 
 ### Dead-letter queue growing
 
@@ -123,12 +157,12 @@ The first three are visible in the Django admin ([Admin Interface](admin-interfa
 
 - Liveness probe failing (pod restart loop).
 - `--liveness-file` mtime older than your configured freshness threshold.
-- `celery_outbox_batch_processed` log event absent from the relay log.
+- `celery_outbox_batch_processed` log event absent from the relay log, without matching breaker-open cooldown logs.
 - `celery_outbox_queue_depth` flat but non-zero while the application is still producing.
 
 **Triage:**
 
-1. **Last log event and its timestamp** from the relay pod — tells you where execution stalled.
+1. **Last log event and its timestamp** from the relay pod — tells you where execution stalled. If the last events are `celery_outbox_relay_breaker_trip` or `celery_outbox_relay_breaker_open`, switch to [Broker unreachable / outage cooldown active](#broker-unreachable-outage-cooldown-active).
 2. **DB lock contention:**
 
     PostgreSQL:
@@ -147,13 +181,13 @@ The first three are visible in the Django admin ([Admin Interface](admin-interfa
 
     If `performance_schema.data_locks` is not enabled in your MySQL deployment, use your platform's lock-wait tooling instead.
 
-3. **Broker send-ack blocking** — is the relay waiting on network I/O to the broker? Inspect the pod's network state (`ss -tnp`, or platform equivalent) from inside the container.
+3. **Broker send blocking** — is the relay waiting on network I/O to the broker? Inspect the pod's network state (`ss -tnp`, or platform equivalent) from inside the container. A healthy relay should still bound each publish by `--send-timeout`; repeated breaker logs point to outage handling rather than a Python hang.
 4. **Multiple-replica lock contention** — see the note in [Troubleshooting › Database Lock Contention](../troubleshooting.md#database-lock-contention).
 
 **Fix:**
 
 - Lock contention across multiple relay replicas → reduce replica count or `batch_size`. See [Relay Tuning](../relay/tuning.md).
-- Broker-blocked → broker recovery; the relay resumes on its next poll.
+- Broker-blocked with breaker logs → follow [Broker unreachable / outage cooldown active](#broker-unreachable-outage-cooldown-active).
 - Python-level hang → restart the pod. If recurring, capture a stack trace next time with `py-spy dump --pid <pid>` so it can be diagnosed.
 
 **Verify.** Liveness file is being touched again; `celery_outbox_batch_processed` log events resumed.
@@ -164,8 +198,8 @@ The first three are visible in the Django admin ([Admin Interface](admin-interfa
 
 1. **The relay must never run against a schema it does not understand.** `migrate` runs *before* new relay pods start.
 2. **Migrations should be additive when possible** — add columns, add tables, add indexes. Additive changes let old and new relay versions coexist during a rolling update. For destructive changes (drop column, change type, rename), use the two-release dance: the first release stops using the field, the second release removes it. Do not collapse this into a single release.
-3. **SIGTERM must reach the relay.** The relay's graceful-shutdown path drains the current batch and exits cleanly. Whatever platform runs the relay must deliver SIGTERM and wait — not SIGKILL.
-4. **Grace period ≥ one batch duration + margin.** If the orchestrator kills the relay mid-batch, the at-least-once delivery guarantee still holds, but operators see spurious restarts and redelivered messages.
+3. **SIGTERM must reach the relay.** `SIGTERM`/`SIGINT` starts draining mode. The relay stops starting new sends after `--shutdown-timeout`, but an already-running publish is still bounded by `--send-timeout`. Whatever platform runs the relay must deliver SIGTERM and wait — not SIGKILL.
+4. **Grace period ≥ `--shutdown-timeout + --send-timeout` + margin.** If the orchestrator kills the relay earlier, already-selected rows recover later through stale-timeout reclaim, but operators can see spurious restarts and duplicate delivery.
 
 ### Kubernetes worked example
 
@@ -208,7 +242,7 @@ spec:
       maxSurge: 1
   template:
     spec:
-      terminationGracePeriodSeconds: 120   # ≥ one batch + margin
+      terminationGracePeriodSeconds: 120   # ≥ shutdown_timeout + send_timeout + margin
       containers:
         - name: relay
           image: myapp:{{ .Values.image.tag }}

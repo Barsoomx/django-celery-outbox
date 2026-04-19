@@ -46,7 +46,7 @@ def f_relay(f_relay_app: Celery) -> Relay:
 
 @pytest.fixture()
 def m_celery_send() -> Generator[MagicMock]:
-    with patch('django_celery_outbox.relay._relay.Celery.send_task') as mock:
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task') as mock:
         yield mock
 
 
@@ -321,7 +321,7 @@ def test_e2e_processing_deletes_published_message(
 
 
 @pytest.mark.django_db
-def test_e2e_failed_delivery_increments_retries(
+def test_e2e_broker_outage_defers_message_without_incrementing_retries(
     f_outbox_app: OutboxCelery,
     f_relay: Relay,
     m_celery_send: MagicMock,
@@ -334,7 +334,7 @@ def test_e2e_failed_delivery_increments_retries(
     f_relay._processing()
 
     msg = CeleryOutbox.objects.get()
-    assert msg.retries == 1
+    assert msg.retries == 0
     assert msg.retry_after is not None
 
 

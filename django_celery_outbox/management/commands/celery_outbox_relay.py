@@ -35,6 +35,26 @@ class Command(BaseCommand):
             default=300,
         )
         parser.add_argument(
+            '--send-timeout',
+            type=float,
+            default=10.0,
+        )
+        parser.add_argument(
+            '--shutdown-timeout',
+            type=float,
+            default=30.0,
+        )
+        parser.add_argument(
+            '--broker-outage-cooldown',
+            type=float,
+            default=30.0,
+        )
+        parser.add_argument(
+            '--max-backoff',
+            type=float,
+            default=3600.0,
+        )
+        parser.add_argument(
             '--liveness-file',
             type=str,
             default=None,

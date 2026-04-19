@@ -37,9 +37,11 @@ Instead of sending tasks directly to the broker, we write them to a database tab
 
 ## Delivery Guarantees
 
-**At-least-once delivery**: Once the transaction commits, the task will eventually be delivered to the broker. If the relay crashes, it will retry on next startup.
+**Durable recovery for committed rows**: Once the transaction commits, the outbox row stays available for relay retry or recovery until it is published or moved to dead letter.
 
-**No duplicate prevention**: The same task may be delivered multiple times if the relay crashes after sending but before deleting from the outbox. Your tasks should be idempotent.
+**Duplicate delivery is possible**: If the relay crashes after publishing to the broker but before cleaning up the outbox row, stale-timeout recovery can reclaim and resend it. Your tasks should be idempotent.
+
+**Broker-confirm caveat**: Successful return from `Celery.send_task()` is not the same thing as a broker acknowledgement. Without publisher confirms, the relay can still lose a message after deleting the outbox row.
 
 ## Components
 

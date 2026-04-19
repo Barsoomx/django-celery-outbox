@@ -1,0 +1,232 @@
+from datetime import timedelta
+from unittest.mock import MagicMock, patch
+
+import pytest
+from django.utils import timezone
+
+from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.relay import Relay, RelayConfig
+from django_celery_outbox.relay._mutations import RelayMutations
+
+
+@pytest.mark.django_db
+def test_update_failed_increments_retries_and_sets_retry_after() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+    msg = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=1,
+        updated_at=None,
+    )
+
+    with patch('django_celery_outbox.relay._mutations.random.uniform', return_value=0):
+        mutations.update_failed([(msg.id, 1)])
+
+    msg.refresh_from_db()
+    assert msg.retries == 2
+    assert msg.updated_at is not None
+    assert msg.retry_after is not None
+    retry_delay = msg.retry_after - msg.updated_at
+    assert abs(retry_delay - timedelta(seconds=240)) < timedelta(seconds=1)
+
+
+@pytest.mark.django_db
+def test_update_failed_noops_for_empty_list() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+    msg = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=3,
+        updated_at=None,
+        retry_after=None,
+    )
+    created_at = msg.created_at
+
+    mutations.update_failed([])
+
+    msg.refresh_from_db()
+    assert msg.created_at == created_at
+    assert msg.retries == 3
+    assert msg.updated_at is None
+    assert msg.retry_after is None
+
+
+@pytest.mark.django_db
+def test_update_failed_applies_per_message_jitter_for_same_retry_count() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+    msg1 = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=0,
+        updated_at=None,
+    )
+    msg2 = CeleryOutbox.objects.create(
+        task_id='task-2',
+        task_name='some.task',
+        retries=0,
+        updated_at=None,
+    )
+
+    with patch('django_celery_outbox.relay._mutations.random.uniform', side_effect=[0, 12]):
+        mutations.update_failed([(msg1.id, 0), (msg2.id, 0)])
+
+    msg1.refresh_from_db()
+    msg2.refresh_from_db()
+
+    assert msg1.retries == 1
+    assert msg2.retries == 1
+    assert msg1.retry_after is not None
+    assert msg2.retry_after is not None
+    assert msg2.retry_after > msg1.retry_after + timedelta(seconds=11)
+
+
+@pytest.mark.django_db
+def test_update_failed_caps_retry_after_at_max_backoff() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=300.0)
+    msg = CeleryOutbox.objects.create(
+        task_id='task-capped',
+        task_name='some.task',
+        retries=3,
+        updated_at=None,
+    )
+
+    with patch('django_celery_outbox.relay._mutations.random.uniform', return_value=12):
+        mutations.update_failed([(msg.id, 3)])
+
+    msg.refresh_from_db()
+    assert msg.retry_after is not None
+    assert msg.updated_at is not None
+    retry_delay = msg.retry_after - msg.updated_at
+    assert abs(retry_delay - timedelta(seconds=300)) < timedelta(seconds=1)
+
+
+@pytest.mark.django_db
+def test_defer_due_to_outage_sets_retry_after_without_incrementing_retries() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+    msg = CeleryOutbox.objects.create(
+        task_id='task-outage',
+        task_name='some.task',
+        retries=2,
+        updated_at=None,
+        retry_after=None,
+    )
+
+    mutations.defer_due_to_outage([msg.id], cooldown_seconds=30.0)
+
+    msg.refresh_from_db()
+    assert msg.retries == 2
+    assert msg.updated_at is not None
+    assert msg.retry_after is not None
+    retry_delay = msg.retry_after - msg.updated_at
+    assert abs(retry_delay - timedelta(seconds=30)) < timedelta(seconds=1)
+
+
+@pytest.mark.django_db
+def test_defer_due_to_outage_noops_for_empty_list() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+    msg = CeleryOutbox.objects.create(
+        task_id='task-1',
+        task_name='some.task',
+        retries=1,
+        retry_after=None,
+    )
+
+    mutations.defer_due_to_outage([], cooldown_seconds=30.0)
+
+    msg.refresh_from_db()
+    assert msg.retries == 1
+    assert msg.retry_after is None
+
+
+def test_relay_passes_max_backoff_to_mutations() -> None:
+    app = MagicMock()
+    config = RelayConfig.init(
+        backoff_time=120,
+        max_backoff=4321.5,
+        max_retries=3,
+    )
+    m_connection = MagicMock()
+    m_connection.features.has_select_for_update_skip_locked = True
+
+    with patch('django_celery_outbox.relay._relay.connections', {'default': m_connection}):
+        with patch('django_celery_outbox.relay._relay.CeleryOutbox') as m_model:
+            with patch('django_celery_outbox.relay._relay.RelayMutations') as m_mutations_cls:
+                m_model.objects.db = 'default'
+                Relay(app=app, config=config)
+
+    m_mutations_cls.assert_called_once_with(
+        backoff_time=config.backoff_time,
+        max_backoff=config.max_backoff,
+    )
+
+
+@pytest.mark.django_db
+def test_delete_published_removes_only_requested_rows() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+    msg1 = CeleryOutbox.objects.create(task_id='task-1', task_name='some.task')
+    msg2 = CeleryOutbox.objects.create(task_id='task-2', task_name='some.task')
+
+    mutations.delete_published([msg1.id])
+
+    assert not CeleryOutbox.objects.filter(pk=msg1.id).exists()
+    assert CeleryOutbox.objects.filter(pk=msg2.id).exists()
+
+
+@pytest.mark.django_db
+def test_delete_published_noops_for_empty_list() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+    msg = CeleryOutbox.objects.create(task_id='task-1', task_name='some.task')
+
+    mutations.delete_published([])
+
+    assert CeleryOutbox.objects.filter(pk=msg.id).exists()
+
+
+@pytest.mark.django_db
+def test_move_exceeded_to_dead_letter_preserves_message_fields() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+    created_at = timezone.now().replace(microsecond=0) - timedelta(hours=1)
+    msg = CeleryOutbox.objects.create(
+        task_id='task-dead',
+        task_name='some.task',
+        args=[1],
+        kwargs={'a': 1},
+        redacted_args=['x'],
+        redacted_kwargs={'a': 'x'},
+        options={'priority': 9},
+        retries=5,
+        schema_version=2,
+        sentry_trace_id='trace',
+        sentry_baggage='baggage',
+        structlog_context='{"request_id": "req-1"}',
+    )
+    CeleryOutbox.objects.filter(pk=msg.pk).update(created_at=created_at)
+    msg.refresh_from_db()
+
+    mutations.move_exceeded_to_dead_letter([msg])
+
+    dead = CeleryOutboxDeadLetter.objects.get(task_id='task-dead')
+    assert dead.created_at == created_at
+    assert dead.retries == 5
+    assert dead.task_id == 'task-dead'
+    assert dead.task_name == 'some.task'
+    assert dead.args == [1]
+    assert dead.kwargs == {'a': 1}
+    assert dead.redacted_args == ['x']
+    assert dead.redacted_kwargs == {'a': 'x'}
+    assert dead.options == {'priority': 9}
+    assert dead.sentry_trace_id == 'trace'
+    assert dead.sentry_baggage == 'baggage'
+    assert dead.structlog_context == '{"request_id": "req-1"}'
+    assert dead.schema_version == 2
+    assert dead.failure_reason == 'max retries exceeded'
+    assert not CeleryOutbox.objects.filter(pk=msg.id).exists()
+
+
+@pytest.mark.django_db
+def test_move_exceeded_to_dead_letter_noops_for_empty_list() -> None:
+    mutations = RelayMutations(backoff_time=120, max_backoff=3600.0)
+
+    mutations.move_exceeded_to_dead_letter([])
+
+    assert CeleryOutboxDeadLetter.objects.count() == 0

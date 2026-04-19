@@ -10,9 +10,10 @@ Transactional Outbox pattern for Celery tasks in Django.
 
 ## Features
 
-- At-least-once delivery guarantee
-- Automatic retry with exponential backoff
-- Dead letter queue for failed messages
+- Durable persistence for committed task intents
+- Duplicate-tolerant relay recovery
+- Automatic retry with capped exponential backoff
+- Dead letter queue for exhausted retries
 - Structlog & Sentry trace propagation
 - StatsD metrics
 - Django admin integration
@@ -30,6 +31,7 @@ CELERY_OUTBOX_APP = 'myproject.celery.app'
 
 # celery.py
 from django_celery_outbox import OutboxCelery
+
 app = OutboxCelery('myproject')
 ```
 
@@ -38,6 +40,12 @@ python manage.py migrate
 python manage.py check
 python manage.py celery_outbox_relay
 ```
+
+Committed rows stay in the outbox until the relay publishes them or dead-letters them, but
+consumers still need to be idempotent. If the relay crashes after a broker publish and before
+cleanup, stale-timeout recovery can reclaim and resend the row. Stronger end-to-end guarantees
+still depend on broker confirms; without publisher confirms, the broker can fail ambiguously
+after `Celery.send_task()` returns.
 
 **[Full Documentation →](https://barsoomx.github.io/django-celery-outbox/)**
 

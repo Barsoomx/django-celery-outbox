@@ -1,10 +1,12 @@
-import json
+import math
+import signal
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
 import pytest
 from celery import Celery
 from django.core.exceptions import ImproperlyConfigured
+from django.db import connections
 from django.test import override_settings
 from django.utils import timezone as django_timezone
 
@@ -12,6 +14,8 @@ from django_celery_outbox.factories import CeleryOutboxFactory
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 from django_celery_outbox.relay import Relay, RelayConfig
 from django_celery_outbox.relay._message_selector import MessageSelector
+from django_celery_outbox.relay._mutations import RelayMutations
+from django_celery_outbox.relay._publisher import RelayPublisher
 
 
 @pytest.fixture()
@@ -46,6 +50,11 @@ def f_message_selector() -> MessageSelector:
 @pytest.fixture()
 def f_relay(m_celery_app: MagicMock, f_config: RelayConfig) -> Relay:
     return Relay(app=m_celery_app, config=f_config)
+
+
+def _enable_relay_for_sqlite(monkeypatch: pytest.MonkeyPatch) -> None:
+    connection = connections[CeleryOutbox.objects.db]
+    monkeypatch.setattr(connection.features, 'has_select_for_update_skip_locked', True, raising=False)
 
 
 @pytest.mark.django_db
@@ -153,12 +162,14 @@ def test_process_messages_success(f_relay: Relay) -> None:
         retries=0,
     )
 
-    with patch.object(f_relay, '_send_task'):
-        published, failed, exceeded = f_relay._process_messages([msg])
+    with patch.object(f_relay._publisher, 'publish'):
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = f_relay._process_messages([msg])
 
     assert published == [msg.id]
     assert failed == []
     assert exceeded == []
+    assert deferred_due_to_outage == []
+    assert shutdown_aborted == []
 
 
 @pytest.mark.django_db
@@ -169,12 +180,14 @@ def test_process_messages_send_failure(f_relay: Relay) -> None:
         retries=0,
     )
 
-    with patch.object(f_relay, '_send_task', side_effect=RuntimeError('broker down')):
-        published, failed, exceeded = f_relay._process_messages([msg])
+    with patch.object(f_relay._publisher, 'publish', side_effect=RuntimeError('broker down')):
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = f_relay._process_messages([msg])
 
     assert published == []
     assert failed == [(msg.id, 0)]
     assert exceeded == []
+    assert deferred_due_to_outage == []
+    assert shutdown_aborted == []
 
 
 @pytest.mark.django_db
@@ -185,13 +198,15 @@ def test_process_messages_max_retries_exceeded(f_relay: Relay) -> None:
         retries=3,
     )
 
-    with patch.object(f_relay, '_send_task') as m_send:
-        published, failed, exceeded = f_relay._process_messages([msg])
+    with patch.object(f_relay._publisher, 'publish') as m_publish:
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = f_relay._process_messages([msg])
 
     assert published == []
     assert failed == []
-    assert exceeded == [msg.id]
-    m_send.assert_not_called()
+    assert [message.id for message in exceeded] == [msg.id]
+    assert deferred_due_to_outage == []
+    assert shutdown_aborted == []
+    m_publish.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -202,156 +217,14 @@ def test_process_messages_failure_at_max_retries(f_relay: Relay) -> None:
         retries=2,
     )
 
-    with patch.object(f_relay, '_send_task', side_effect=RuntimeError('fail')):
-        published, failed, exceeded = f_relay._process_messages([msg])
+    with patch.object(f_relay._publisher, 'publish', side_effect=RuntimeError('fail')):
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = f_relay._process_messages([msg])
 
     assert published == []
     assert failed == []
-    assert exceeded == [msg.id]
-
-
-@pytest.mark.django_db
-def test_send_task_calls_celery(m_celery_app: MagicMock) -> None:
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=3))
-    msg = CeleryOutbox.objects.create(
-        task_id='abc-123',
-        task_name='myapp.tasks.do_stuff',
-        args=[1, 2],
-        kwargs={'key': 'val'},
-        options={},
-        sentry_trace_id='trace-id-1',
-        sentry_baggage='baggage-1',
-    )
-
-    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
-        relay._send_task(msg)
-
-    m_send.assert_called_once()
-    _, kwargs = m_send.call_args
-    assert kwargs['name'] == 'myapp.tasks.do_stuff'
-    assert kwargs['args'] == [1, 2]
-    assert kwargs['kwargs'] == {'key': 'val'}
-    assert kwargs['task_id'] == 'abc-123'
-    assert kwargs['headers']['sentry-trace'] == 'trace-id-1'
-    assert kwargs['headers']['baggage'] == 'baggage-1'
-
-
-@pytest.mark.django_db
-def test_send_task_with_eta(m_celery_app: MagicMock) -> None:
-    eta_dt = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=3))
-    msg = CeleryOutbox.objects.create(
-        task_id='abc-456',
-        task_name='myapp.tasks.delayed',
-        options={'eta': eta_dt.isoformat()},
-    )
-
-    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
-        relay._send_task(msg)
-
-    _, kwargs = m_send.call_args
-    assert kwargs['eta'] == eta_dt
-
-
-@pytest.mark.django_db
-def test_send_task_restores_structlog_context(m_celery_app: MagicMock) -> None:
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=3))
-    msg = CeleryOutbox.objects.create(
-        task_id='abc-789',
-        task_name='myapp.tasks.ctx',
-        options={},
-        structlog_context=json.dumps({'request_id': 'req-1'}),
-    )
-
-    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
-        with patch('django_celery_outbox.relay._relay.structlog.contextvars.bound_contextvars') as m_bound:
-            relay._send_task(msg)
-
-    m_bound.assert_called_once_with(request_id='req-1')
-
-
-def test_parse_structlog_context_valid_json() -> None:
-    result = Relay._parse_structlog_context('{"k": "v"}')
-
-    assert result == {'k': 'v'}
-
-
-def test_parse_structlog_context_empty_string() -> None:
-    result = Relay._parse_structlog_context('')
-
-    assert result == {}
-
-
-def test_parse_structlog_context_none() -> None:
-    result = Relay._parse_structlog_context(None)
-
-    assert result == {}
-
-
-def test_parse_structlog_context_invalid_json() -> None:
-    result = Relay._parse_structlog_context('invalid')
-
-    assert result == {}
-
-
-@pytest.mark.django_db
-def test_update_failed_increments_retries(f_relay: Relay) -> None:
-    msg = CeleryOutbox.objects.create(
-        task_id='task-1',
-        task_name='some.task',
-        retries=1,
-        updated_at=None,
-    )
-
-    f_relay._update_failed([(msg.id, 1)])
-
-    msg.refresh_from_db()
-    assert msg.retries == 2
-    assert msg.updated_at is not None
-    assert msg.retry_after is not None
-
-
-@pytest.mark.django_db
-def test_update_failed_empty_list(f_relay: Relay) -> None:
-    msg = CeleryOutbox.objects.create(
-        task_id='task-1',
-        task_name='some.task',
-        retries=0,
-    )
-
-    f_relay._update_failed([])
-
-    msg.refresh_from_db()
-    assert msg.retries == 0
-
-
-@pytest.mark.django_db
-def test_delete_done_removes_records(f_relay: Relay) -> None:
-    msg1 = CeleryOutbox.objects.create(
-        task_id='task-1',
-        task_name='some.task',
-    )
-    msg2 = CeleryOutbox.objects.create(
-        task_id='task-2',
-        task_name='some.task',
-    )
-
-    f_relay._delete_done([msg1.id])
-
-    assert not CeleryOutbox.objects.filter(pk=msg1.id).exists()
-    assert CeleryOutbox.objects.filter(pk=msg2.id).exists()
-
-
-@pytest.mark.django_db
-def test_delete_done_empty_list(f_relay: Relay) -> None:
-    msg = CeleryOutbox.objects.create(
-        task_id='task-1',
-        task_name='some.task',
-    )
-
-    f_relay._delete_done([])
-
-    assert CeleryOutbox.objects.filter(pk=msg.id).exists()
+    assert [message.id for message in exceeded] == [msg.id]
+    assert deferred_due_to_outage == []
+    assert shutdown_aborted == []
 
 
 @pytest.mark.django_db
@@ -374,7 +247,7 @@ def test_processing_full_cycle(m_celery_app: MagicMock) -> None:
         retries=3,
     )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
         with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
@@ -402,7 +275,7 @@ def test_processing_no_sleep_when_batch_full(m_celery_app: MagicMock) -> None:
             retries=0,
         )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
         with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
@@ -424,7 +297,7 @@ def test_processing_failed_messages_retained(m_celery_app: MagicMock) -> None:
         retries=0,
     )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task', side_effect=RuntimeError('fail')):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task', side_effect=RuntimeError('fail')):
         with patch('django_celery_outbox.relay._relay.time.sleep'):
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
@@ -436,51 +309,434 @@ def test_processing_failed_messages_retained(m_celery_app: MagicMock) -> None:
 
 
 @pytest.mark.django_db
-def test_send_task_without_sentry_context(m_celery_app: MagicMock) -> None:
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=3))
-    msg = CeleryOutbox.objects.create(
-        task_id='abc-no-sentry',
-        task_name='myapp.tasks.no_sentry',
-        args=[],
-        kwargs={},
-        options={},
-        sentry_trace_id=None,
-        sentry_baggage=None,
+def test_processing_defers_broker_outages_without_consuming_retries(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            batch_size=10,
+            idle_time=0,
+            backoff_time=120,
+            max_retries=5,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
     )
+    msg1 = CeleryOutbox.objects.create(task_id='outage-1', task_name='some.task', retries=0, options={})
+    msg2 = CeleryOutbox.objects.create(task_id='outage-2', task_name='some.task', retries=0, options={})
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
-        relay._send_task(msg)
+    with patch.object(
+        relay._publisher,
+        'publish',
+        side_effect=[TimeoutError('timed out'), TimeoutError('timed out again')],
+    ):
+        with patch('django_celery_outbox.relay._relay.close_old_connections'):
+            with patch('django_celery_outbox.relay._relay.time.sleep'):
+                relay._processing()
 
-    _, kwargs = m_send.call_args
-    assert 'sentry-trace' not in kwargs['headers']
-    assert 'baggage' not in kwargs['headers']
+    msg1.refresh_from_db()
+    msg2.refresh_from_db()
+    assert msg1.retries == 0
+    assert msg2.retries == 0
+    assert msg1.retry_after is not None
+    assert msg2.retry_after is not None
 
 
 @pytest.mark.django_db
-def test_send_task_propagates_extra_options(m_celery_app: MagicMock) -> None:
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=3))
-    msg = CeleryOutbox.objects.create(
-        task_id='abc-opts',
-        task_name='myapp.tasks.with_opts',
-        args=[],
-        kwargs={},
-        options={'priority': 9, 'routing_key': 'high'},
+def test_processing_breaker_trip_defers_remaining_selected_rows(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            batch_size=10,
+            idle_time=0,
+            backoff_time=120,
+            max_retries=5,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    first = CeleryOutbox.objects.create(task_id='trip-1', task_name='some.task', retries=0, options={})
+    second = CeleryOutbox.objects.create(task_id='trip-2', task_name='some.task', retries=0, options={})
+    third = CeleryOutbox.objects.create(task_id='trip-3', task_name='some.task', retries=0, options={})
+
+    with patch.object(
+        relay._publisher,
+        'publish',
+        side_effect=[TimeoutError('timed out'), TimeoutError('timed out again')],
+    ):
+        with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                with patch('django_celery_outbox.relay._relay.time.sleep'):
+                    relay._processing()
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    third.refresh_from_db()
+    assert first.retries == 0
+    assert second.retries == 0
+    assert third.retries == 0
+    assert first.retry_after is not None
+    assert second.retry_after is not None
+    assert third.retry_after is not None
+    assert CeleryOutbox.objects.filter(pk=third.pk).exists()
+    m_logger.warning.assert_any_call(
+        'celery_outbox_relay_breaker_trip',
+        deferred_count=3,
+        exception_type='TimeoutError',
+        exception_message='timed out again',
+    )
+    m_logger.info.assert_any_call(
+        'celery_outbox_batch_processed',
+        published=0,
+        failed=0,
+        exceeded=0,
+        deferred_due_to_outage=3,
+        shutdown_aborted=0,
+        queue_depth=3,
     )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
-        relay._send_task(msg)
 
-    _, kwargs = m_send.call_args
-    assert kwargs['priority'] == 9
-    assert kwargs['routing_key'] == 'high'
+@pytest.mark.django_db
+def test_processing_skips_selection_while_breaker_open(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            idle_time=0,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    relay._policy.begin_batch()
+    assert relay._policy.record_outage(now_monotonic=100.0) is False
+    assert relay._policy.record_outage(now_monotonic=101.0) is True
+
+    with patch.object(relay._selector, 'run') as m_run:
+        with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[110.0, 110.0, 111.0]):
+            with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    relay._processing()
+
+    m_run.assert_not_called()
+    m_sleep.assert_called_once_with(21.0)
+
+
+@pytest.mark.django_db
+def test_processing_breaker_open_touches_liveness_and_logs_batch_summary(
+    m_celery_app: MagicMock,
+    m_metrics: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: object,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    liveness_file = f'{tmp_path}/alive'
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            idle_time=0,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+            liveness_file=liveness_file,
+        ),
+    )
+    CeleryOutbox.objects.create(task_id='breaker-open-1', task_name='some.task', retries=0, options={})
+    relay._policy.begin_batch()
+    assert relay._policy.record_outage(now_monotonic=100.0) is False
+    assert relay._policy.record_outage(now_monotonic=101.0) is True
+
+    with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+        with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[110.0, 110.0, 111.0]):
+            with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    relay._processing()
+
+    from pathlib import Path
+
+    assert Path(liveness_file).exists()
+    m_sleep.assert_called_once_with(21.0)
+    m_metrics.gauge.assert_any_call('queue.depth', 1)
+    m_logger.info.assert_any_call(
+        'celery_outbox_batch_processed',
+        published=0,
+        failed=0,
+        exceeded=0,
+        deferred_due_to_outage=0,
+        shutdown_aborted=0,
+        queue_depth=1,
+    )
+
+
+@pytest.mark.django_db
+def test_processing_breaker_open_closes_connections_around_cooldown_sleep(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            idle_time=0,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    CeleryOutbox.objects.create(task_id='breaker-open-close-1', task_name='some.task', retries=0, options={})
+    relay._policy.begin_batch()
+    assert relay._policy.record_outage(now_monotonic=100.0) is False
+    assert relay._policy.record_outage(now_monotonic=101.0) is True
+
+    with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[110.0, 110.0, 111.0]):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections') as m_close:
+                relay._processing()
+
+    assert m_close.call_count == 2
+
+
+@pytest.mark.django_db
+def test_processing_breaker_open_clamps_sleep_to_shutdown_deadline(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            idle_time=0,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    CeleryOutbox.objects.create(task_id='breaker-open-shutdown-1', task_name='some.task', retries=0, options={})
+    relay._policy.begin_batch()
+    relay._policy.begin_shutdown(now_monotonic=85.0)
+    assert relay._policy.record_outage(now_monotonic=100.0) is False
+    assert relay._policy.record_outage(now_monotonic=101.0) is True
+
+    with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[110.0, 110.0, 110.0, 111.0]):
+        with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                relay._processing()
+
+    m_sleep.assert_called_once_with(5.0)
+
+
+@pytest.mark.django_db
+def test_processing_breaker_counts_only_consecutive_outage_failures(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            batch_size=10,
+            idle_time=0,
+            backoff_time=120,
+            max_retries=5,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    first = CeleryOutbox.objects.create(task_id='breaker-1', task_name='some.task', retries=0, options={})
+    second = CeleryOutbox.objects.create(task_id='breaker-2', task_name='some.task', retries=0, options={})
+    third = CeleryOutbox.objects.create(task_id='breaker-3', task_name='some.task', retries=0, options={})
+    fourth = CeleryOutbox.objects.create(task_id='breaker-4', task_name='some.task', retries=0, options={})
+
+    with patch.object(
+        relay._publisher,
+        'publish',
+        side_effect=[
+            TimeoutError('timed out'),
+            RuntimeError('ordinary failure'),
+            TimeoutError('timed out again'),
+            None,
+        ],
+    ):
+        with patch('django_celery_outbox.relay._relay.close_old_connections'):
+            with patch('django_celery_outbox.relay._relay.time.sleep'):
+                relay._processing()
+
+    first.refresh_from_db()
+    second.refresh_from_db()
+    third.refresh_from_db()
+    assert first.retries == 0
+    assert first.retry_after is not None
+    assert second.retries == 1
+    assert second.retry_after is not None
+    assert third.retries == 0
+    assert third.retry_after is not None
+    assert not CeleryOutbox.objects.filter(pk=fourth.pk).exists()
+
+
+@pytest.mark.django_db
+def test_pre_exceeded_rows_do_not_reset_outage_streak(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            batch_size=10,
+            idle_time=0,
+            backoff_time=120,
+            max_retries=3,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    first = CeleryOutbox.objects.create(task_id='mixed-1', task_name='some.task', retries=0, options={})
+    exceeded = CeleryOutbox.objects.create(task_id='mixed-2', task_name='some.task', retries=3, options={})
+    third = CeleryOutbox.objects.create(task_id='mixed-3', task_name='some.task', retries=0, options={})
+
+    with patch.object(
+        relay._publisher,
+        'publish',
+        side_effect=[TimeoutError('timed out'), TimeoutError('timed out again')],
+    ):
+        with patch(
+            'django_celery_outbox.relay._relay.time.monotonic',
+            side_effect=[0.0, 100.0, 0.0, 0.0, 101.0],
+        ):
+            published, failed, exceeded_rows, deferred_due_to_outage, shutdown_aborted = relay._process_messages([first, exceeded, third])
+
+    assert published == []
+    assert failed == []
+    assert [msg.id for msg in exceeded_rows] == [exceeded.id]
+    assert deferred_due_to_outage == [first.id, third.id]
+    assert shutdown_aborted == []
+    assert relay._policy.should_skip_batch(now_monotonic=102.0) is True
+
+
+@pytest.mark.django_db
+def test_processing_shutdown_deadline_leaves_unstarted_rows_for_stale_recovery(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            batch_size=10,
+            idle_time=0,
+            backoff_time=120,
+            max_retries=5,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    first = CeleryOutbox.objects.create(task_id='shutdown-1', task_name='some.task', retries=0, options={})
+    second = CeleryOutbox.objects.create(task_id='shutdown-2', task_name='some.task', retries=0, options={})
+    relay._policy.begin_shutdown(now_monotonic=0.0)
+
+    with patch.object(relay._publisher, 'publish'):
+        with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+            with patch(
+                'django_celery_outbox.relay._relay.time.monotonic',
+                side_effect=[0.0, 0.0, 0.0, 31.0, 31.0],
+            ):
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    with patch('django_celery_outbox.relay._relay.time.sleep'):
+                        relay._processing()
+
+    assert not CeleryOutbox.objects.filter(pk=first.id).exists()
+    second.refresh_from_db()
+    assert second.retries == 0
+    assert second.retry_after is None
+    assert second.updated_at is not None
+    m_logger.warning.assert_any_call(
+        'celery_outbox_relay_shutdown_deadline_exceeded',
+        aborted_count=1,
+        aborted_task_ids=['shutdown-2'],
+        aborted_task_names=['some.task'],
+    )
+    m_logger.info.assert_any_call(
+        'celery_outbox_batch_processed',
+        published=1,
+        failed=0,
+        exceeded=0,
+        deferred_due_to_outage=0,
+        shutdown_aborted=1,
+        queue_depth=1,
+    )
+
+
+@pytest.mark.django_db
+def test_start_drains_additional_batches_until_shutdown_deadline(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            batch_size=1,
+            idle_time=0,
+            backoff_time=120,
+            max_retries=5,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    CeleryOutbox.objects.create(task_id='drain-1', task_name='some.task', retries=0, options={})
+    CeleryOutbox.objects.create(task_id='drain-2', task_name='some.task', retries=0, options={})
+    published_task_ids: list[str] = []
+
+    def fake_publish(msg: CeleryOutbox) -> None:
+        published_task_ids.append(msg.task_id)
+        if len(published_task_ids) == 1:
+            relay._handle_signal(signal.SIGTERM, None)
+
+    with patch.object(relay, '_setup_signals'):
+        with patch.object(relay, '_setup_delayed_delivery'):
+            with patch.object(relay._publisher, 'publish', side_effect=fake_publish):
+                with patch('django_celery_outbox.relay._relay.time.sleep'):
+                    with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                        relay.start()
+
+    assert published_task_ids == ['drain-1', 'drain-2']
+    assert CeleryOutbox.objects.count() == 0
 
 
 def test_process_messages_empty_list(f_relay: Relay) -> None:
-    published, failed, exceeded = f_relay._process_messages([])
+    published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = f_relay._process_messages([])
 
     assert published == []
     assert failed == []
     assert exceeded == []
+    assert deferred_due_to_outage == []
+    assert shutdown_aborted == []
 
 
 @pytest.mark.django_db
@@ -490,7 +746,7 @@ def test_processing_calls_close_old_connections(m_celery_app: MagicMock) -> None
         config=RelayConfig.init(batch_size=10, idle_time=0.01, max_retries=3),
     )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
         with patch('django_celery_outbox.relay._relay.time.sleep'):
             with patch('django_celery_outbox.relay._relay.close_old_connections') as m_close:
                 relay._processing()
@@ -508,7 +764,7 @@ def test_processing_sets_updated_at_on_select(m_celery_app: MagicMock) -> None:
     msg = CeleryOutboxFactory.create(options={}, updated_at=None)
     before = datetime.now(timezone.utc)
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task', side_effect=RuntimeError('fail')):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task', side_effect=RuntimeError('fail')):
         with patch('django_celery_outbox.relay._relay.time.sleep'):
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
@@ -518,30 +774,8 @@ def test_processing_sets_updated_at_on_select(m_celery_app: MagicMock) -> None:
     assert msg.updated_at >= before
 
 
-@pytest.mark.django_db
-def test_send_task_with_headers_none_in_options(m_celery_app: MagicMock) -> None:
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=3))
-    msg = CeleryOutbox.objects.create(
-        task_id='abc-headers-none',
-        task_name='myapp.tasks.headers_none',
-        args=[],
-        kwargs={},
-        options={'headers': None},
-    )
-
-    with patch('django_celery_outbox.relay._relay.Celery.send_task') as m_send:
-        relay._send_task(msg)
-
-    m_send.assert_called_once()
-    _, kwargs = m_send.call_args
-    assert isinstance(kwargs['headers'], dict)
-
-
 def test_graceful_shutdown_stops_start_loop(m_celery_app: MagicMock) -> None:
-    relay = Relay(
-        app=m_celery_app,
-        config=RelayConfig.init(batch_size=10, idle_time=0.01, max_retries=3),
-    )
+    relay = _build_relay_for_start_tests(m_celery_app)
     relay._running = False
 
     with patch.object(relay, '_setup_signals'):
@@ -549,6 +783,77 @@ def test_graceful_shutdown_stops_start_loop(m_celery_app: MagicMock) -> None:
             relay.start()
 
     m_processing.assert_not_called()
+
+
+def _build_relay_for_start_tests(m_celery_app: MagicMock) -> Relay:
+    m_connection = MagicMock()
+    m_connection.features.has_select_for_update_skip_locked = True
+
+    with patch('django_celery_outbox.relay._relay.connections', {'default': m_connection}):
+        with patch('django_celery_outbox.relay._relay.CeleryOutbox') as m_model:
+            m_model.objects.db = 'default'
+            return Relay(
+                app=m_celery_app,
+                config=RelayConfig.init(batch_size=10, idle_time=0.01, max_retries=3),
+            )
+
+
+def test_start_logs_and_continues_after_processing_exception(m_celery_app: MagicMock) -> None:
+    relay = _build_relay_for_start_tests(m_celery_app)
+    failure = RuntimeError('boom')
+    processing_calls = 0
+
+    def fake_processing() -> None:
+        nonlocal processing_calls
+        processing_calls += 1
+        if processing_calls == 1:
+            raise failure
+        relay._running = False
+
+    with patch.object(relay, '_setup_signals'):
+        with patch.object(relay, '_setup_delayed_delivery'):
+            with patch.object(relay, '_processing', side_effect=fake_processing) as m_processing:
+                with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+                    with patch('django_celery_outbox.relay._relay.sentry_sdk.capture_exception') as m_capture_exception:
+                        with patch('django_celery_outbox.relay._relay.should_log_traceback', return_value=False):
+                            with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+                                relay.start()
+
+    assert m_processing.call_count == 2
+    m_logger.error.assert_called_once_with(
+        'celery_outbox_relay_iteration_failed',
+        exception_type='RuntimeError',
+        exception_message='boom',
+    )
+    m_capture_exception.assert_called_once_with(failure)
+    m_sleep.assert_called_once_with(0.01)
+
+
+def test_start_does_not_sleep_after_processing_exception_when_stopped(m_celery_app: MagicMock) -> None:
+    relay = _build_relay_for_start_tests(m_celery_app)
+    failure = RuntimeError('boom')
+
+    def fake_processing() -> None:
+        relay._running = False
+        raise failure
+
+    with patch.object(relay, '_setup_signals'):
+        with patch.object(relay, '_setup_delayed_delivery'):
+            with patch.object(relay, '_processing', side_effect=fake_processing):
+                with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+                    with patch('django_celery_outbox.relay._relay.sentry_sdk.capture_exception') as m_capture_exception:
+                        with patch('django_celery_outbox.relay._relay.should_log_traceback', return_value=True):
+                            with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+                                relay.start()
+
+    m_logger.error.assert_called_once_with(
+        'celery_outbox_relay_iteration_failed',
+        exception_type='RuntimeError',
+        exception_message='boom',
+        exc_info=True,
+    )
+    m_capture_exception.assert_called_once_with(failure)
+    m_sleep.assert_not_called()
 
 
 def test_config_validation_batch_size_zero() -> None:
@@ -576,6 +881,50 @@ def test_config_validation_zero_stale_timeout_seconds() -> None:
         RelayConfig.init(stale_timeout_seconds=0)
 
 
+def test_config_validation_zero_send_timeout() -> None:
+    with pytest.raises(ImproperlyConfigured, match='send_timeout must be > 0 and finite'):
+        RelayConfig.init(send_timeout=0)
+
+
+def test_config_validation_zero_shutdown_timeout() -> None:
+    with pytest.raises(ImproperlyConfigured, match='shutdown_timeout must be > 0 and finite'):
+        RelayConfig.init(shutdown_timeout=0)
+
+
+def test_config_validation_zero_broker_outage_cooldown() -> None:
+    with pytest.raises(ImproperlyConfigured, match='broker_outage_cooldown must be > 0 and finite'):
+        RelayConfig.init(broker_outage_cooldown=0)
+
+
+def test_config_validation_zero_max_backoff() -> None:
+    with pytest.raises(ImproperlyConfigured, match='max_backoff must be > 0 and finite'):
+        RelayConfig.init(max_backoff=0)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_send_timeout(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='send_timeout must be > 0 and finite'):
+        RelayConfig.init(send_timeout=value)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_shutdown_timeout(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='shutdown_timeout must be > 0 and finite'):
+        RelayConfig.init(shutdown_timeout=value)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_broker_outage_cooldown(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='broker_outage_cooldown must be > 0 and finite'):
+        RelayConfig.init(broker_outage_cooldown=value)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_max_backoff(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='max_backoff must be > 0 and finite'):
+        RelayConfig.init(max_backoff=value)
+
+
 @pytest.mark.django_db
 def test_processing_logs_batch_summary(m_celery_app: MagicMock) -> None:
     relay = Relay(
@@ -586,7 +935,7 @@ def test_processing_logs_batch_summary(m_celery_app: MagicMock) -> None:
     CeleryOutboxFactory.create(options={}, retries=0)
 
     with patch('django_celery_outbox.relay._relay._logger') as m_logger:
-        with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
             with patch('django_celery_outbox.relay._relay.time.sleep'):
                 with patch('django_celery_outbox.relay._relay.close_old_connections'):
                     relay._processing()
@@ -596,6 +945,8 @@ def test_processing_logs_batch_summary(m_celery_app: MagicMock) -> None:
         published=1,
         failed=0,
         exceeded=0,
+        deferred_due_to_outage=0,
+        shutdown_aborted=0,
         queue_depth=0,
     )
 
@@ -625,7 +976,7 @@ def test_processing_touches_liveness_file(m_celery_app: MagicMock, tmp_path: obj
         config=RelayConfig.init(batch_size=10, idle_time=0.01, max_retries=3, liveness_file=liveness_file),
     )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
         with patch('django_celery_outbox.relay._relay.time.sleep'):
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 relay._processing()
@@ -665,12 +1016,108 @@ def test_processing_batch_span_internal_error_on_failure(
         task_name='fail.task',
     )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task', side_effect=ConnectionError('broker down')):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task', side_effect=ConnectionError('broker down')):
         with patch('django_celery_outbox.relay._relay.time.sleep'):
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 f_relay._processing()
 
     m_batch_span.set_status.assert_called_with('internal_error')
+
+
+@pytest.mark.django_db
+@patch('django_celery_outbox.relay._relay.sentry_sdk')
+def test_processing_batch_span_records_deferred_due_to_outage_on_breaker_trip(
+    m_sentry: MagicMock,
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            batch_size=10,
+            idle_time=0,
+            backoff_time=120,
+            max_retries=5,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    CeleryOutbox.objects.create(task_id='span-trip-1', task_name='some.task', retries=0, options={})
+    CeleryOutbox.objects.create(task_id='span-trip-2', task_name='some.task', retries=0, options={})
+    CeleryOutbox.objects.create(task_id='span-trip-3', task_name='some.task', retries=0, options={})
+
+    m_batch_span = MagicMock()
+    m_send_span1 = MagicMock()
+    m_send_span2 = MagicMock()
+    m_batch_ctx = MagicMock()
+    m_batch_ctx.__enter__.return_value = m_batch_span
+    m_batch_ctx.__exit__.return_value = None
+    m_send_ctx1 = MagicMock()
+    m_send_ctx1.__enter__.return_value = m_send_span1
+    m_send_ctx1.__exit__.return_value = None
+    m_send_ctx2 = MagicMock()
+    m_send_ctx2.__enter__.return_value = m_send_span2
+    m_send_ctx2.__exit__.return_value = None
+    m_sentry.start_span.side_effect = [m_batch_ctx, m_send_ctx1, m_send_ctx2]
+
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task', side_effect=[TimeoutError('timed out'), TimeoutError('timed out again')]):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                relay._processing()
+
+    m_batch_span.set_data.assert_any_call('celery_outbox.deferred_due_to_outage', 3)
+    m_batch_span.set_data.assert_any_call('celery_outbox.shutdown_aborted', 0)
+
+
+@pytest.mark.django_db
+@patch('django_celery_outbox.relay._relay.sentry_sdk')
+def test_processing_batch_span_records_shutdown_aborted_on_shutdown_deadline(
+    m_sentry: MagicMock,
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            batch_size=10,
+            idle_time=0,
+            backoff_time=120,
+            max_retries=5,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    CeleryOutbox.objects.create(task_id='span-shutdown-1', task_name='some.task', retries=0, options={})
+    CeleryOutbox.objects.create(task_id='span-shutdown-2', task_name='some.task', retries=0, options={})
+    relay._policy.begin_shutdown(now_monotonic=0.0)
+
+    m_batch_span = MagicMock()
+    m_send_span = MagicMock()
+    m_batch_ctx = MagicMock()
+    m_batch_ctx.__enter__.return_value = m_batch_span
+    m_batch_ctx.__exit__.return_value = None
+    m_send_ctx = MagicMock()
+    m_send_ctx.__enter__.return_value = m_send_span
+    m_send_ctx.__exit__.return_value = None
+    m_sentry.start_span.side_effect = [m_batch_ctx, m_send_ctx]
+
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
+        with patch(
+            'django_celery_outbox.relay._relay.time.monotonic',
+            side_effect=[0.0, 0.0, 0.0, 31.0, 31.0],
+        ):
+            with patch('django_celery_outbox.relay._relay.time.sleep'):
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    relay._processing()
+
+    m_batch_span.set_data.assert_any_call('celery_outbox.deferred_due_to_outage', 0)
+    m_batch_span.set_data.assert_any_call('celery_outbox.shutdown_aborted', 1)
 
 
 @pytest.mark.django_db
@@ -687,7 +1134,7 @@ def test_process_messages_creates_per_message_span(
     m_span = MagicMock()
     m_sentry.start_span.return_value.__enter__.return_value = m_span
 
-    with patch.object(f_relay, '_send_task'):
+    with patch.object(f_relay._publisher, 'publish'):
         f_relay._process_messages([msg])
 
     m_sentry.start_span.assert_called_with(
@@ -713,7 +1160,7 @@ def test_process_messages_span_internal_error_on_send_failure(
     m_span = MagicMock()
     m_sentry.start_span.return_value.__enter__.return_value = m_span
 
-    with patch.object(f_relay, '_send_task', side_effect=ConnectionError('down')):
+    with patch.object(f_relay._publisher, 'publish', side_effect=ConnectionError('down')):
         f_relay._process_messages([msg])
 
     m_span.set_status.assert_called_once_with('internal_error')
@@ -742,6 +1189,8 @@ def test_relay_init_accepts_when_skip_locked_supported(m_celery_app: MagicMock) 
             relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=3))
 
     assert relay is not None
+    assert isinstance(relay._publisher, RelayPublisher)
+    assert isinstance(relay._mutations, RelayMutations)
 
 
 @pytest.mark.django_db
@@ -783,23 +1232,7 @@ def test_select_messages_skips_deprecated_versions(f_message_selector: MessageSe
 
 
 @pytest.mark.django_db
-def test_dead_letter_preserves_schema_version(m_celery_app: MagicMock) -> None:
-    msg = CeleryOutbox.objects.create(
-        task_id='task-1',
-        task_name='app.task',
-        retries=5,
-        schema_version=2,
-    )
-
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(max_retries=5))
-    relay._move_to_dead_letter([msg.id])
-
-    dead = CeleryOutboxDeadLetter.objects.get(task_id='task-1')
-    assert dead.schema_version == 2
-
-
-@pytest.mark.django_db
-def test_failed_message_includes_exception_type_in_metrics(
+def test_builtin_connection_error_is_treated_as_broker_outage(
     f_relay: Relay,
     m_metrics: MagicMock,
 ) -> None:
@@ -809,17 +1242,21 @@ def test_failed_message_includes_exception_type_in_metrics(
         retries=0,
     )
 
-    with patch.object(f_relay, '_send_task', side_effect=ConnectionError('broker down')):
-        f_relay._process_messages([msg])
+    with patch.object(f_relay._publisher, 'publish', side_effect=ConnectionError('broker down')):
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = f_relay._process_messages([msg])
 
-    m_metrics.increment.assert_any_call(
-        'messages.failed',
-        tags={'task_name': msg.task_name, 'exception_type': 'connection'},
-    )
+    assert published == []
+    assert failed == []
+    assert exceeded == []
+    assert deferred_due_to_outage == [msg.id]
+    assert shutdown_aborted == []
+    metric_names = [c[0][0] for c in m_metrics.increment.call_args_list]
+    assert 'messages.failed' not in metric_names
+    assert 'messages.exceeded' not in metric_names
 
 
 @pytest.mark.django_db
-def test_exceeded_message_includes_exception_type_in_metrics(
+def test_broker_outage_at_max_retries_does_not_increment_failed_or_exceeded_metrics(
     f_relay: Relay,
     m_metrics: MagicMock,
 ) -> None:
@@ -829,13 +1266,17 @@ def test_exceeded_message_includes_exception_type_in_metrics(
         retries=f_relay._config.max_retries - 1,
     )
 
-    with patch.object(f_relay, '_send_task', side_effect=TimeoutError('timeout')):
-        f_relay._process_messages([msg])
+    with patch.object(f_relay._publisher, 'publish', side_effect=TimeoutError('timeout')):
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = f_relay._process_messages([msg])
 
-    m_metrics.increment.assert_any_call(
-        'messages.exceeded',
-        tags={'task_name': msg.task_name, 'exception_type': 'timeout'},
-    )
+    assert published == []
+    assert failed == []
+    assert exceeded == []
+    assert deferred_due_to_outage == [msg.id]
+    assert shutdown_aborted == []
+    metric_names = [c[0][0] for c in m_metrics.increment.call_args_list]
+    assert 'messages.failed' not in metric_names
+    assert 'messages.exceeded' not in metric_names
 
 
 @pytest.mark.django_db
@@ -851,7 +1292,7 @@ def test_published_message_uses_cardinality_control(
             kwargs={},
             options={},
         )
-        with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+        with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
             with patch('django_celery_outbox.relay._relay.time.sleep'):
                 with patch('django_celery_outbox.relay._relay.close_old_connections'):
                     f_relay._processing()
@@ -873,7 +1314,7 @@ def test_exceeded_pre_send_uses_cardinality_control(
             retries=f_relay._config.max_retries,
         )
 
-        with patch.object(f_relay, '_send_task') as m_send:
+        with patch.object(f_relay._publisher, 'publish') as m_publish:
             f_relay._process_messages([msg])
 
     exceeded_calls = [c for c in m_metrics.increment.call_args_list if c[0][0] == 'messages.exceeded']
@@ -881,7 +1322,7 @@ def test_exceeded_pre_send_uses_cardinality_control(
     tags = exceeded_calls[0][1].get('tags', {})
     assert 'task_name' not in tags
     assert tags.get('exception_type') == 'pre_exceeded'
-    m_send.assert_not_called()
+    m_publish.assert_not_called()
 
 
 @pytest.mark.django_db
@@ -917,7 +1358,7 @@ def test_oldest_pending_age_seconds_zero_when_empty(
     f_relay: Relay,
     m_metrics: MagicMock,
 ) -> None:
-    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
         with patch('django_celery_outbox.relay._relay.time.sleep'):
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 f_relay._processing()
@@ -941,7 +1382,7 @@ def test_exception_logging_includes_traceback_by_default(
     )
 
     with override_settings(CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK=True):
-        with patch.object(f_relay, '_send_task', side_effect=ValueError('test error')):
+        with patch.object(f_relay._publisher, 'publish', side_effect=ValueError('test error')):
             with patch('django_celery_outbox.relay._relay._logger') as m_logger:
                 f_relay._process_messages(list(CeleryOutbox.objects.all()))
 
@@ -964,7 +1405,7 @@ def test_exception_logging_excludes_traceback_when_disabled(
     )
 
     with override_settings(CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK=False):
-        with patch.object(f_relay, '_send_task', side_effect=ValueError('test error')):
+        with patch.object(f_relay._publisher, 'publish', side_effect=ValueError('test error')):
             with patch('django_celery_outbox.relay._relay._logger') as m_logger:
                 f_relay._process_messages(list(CeleryOutbox.objects.all()))
 
@@ -991,7 +1432,7 @@ def test_send_latency_ms_emitted_on_success(
         created_at=django_timezone.now() - timedelta(seconds=2),
     )
 
-    with patch('django_celery_outbox.relay._relay.Celery.send_task'):
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task'):
         with patch('django_celery_outbox.relay._relay.time.sleep'):
             with patch('django_celery_outbox.relay._relay.close_old_connections'):
                 f_relay._processing()

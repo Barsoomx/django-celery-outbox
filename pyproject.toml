@@ -67,6 +67,9 @@ docs = [
   "mkdocs-material>=9.5",
 ]
 
+[project.entry-points."pytest11"]
+django_celery_outbox = "django_celery_outbox.fixtures"
+
 [tool.setuptools]
 include-package-data = true
 
