@@ -228,6 +228,57 @@ def test_process_messages_failure_at_max_retries(f_relay: Relay) -> None:
     assert shutdown_aborted == []
 
 
+def test_relay_config_accepts_publish_concurrency() -> None:
+    config = RelayConfig.init(max_retries=3, publish_concurrency=4)
+
+    assert config.publish_concurrency == 4
+
+
+@pytest.mark.django_db
+def test_parallel_mode_one_is_identical_to_serial_path(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=1),
+    )
+    msg = CeleryOutbox.objects.create(task_id='parallel-one-1', task_name='demo.task', options={})
+
+    with patch.object(relay, '_process_messages_serial', return_value=([msg.id], [], [], [], [])) as m_serial:
+        relay._process_messages([msg])
+
+    m_serial.assert_called_once_with([msg])
+
+
+@pytest.mark.django_db
+def test_parallel_mode_never_submits_more_than_publish_concurrency(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2),
+    )
+    messages = [CeleryOutbox.objects.create(task_id=f'parallel-window-{i}', task_name='demo.task', options={}) for i in range(4)]
+    submitted: list[int] = []
+
+    with patch.object(
+        relay._publisher,
+        'prepare_publish_call',
+        side_effect=lambda msg: submitted.append(msg.id) or msg,
+        create=True,
+    ):
+        with patch.object(relay._publisher, 'publish_prepared', return_value=None, create=True):
+            with patch('django_celery_outbox.relay._relay.as_completed', side_effect=lambda futures: futures):
+                relay._process_messages(messages)
+
+    assert submitted[:2] == [messages[0].id, messages[1].id]
+    assert len(submitted) == 4
+
+
 @pytest.mark.django_db
 def test_processing_full_cycle(m_celery_app: MagicMock) -> None:
     relay = Relay(

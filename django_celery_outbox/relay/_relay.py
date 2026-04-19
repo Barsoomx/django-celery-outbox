@@ -272,6 +272,15 @@ class Relay:
         self,
         messages: list[CeleryOutbox],
     ) -> tuple[list[int], list[tuple[int, int]], list[CeleryOutbox], list[int], list[CeleryOutbox]]:
+        if self._config.publish_concurrency == 1:
+            return self._process_messages_serial(messages)
+
+        return self._process_messages_parallel(messages)
+
+    def _process_messages_serial(
+        self,
+        messages: list[CeleryOutbox],
+    ) -> tuple[list[int], list[tuple[int, int]], list[CeleryOutbox], list[int], list[CeleryOutbox]]:
         published: list[int] = []
         failed: list[tuple[int, int]] = []
         exceeded: list[CeleryOutbox] = []
@@ -379,6 +388,12 @@ class Relay:
                         published.append(msg.id)
 
         return published, failed, exceeded, deferred_due_to_outage, shutdown_aborted
+
+    def _process_messages_parallel(
+        self,
+        messages: list[CeleryOutbox],
+    ) -> tuple[list[int], list[tuple[int, int]], list[CeleryOutbox], list[int], list[CeleryOutbox]]:
+        return self._process_messages_serial(messages)
 
     def _touch_liveness(self) -> None:
         if self._config.liveness_file is None:

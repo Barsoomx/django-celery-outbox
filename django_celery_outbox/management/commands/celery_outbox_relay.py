@@ -30,6 +30,11 @@ class Command(BaseCommand):
             default=5,
         )
         parser.add_argument(
+            '--publish-concurrency',
+            type=int,
+            default=1,
+        )
+        parser.add_argument(
             '--stale-timeout-seconds',
             type=int,
             default=300,
