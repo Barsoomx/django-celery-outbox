@@ -21,7 +21,7 @@ def test_build_project_wheel_uses_pip_wheel(monkeypatch: pytest.MonkeyPatch, tmp
         captured['kwargs'] = kwargs
 
         wheel_dir.mkdir(exist_ok=True)
-        (wheel_dir / 'django_celery_outbox-0.2.0-py3-none-any.whl').write_text('', encoding='utf-8')
+        (wheel_dir / 'django_celery_outbox-0.3.0-py3-none-any.whl').write_text('', encoding='utf-8')
 
         return subprocess.CompletedProcess(args[0], 0, stdout='', stderr='')
 
