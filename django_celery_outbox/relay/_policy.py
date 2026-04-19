@@ -60,5 +60,10 @@ class RelayPolicy:
     def shutdown_requested(self) -> bool:
         return self._shutdown_deadline is not None
 
+    def seconds_until_shutdown_deadline(self, now_monotonic: float) -> float:
+        if self._shutdown_deadline is None:
+            return 0.0
+        return max(self._shutdown_deadline - now_monotonic, 0.0)
+
     def shutdown_deadline_exceeded(self, now_monotonic: float) -> bool:
         return self._shutdown_deadline is not None and now_monotonic >= self._shutdown_deadline

@@ -430,7 +430,8 @@ def test_processing_skips_selection_while_breaker_open(
     with patch.object(relay._selector, 'run') as m_run:
         with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[110.0, 110.0, 111.0]):
             with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
-                relay._processing()
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    relay._processing()
 
     m_run.assert_not_called()
     m_sleep.assert_called_once_with(21.0)
@@ -464,7 +465,8 @@ def test_processing_breaker_open_touches_liveness_and_logs_batch_summary(
     with patch('django_celery_outbox.relay._relay._logger') as m_logger:
         with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[110.0, 110.0, 111.0]):
             with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
-                relay._processing()
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    relay._processing()
 
     from pathlib import Path
 
@@ -480,6 +482,65 @@ def test_processing_breaker_open_touches_liveness_and_logs_batch_summary(
         shutdown_aborted=0,
         queue_depth=1,
     )
+
+
+@pytest.mark.django_db
+def test_processing_breaker_open_closes_connections_around_cooldown_sleep(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            idle_time=0,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    CeleryOutbox.objects.create(task_id='breaker-open-close-1', task_name='some.task', retries=0, options={})
+    relay._policy.begin_batch()
+    assert relay._policy.record_outage(now_monotonic=100.0) is False
+    assert relay._policy.record_outage(now_monotonic=101.0) is True
+
+    with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[110.0, 110.0, 111.0]):
+        with patch('django_celery_outbox.relay._relay.time.sleep'):
+            with patch('django_celery_outbox.relay._relay.close_old_connections') as m_close:
+                relay._processing()
+
+    assert m_close.call_count == 2
+
+
+@pytest.mark.django_db
+def test_processing_breaker_open_clamps_sleep_to_shutdown_deadline(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(
+            idle_time=0,
+            send_timeout=10.0,
+            shutdown_timeout=30.0,
+            broker_outage_cooldown=30.0,
+            max_backoff=3600.0,
+        ),
+    )
+    CeleryOutbox.objects.create(task_id='breaker-open-shutdown-1', task_name='some.task', retries=0, options={})
+    relay._policy.begin_batch()
+    relay._policy.begin_shutdown(now_monotonic=85.0)
+    assert relay._policy.record_outage(now_monotonic=100.0) is False
+    assert relay._policy.record_outage(now_monotonic=101.0) is True
+
+    with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[110.0, 110.0, 110.0, 111.0]):
+        with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+            with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                relay._processing()
+
+    m_sleep.assert_called_once_with(5.0)
 
 
 @pytest.mark.django_db

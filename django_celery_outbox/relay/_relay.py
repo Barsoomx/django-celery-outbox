@@ -164,6 +164,11 @@ class Relay:
         with sentry_sdk.start_span(op='queue.process', name='celery_outbox.relay.batch') as batch_span:
             if self._policy.should_skip_batch(now_monotonic):
                 sleep_for = self._policy.seconds_until_batch_retry(now_monotonic)
+                if self._policy.shutdown_requested():
+                    sleep_for = min(
+                        sleep_for,
+                        self._policy.seconds_until_shutdown_deadline(time.monotonic()),
+                    )
                 _logger.warning(
                     'celery_outbox_relay_breaker_open',
                     cooldown_seconds=sleep_for,
@@ -175,7 +180,9 @@ class Relay:
                 batch_span.set_data('celery_outbox.shutdown_aborted', 0)
                 batch_span.set_data('celery_outbox.batch_size', 0)
                 batch_span.set_status('ok')
+                close_old_connections()
                 time.sleep(sleep_for)
+                close_old_connections()
                 self._finalize_processing_cycle(
                     start_time=start_time,
                     published=0,
