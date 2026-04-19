@@ -184,6 +184,50 @@ def test_outbox_inspection_options_redacts_nested_signature_options() -> None:
     assert inspected['link'][0]['options']['link'][0]['kwargs']['token'] == '[REDACTED]'
 
 
+@pytest.mark.django_db
+def test_outbox_inspection_options_uses_nested_signature_task_names() -> None:
+    def task_aware_redactor(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+        del args
+        if task_name == 'inner.task':
+            return [], {'token': '[REDACTED]'}
+        return [], kwargs
+
+    msg = CeleryOutbox.objects.create(
+        task_id='inspect-nested-task-name-1',
+        task_name='parent.task',
+        options={
+            'link': [
+                {
+                    'task': 'callback.task',
+                    'args': [],
+                    'kwargs': {},
+                    'options': {
+                        'link': [
+                            {
+                                'task': 'inner.task',
+                                'args': [],
+                                'kwargs': {'token': 'secret'},
+                                'options': {},
+                                'subtask_type': None,
+                                'immutable': False,
+                                'chord_size': None,
+                            }
+                        ]
+                    },
+                    'subtask_type': None,
+                    'immutable': False,
+                    'chord_size': None,
+                }
+            ],
+        },
+    )
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=task_aware_redactor):
+        inspected = msg.inspection_options
+
+    assert inspected['link'][0]['options']['link'][0]['kwargs']['token'] == '[REDACTED]'
+
+
 @patch('django_celery_outbox.app._logger')
 @pytest.mark.django_db
 def test_outbox_inspection_options_falls_back_to_raw_options_when_nested_redaction_fails(

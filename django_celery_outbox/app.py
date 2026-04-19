@@ -60,8 +60,9 @@ def _redact_serialized_signature(
     signature: dict[str, Any],
     redactor: Callable[[str, list, dict], tuple[list, dict]],
 ) -> dict[str, Any]:
+    signature_task_name = cast(str, signature.get('task', task_name))
     redacted_args, redacted_kwargs = redactor(
-        task_name,
+        signature_task_name,
         deepcopy(list(signature.get('args', []))),
         deepcopy(dict(signature.get('kwargs', {}))),
     )
@@ -70,7 +71,7 @@ def _redact_serialized_signature(
     updated['kwargs'] = redacted_kwargs
     nested_options = updated.get('options')
     if isinstance(nested_options, dict):
-        updated['options'] = _redact_signature_options(task_name, nested_options, redactor)
+        updated['options'] = _redact_signature_options(signature_task_name, nested_options, redactor)
     return updated
 
 
