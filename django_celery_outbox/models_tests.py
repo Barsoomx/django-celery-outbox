@@ -146,6 +146,44 @@ def test_outbox_inspection_options_redacts_link_error_chain_and_chord() -> None:
     assert inspected['chord']['kwargs']['token'] == '[REDACTED]'
 
 
+@pytest.mark.django_db
+def test_outbox_inspection_options_redacts_nested_signature_options() -> None:
+    msg = CeleryOutbox.objects.create(
+        task_id='inspect-recursive-1',
+        task_name='parent.task',
+        options={
+            'link': [
+                {
+                    'task': 'callback.task',
+                    'args': [],
+                    'kwargs': {},
+                    'options': {
+                        'link': [
+                            {
+                                'task': 'inner.task',
+                                'args': [],
+                                'kwargs': {'token': 'secret'},
+                                'options': {},
+                                'subtask_type': None,
+                                'immutable': False,
+                                'chord_size': None,
+                            }
+                        ]
+                    },
+                    'subtask_type': None,
+                    'immutable': False,
+                    'chord_size': None,
+                }
+            ],
+        },
+    )
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=_redact_payloads):
+        inspected = msg.inspection_options
+
+    assert inspected['link'][0]['options']['link'][0]['kwargs']['token'] == '[REDACTED]'
+
+
 @patch('django_celery_outbox.app._logger')
 @pytest.mark.django_db
 def test_outbox_inspection_options_falls_back_to_raw_options_when_nested_redaction_fails(

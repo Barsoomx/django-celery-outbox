@@ -68,7 +68,23 @@ def _redact_serialized_signature(
     updated = dict(signature)
     updated['args'] = redacted_args
     updated['kwargs'] = redacted_kwargs
+    nested_options = updated.get('options')
+    if isinstance(nested_options, dict):
+        updated['options'] = _redact_signature_options(task_name, nested_options, redactor)
     return updated
+
+
+def _redact_signature_options(
+    task_name: str,
+    options: dict[str, Any],
+    redactor: Callable[[str, list, dict], tuple[list, dict]],
+) -> dict[str, Any]:
+    for key in ('link', 'link_error', 'chain'):
+        if key in options and isinstance(options[key], list):
+            options[key] = [_redact_serialized_signature(task_name, item, redactor) if isinstance(item, dict) else item for item in options[key]]
+    if 'chord' in options and isinstance(options['chord'], dict):
+        options['chord'] = _redact_serialized_signature(task_name, options['chord'], redactor)
+    return options
 
 
 def _redact_options_for_inspection(task_name: str, options: dict[str, Any]) -> dict[str, Any]:
@@ -78,12 +94,7 @@ def _redact_options_for_inspection(task_name: str, options: dict[str, Any]) -> d
 
     try:
         cloned = cast(dict[str, Any], deepcopy(options))
-        for key in ('link', 'link_error', 'chain'):
-            if key in cloned and isinstance(cloned[key], list):
-                cloned[key] = [_redact_serialized_signature(task_name, item, redactor) if isinstance(item, dict) else item for item in cloned[key]]
-        if 'chord' in cloned and isinstance(cloned['chord'], dict):
-            cloned['chord'] = _redact_serialized_signature(task_name, cloned['chord'], redactor)
-        return cloned
+        return _redact_signature_options(task_name, cloned, redactor)
     except Exception:
         _logger.warning(
             'celery_outbox_inspection_redaction_failed',
