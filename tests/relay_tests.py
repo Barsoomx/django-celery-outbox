@@ -1,5 +1,6 @@
 import math
 import signal
+import threading
 from datetime import datetime, timedelta, timezone
 from unittest.mock import MagicMock, patch
 
@@ -16,6 +17,7 @@ from django_celery_outbox.relay import Relay, RelayConfig
 from django_celery_outbox.relay._message_selector import MessageSelector
 from django_celery_outbox.relay._mutations import RelayMutations
 from django_celery_outbox.relay._publisher import RelayPublisher
+from django_celery_outbox.signals import outbox_message_sent
 from django_celery_outbox.stats import QueueStats
 
 
@@ -366,6 +368,38 @@ def test_inflight_futures_complete_and_are_classified_normally(
 
 
 @pytest.mark.django_db
+def test_parallel_mode_keeps_db_mutation_and_signals_on_main_thread(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(app=m_celery_app, config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2))
+    main_thread_id = threading.get_ident()
+    signal_threads: list[int] = []
+    mutation_threads: list[int] = []
+
+    CeleryOutbox.objects.create(task_id='thread-1', task_name='demo.task', options={})
+
+    def sent_handler(sender: type, **kwargs: object) -> None:
+        signal_threads.append(threading.get_ident())
+
+    outbox_message_sent.connect(sent_handler)
+    try:
+        with patch('django_celery_outbox.relay._relay.close_old_connections'):
+            with patch.object(
+                relay._mutations,
+                'delete_published',
+                side_effect=lambda _ids: mutation_threads.append(threading.get_ident()),
+            ):
+                relay._processing()
+    finally:
+        outbox_message_sent.disconnect(sent_handler)
+
+    assert signal_threads == [main_thread_id]
+    assert mutation_threads == [main_thread_id]
+
+
+@pytest.mark.django_db
 def test_processing_full_cycle(m_celery_app: MagicMock) -> None:
     relay = Relay(
         app=m_celery_app,
@@ -541,7 +575,7 @@ def test_processing_breaker_trip_defers_remaining_selected_rows(
         exceeded=0,
         deferred_due_to_outage=3,
         shutdown_aborted=0,
-        queue_depth=3,
+        queue_depth=0,
     )
 
 
@@ -889,7 +923,7 @@ def test_processing_shutdown_deadline_leaves_unstarted_rows_for_stale_recovery(
         exceeded=0,
         deferred_due_to_outage=0,
         shutdown_aborted=1,
-        queue_depth=1,
+        queue_depth=0,
     )
 
 

@@ -98,6 +98,22 @@ controls how long the relay may keep starting additional sends after `SIGTERM` o
 Pick `--shutdown-timeout` to cover a healthy drain window, and size `--send-timeout` to the
 slowest broker publish you still consider healthy.
 
+## Publish Concurrency
+
+`--publish-concurrency` enables a bounded parallel publish mode. The default is `1`, which keeps
+the serial relay path and remains the recommended baseline.
+
+Treat higher values as advanced tuning:
+
+- Start with `1`.
+- Increase gradually only after verifying behavior against the supported live RabbitMQ smoke lane.
+- Remember that only broker publish I/O runs in worker threads. Result classification, signals,
+  metrics, and database mutation still happen on the main relay thread.
+
+```bash
+--publish-concurrency 2
+```
+
 ## Monitoring Metrics
 
 The relay emits these StatsD metrics:

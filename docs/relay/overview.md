@@ -10,10 +10,13 @@ The relay daemon is the core component that moves tasks from the database to the
 │                                                         │
 │  1. If breaker is open, sleep until cooldown expires    │
 │  2. SELECT batch of messages (FOR UPDATE SKIP LOCKED)   │
-│  3. For each selected message:                          │
+│  3. Publish selected messages                           │
+│     - Serial by default                                 │
+│     - Optional bounded sliding window                   │
 │     - Stop starting new sends after shutdown deadline   │
-│     - Publish via Celery.send_task(timeout=...)         │
-│     - Mark as published, failed, exceeded, or deferred  │
+│     - Stop refilling after consecutive broker outages   │
+│     - Worker threads publish prepared broker payloads   │
+│     - Main thread classifies outcomes and mutates DB    │
 │  4. Delete published messages                           │
 │  5. Apply retry backoff / dead-letter / outage deferral │
 │  6. Touch liveness file                                 │
@@ -28,6 +31,15 @@ The relay daemon is the core component that moves tasks from the database to the
 ```bash
 python manage.py celery_outbox_relay
 ```
+
+Optional advanced tuning:
+
+```bash
+python manage.py celery_outbox_relay --publish-concurrency 2
+```
+
+Keep `--publish-concurrency=1` as the baseline unless you have broker-backed verification for your
+deployment path.
 
 ## Graceful Shutdown
 
@@ -49,4 +61,6 @@ Broker outages are handled differently from ordinary task publish failures:
 - Broker-outage rows are deferred by `--broker-outage-cooldown` instead of consuming retry budget.
 - After two consecutive broker outages in one batch, the process-local breaker opens and the
   relay stops starting new batch attempts until the cooldown expires.
+- In parallel publish mode, the relay also stops refilling the worker window until the already
+  in-flight results are classified.
 - The breaker is not shared across relay processes.
