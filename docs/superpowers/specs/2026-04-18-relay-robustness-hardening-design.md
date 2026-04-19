@@ -145,7 +145,19 @@ The first version keeps the breaker threshold internal to reduce API surface. Re
 
 ## Target Internal Architecture
 
-The current internal structure relevant to this work is:
+The landed relay structure relevant to this work is:
+
+```text
+django_celery_outbox/relay/
+├── _config.py
+├── _message_selector.py
+├── _mutations.py
+├── _publisher.py
+├── _relay.py
+└── _runtime.py
+```
+
+The target structure after this change is:
 
 ```text
 django_celery_outbox/relay/
@@ -190,7 +202,7 @@ The outage streak used for breaker opening is batch-local in v1:
 
 Responsibility:
 
-- publish one message through raw `Celery.send_task(...)`
+- publish one message through raw `Celery.send_task()`
 - receive `send_timeout` explicitly and pass it through to the publish boundary
 - continue to restore headers, Sentry propagation, and structlog context
 
@@ -419,7 +431,7 @@ Rationale:
 
 ### `_publisher.py` tests
 
-- `send_timeout` is passed through to raw `Celery.send_task(...)`
+- `send_timeout` is passed through to raw `Celery.send_task()`
 - existing header / Sentry / structlog behavior remains intact
 
 ### `_mutations.py` tests
