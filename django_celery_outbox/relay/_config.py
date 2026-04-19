@@ -84,7 +84,7 @@ class RelayConfig:
             idle_time=float(options['idle_time']),  # type: ignore[arg-type]
             backoff_time=int(options['backoff_time']),  # type: ignore[arg-type]
             max_retries=int(options['max_retries']),  # type: ignore[arg-type]
-            publish_concurrency=int(options['publish_concurrency']),  # type: ignore[arg-type]
+            publish_concurrency=int(options.get('publish_concurrency', 1)),  # type: ignore[arg-type]
             stale_timeout_seconds=int(options['stale_timeout_seconds']),  # type: ignore[arg-type]
             send_timeout=float(options['send_timeout']),  # type: ignore[arg-type]
             shutdown_timeout=float(options['shutdown_timeout']),  # type: ignore[arg-type]
