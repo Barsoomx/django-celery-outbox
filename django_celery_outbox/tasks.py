@@ -1,6 +1,5 @@
 from datetime import timedelta
-from typing import Any
-from typing import cast
+from typing import Any, cast
 
 from celery import shared_task
 

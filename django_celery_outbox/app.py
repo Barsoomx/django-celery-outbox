@@ -1,7 +1,7 @@
 from collections.abc import Callable
 from copy import deepcopy
 from functools import lru_cache
-from typing import Any
+from typing import Any, cast
 
 import sentry_sdk
 import structlog
@@ -11,8 +11,8 @@ from celery.utils import uuid
 from django.db import connections, transaction
 from django.dispatch import Signal
 
-from django_celery_outbox._settings import get_exclude_tasks_setting, load_pii_redactor_setting
 from django_celery_outbox import metrics
+from django_celery_outbox._settings import get_exclude_tasks_setting, load_pii_redactor_setting
 from django_celery_outbox.metrics import get_task_tag
 from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, serialize_options
 from django_celery_outbox.signals import outbox_message_created
@@ -35,16 +35,19 @@ def _build_redacted_payloads(
     if redactor is None:
         return None, None
 
-    payload = deepcopy(
-        {
-            'args': args_list,
-            'kwargs': kwargs_dict,
-        }
+    payload = cast(
+        dict[str, Any],
+        deepcopy(
+            {
+                'args': args_list,
+                'kwargs': kwargs_dict,
+            }
+        ),
     )
     redacted_args, redacted_kwargs = redactor(
         task_name,
-        payload['args'],
-        payload['kwargs'],
+        cast(list[Any], payload['args']),
+        cast(dict[str, Any], payload['kwargs']),
     )
     return (
         redacted_args if redacted_args != args_list else None,
