@@ -8,8 +8,9 @@ from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 
 
 class RelayMutations:
-    def __init__(self, backoff_time: int) -> None:
+    def __init__(self, *, backoff_time: int, max_backoff: float) -> None:
         self._backoff_time = backoff_time
+        self._max_backoff = max_backoff
 
     def update_failed(self, failed_messages: list[tuple[int, int]]) -> None:
         if not failed_messages:
@@ -20,7 +21,8 @@ class RelayMutations:
 
         for msg_id, retries in failed_messages:
             jitter = random.uniform(0, self._backoff_time * 0.1)  # noqa: S311
-            delay = timedelta(seconds=self._backoff_time * (2**retries) + jitter)
+            raw_delay_seconds = self._backoff_time * (2**retries) + jitter
+            delay = timedelta(seconds=min(raw_delay_seconds, self._max_backoff))
             message_ids.append(msg_id)
             retry_after_cases.append(
                 When(
@@ -36,6 +38,19 @@ class RelayMutations:
             retries=F('retries') + 1,
             updated_at=Now(),
             retry_after=Case(*retry_after_cases, output_field=DateTimeField()),
+        )
+
+    def defer_due_to_outage(self, message_ids: list[int], cooldown_seconds: float) -> None:
+        if not message_ids:
+            return
+
+        delay = timedelta(seconds=cooldown_seconds)
+        CeleryOutbox.objects.filter(pk__in=message_ids).update(
+            updated_at=Now(),
+            retry_after=ExpressionWrapper(
+                Now() + Value(delay, output_field=DurationField()),
+                output_field=DateTimeField(),
+            ),
         )
 
     def delete_published(self, message_ids: list[int]) -> None:

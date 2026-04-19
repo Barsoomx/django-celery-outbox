@@ -57,7 +57,10 @@ class Relay:
             stale_timeout=timedelta(seconds=config.stale_timeout_seconds),
         )
         self._publisher = RelayPublisher(app=app, send_timeout=config.send_timeout)
-        self._mutations = RelayMutations(backoff_time=config.backoff_time)
+        self._mutations = RelayMutations(
+            backoff_time=config.backoff_time,
+            max_backoff=config.max_backoff,
+        )
         self._running = True
 
     def start(self) -> None:
