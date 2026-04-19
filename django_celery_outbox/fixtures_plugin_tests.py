@@ -114,7 +114,7 @@ def test_pytest11_entry_point_registered(tmp_path: Path) -> None:
     wheel_path = _build_project_wheel(tmp_path / 'wheelhouse')
 
     env = _prepend_pythonpath(wheel_path, dict(os.environ))
-    result = subprocess.run(
+    result = subprocess.run(  # noqa: S603
         [
             sys.executable,
             '-c',
