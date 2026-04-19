@@ -125,10 +125,22 @@ def test_change_list_template() -> None:
 
 
 @pytest.mark.django_db
-def test_changelist_view_injects_summary_stats() -> None:
-    CeleryOutboxFactory.create()
-    CeleryOutboxFactory.create(updated_at=timezone.now())
-    CeleryOutboxFactory.create(retries=3)
+def test_changelist_view_uses_live_backlog_from_queue_stats() -> None:
+    from django_celery_outbox.stats import get_queue_stats
+
+    CeleryOutboxFactory.create(task_id='never-1', task_name='some.task', updated_at=None)
+    CeleryOutboxFactory.create(
+        task_id='retry-1',
+        task_name='some.task',
+        updated_at=timezone.now(),
+        retry_after=timezone.now() - timedelta(seconds=30),
+    )
+    CeleryOutboxFactory.create(
+        task_id='inflight-1',
+        task_name='some.task',
+        updated_at=timezone.now(),
+        retry_after=None,
+    )
 
     admin_instance = admin.site._registry[CeleryOutbox]
     m_request = MagicMock()
@@ -137,11 +149,13 @@ def test_changelist_view_injects_summary_stats() -> None:
     with patch.object(admin.ModelAdmin, 'changelist_view', return_value=MagicMock()) as m_super:
         admin_instance.changelist_view(m_request)
 
-    extra_context = m_super.call_args[1]['extra_context']
-    assert extra_context['pending_count'] == 2
-    assert extra_context['failed_count'] == 1
+    stats = get_queue_stats(top_n=0)
+    extra_context = m_super.call_args.kwargs['extra_context']
+    assert extra_context['live_backlog'] == 2
+    assert extra_context['live_backlog'] == stats.queue_depth
+    assert extra_context['never_attempted'] == 1
+    assert extra_context['failed_count'] == 0
     assert extra_context['total_count'] == 3
-    assert extra_context['oldest_pending'] is not None
 
 
 @pytest.mark.django_db
@@ -160,8 +174,9 @@ def test_changelist_view_oldest_pending_none_when_no_pending() -> None:
 
 
 @pytest.mark.django_db
-def test_changelist_view_oldest_pending_is_timedelta() -> None:
-    CeleryOutboxFactory.create()
+def test_changelist_view_oldest_pending_uses_shared_queue_stats_snapshot() -> None:
+    pending = CeleryOutboxFactory.create(task_id='oldest-1', task_name='some.task', updated_at=None)
+    CeleryOutbox.objects.filter(pk=pending.pk).update(created_at=timezone.now() - timedelta(minutes=2))
 
     admin_instance = admin.site._registry[CeleryOutbox]
     m_request = MagicMock()
@@ -170,8 +185,9 @@ def test_changelist_view_oldest_pending_is_timedelta() -> None:
     with patch.object(admin.ModelAdmin, 'changelist_view', return_value=MagicMock()) as m_super:
         admin_instance.changelist_view(m_request)
 
-    extra_context = m_super.call_args[1]['extra_context']
+    extra_context = m_super.call_args.kwargs['extra_context']
     assert isinstance(extra_context['oldest_pending'], timedelta)
+    assert extra_context['oldest_pending'] >= timedelta(seconds=110)
 
 
 @pytest.mark.django_db

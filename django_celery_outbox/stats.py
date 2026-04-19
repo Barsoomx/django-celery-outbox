@@ -1,11 +1,16 @@
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TypedDict, cast
 
-from django.db.models import Sum
+from django.db.models import Q, Sum
+from django.db.models.functions import Now
 from django.utils import timezone
 
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.serialization import CURRENT_SCHEMA_VERSION, MIN_SUPPORTED_VERSION
+
+_STALE_TIMEOUT = timedelta(minutes=5)
 
 
 class TopFailingTask(TypedDict):
@@ -63,10 +68,17 @@ class QueueStats:
 
 
 def get_queue_stats(top_n: int = 10) -> QueueStats:
-    queue_depth = CeleryOutbox.objects.count()
+    pending_filter = (
+        Q(updated_at__isnull=True) | Q(retry_after__lte=Now()) | Q(updated_at__lte=Now() - _STALE_TIMEOUT, retry_after__isnull=True)
+    ) & Q(
+        schema_version__gte=MIN_SUPPORTED_VERSION,
+        schema_version__lte=CURRENT_SCHEMA_VERSION,
+    )
+    pending_qs = CeleryOutbox.objects.filter(pending_filter)
+    queue_depth = pending_qs.count()
     dlq_count = CeleryOutboxDeadLetter.objects.count()
 
-    oldest = CeleryOutbox.objects.order_by('created_at').values_list('created_at', flat=True).first()
+    oldest = pending_qs.order_by('created_at').values_list('created_at', flat=True).first()
     if oldest:
         oldest_pending_seconds = (timezone.now() - oldest).total_seconds()
     else:

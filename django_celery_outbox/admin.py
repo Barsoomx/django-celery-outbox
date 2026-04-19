@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib import admin, messages
 from django.contrib.admin.models import CHANGE, DELETION, LogEntry
 from django.contrib.auth.models import AnonymousUser
@@ -5,9 +7,9 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.db.models import QuerySet
 from django.http import HttpRequest, HttpResponse
-from django.utils import timezone
 
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.stats import get_queue_stats
 
 
 def _get_log_entry_user_id(request: HttpRequest) -> int:
@@ -72,15 +74,12 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
 
     def changelist_view(self, request: HttpRequest, extra_context: dict | None = None) -> HttpResponse:
         extra_context = extra_context or {}
-        pending_qs = CeleryOutbox.objects.filter(updated_at__isnull=True)
-        extra_context['pending_count'] = pending_qs.count()
+        stats = get_queue_stats(top_n=0)
+        extra_context['live_backlog'] = stats.queue_depth
+        extra_context['never_attempted'] = CeleryOutbox.objects.filter(updated_at__isnull=True).count()
         extra_context['failed_count'] = CeleryOutbox.objects.filter(retries__gt=0).count()
         extra_context['total_count'] = CeleryOutbox.objects.count()
-        oldest = pending_qs.order_by('created_at').values_list('created_at', flat=True).first()
-        if oldest:
-            extra_context['oldest_pending'] = timezone.now() - oldest
-        else:
-            extra_context['oldest_pending'] = None
+        extra_context['oldest_pending'] = timedelta(seconds=stats.oldest_pending_seconds) if stats.oldest_pending_seconds is not None else None
 
         return super().changelist_view(request, extra_context=extra_context)
 
