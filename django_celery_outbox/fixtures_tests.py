@@ -533,3 +533,102 @@ def test_fake_relay_delegates_non_relay_celery_sends(
             },
         )
     ]
+
+
+def test_fake_relay_records_relay_celery_sends_with_positional_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import django_celery_outbox._settings as settings_module
+    import django_celery_outbox.relay._publisher as publisher_module
+
+    relay_app = Celery('relay-app')
+    delegated_calls: list[tuple[Celery, dict[str, Any]]] = []
+
+    def fake_original_send_task(app: Celery, **kwargs: Any) -> AsyncResult:
+        delegated_calls.append((app, kwargs))
+        return MagicMock(spec=AsyncResult)
+
+    monkeypatch.setattr(settings_module, 'load_celery_app_setting', lambda: relay_app)
+    monkeypatch.setattr(publisher_module.Celery, 'send_task', fake_original_send_task)
+
+    fake_relay_fixture = cast(Any, fixtures_module.fake_relay)
+    generator = fake_relay_fixture.__wrapped__()
+    recorder = next(generator)
+
+    result = publisher_module.Celery.send_task(
+        relay_app,
+        'relay.task',
+        [1],
+        {'flag': True},
+        task_id='relay-1',
+        headers={'trace': 'abc'},
+        countdown=5,
+    )
+
+    with pytest.raises(StopIteration):
+        next(generator)
+
+    assert result is None
+    assert delegated_calls == []
+    assert recorder.calls == [
+        RecordedRelayCall(
+            name='relay.task',
+            args=[1],
+            kwargs={'flag': True},
+            task_id='relay-1',
+            headers={'trace': 'abc'},
+            options={'countdown': 5},
+        )
+    ]
+
+
+def test_fake_relay_delegates_non_relay_celery_sends_with_positional_arguments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import django_celery_outbox._settings as settings_module
+    import django_celery_outbox.relay._publisher as publisher_module
+
+    relay_app = Celery('relay-app')
+    other_app = Celery('other-app')
+    delegated_result = MagicMock(spec=AsyncResult)
+    delegated_calls: list[tuple[Celery, dict[str, Any]]] = []
+
+    def fake_original_send_task(app: Celery, **kwargs: Any) -> AsyncResult:
+        delegated_calls.append((app, kwargs))
+        return delegated_result
+
+    monkeypatch.setattr(settings_module, 'load_celery_app_setting', lambda: relay_app)
+    monkeypatch.setattr(publisher_module.Celery, 'send_task', fake_original_send_task)
+
+    fake_relay_fixture = cast(Any, fixtures_module.fake_relay)
+    generator = fake_relay_fixture.__wrapped__()
+    recorder = next(generator)
+
+    direct_result = publisher_module.Celery.send_task(
+        other_app,
+        'direct.task',
+        [1],
+        {'flag': True},
+        task_id='direct-1',
+        headers={'trace': 'abc'},
+        countdown=7,
+    )
+
+    with pytest.raises(StopIteration):
+        next(generator)
+
+    assert direct_result is delegated_result
+    assert recorder.calls == []
+    assert delegated_calls == [
+        (
+            other_app,
+            {
+                'name': 'direct.task',
+                'args': [1],
+                'kwargs': {'flag': True},
+                'task_id': 'direct-1',
+                'headers': {'trace': 'abc'},
+                'countdown': 7,
+            },
+        )
+    ]

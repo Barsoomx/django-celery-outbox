@@ -586,10 +586,7 @@ def test_processing_sets_updated_at_on_select(m_celery_app: MagicMock) -> None:
 
 
 def test_graceful_shutdown_stops_start_loop(m_celery_app: MagicMock) -> None:
-    relay = Relay(
-        app=m_celery_app,
-        config=RelayConfig.init(batch_size=10, idle_time=0.01, max_retries=3),
-    )
+    relay = _build_relay_for_start_tests(m_celery_app)
     relay._running = False
 
     with patch.object(relay, '_setup_signals'):
@@ -597,6 +594,77 @@ def test_graceful_shutdown_stops_start_loop(m_celery_app: MagicMock) -> None:
             relay.start()
 
     m_processing.assert_not_called()
+
+
+def _build_relay_for_start_tests(m_celery_app: MagicMock) -> Relay:
+    m_connection = MagicMock()
+    m_connection.features.has_select_for_update_skip_locked = True
+
+    with patch('django_celery_outbox.relay._relay.connections', {'default': m_connection}):
+        with patch('django_celery_outbox.relay._relay.CeleryOutbox') as m_model:
+            m_model.objects.db = 'default'
+            return Relay(
+                app=m_celery_app,
+                config=RelayConfig.init(batch_size=10, idle_time=0.01, max_retries=3),
+            )
+
+
+def test_start_logs_and_continues_after_processing_exception(m_celery_app: MagicMock) -> None:
+    relay = _build_relay_for_start_tests(m_celery_app)
+    failure = RuntimeError('boom')
+    processing_calls = 0
+
+    def fake_processing() -> None:
+        nonlocal processing_calls
+        processing_calls += 1
+        if processing_calls == 1:
+            raise failure
+        relay._running = False
+
+    with patch.object(relay, '_setup_signals'):
+        with patch.object(relay, '_setup_delayed_delivery'):
+            with patch.object(relay, '_processing', side_effect=fake_processing) as m_processing:
+                with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+                    with patch('django_celery_outbox.relay._relay.sentry_sdk.capture_exception') as m_capture_exception:
+                        with patch('django_celery_outbox.relay._relay.should_log_traceback', return_value=False):
+                            with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+                                relay.start()
+
+    assert m_processing.call_count == 2
+    m_logger.error.assert_called_once_with(
+        'celery_outbox_relay_iteration_failed',
+        exception_type='RuntimeError',
+        exception_message='boom',
+    )
+    m_capture_exception.assert_called_once_with(failure)
+    m_sleep.assert_called_once_with(0.01)
+
+
+def test_start_does_not_sleep_after_processing_exception_when_stopped(m_celery_app: MagicMock) -> None:
+    relay = _build_relay_for_start_tests(m_celery_app)
+    failure = RuntimeError('boom')
+
+    def fake_processing() -> None:
+        relay._running = False
+        raise failure
+
+    with patch.object(relay, '_setup_signals'):
+        with patch.object(relay, '_setup_delayed_delivery'):
+            with patch.object(relay, '_processing', side_effect=fake_processing):
+                with patch('django_celery_outbox.relay._relay._logger') as m_logger:
+                    with patch('django_celery_outbox.relay._relay.sentry_sdk.capture_exception') as m_capture_exception:
+                        with patch('django_celery_outbox.relay._relay.should_log_traceback', return_value=True):
+                            with patch('django_celery_outbox.relay._relay.time.sleep') as m_sleep:
+                                relay.start()
+
+    m_logger.error.assert_called_once_with(
+        'celery_outbox_relay_iteration_failed',
+        exception_type='RuntimeError',
+        exception_message='boom',
+        exc_info=True,
+    )
+    m_capture_exception.assert_called_once_with(failure)
+    m_sleep.assert_not_called()
 
 
 def test_config_validation_batch_size_zero() -> None:

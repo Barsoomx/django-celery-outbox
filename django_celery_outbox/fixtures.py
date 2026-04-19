@@ -13,6 +13,37 @@ if TYPE_CHECKING:
 
 
 _UNSET = object()
+_SEND_TASK_POSITIONAL_PARAMETER_NAMES = (
+    'name',
+    'args',
+    'kwargs',
+    'countdown',
+    'eta',
+    'task_id',
+    'producer',
+    'connection',
+    'router',
+    'result_cls',
+    'expires',
+    'publisher',
+    'link',
+    'link_error',
+    'add_to_parent',
+    'group_id',
+    'group_index',
+    'retries',
+    'chord',
+    'reply_to',
+    'time_limit',
+    'soft_time_limit',
+    'root_id',
+    'parent_id',
+    'route_name',
+    'shadow',
+    'chain',
+    'task_type',
+    'replaced_task_nesting',
+)
 
 
 def _is_omitted(value: object) -> bool:
@@ -73,6 +104,28 @@ def _summarize_queued_messages(outbox_model: type[CeleryOutbox]) -> str:
     ]
 
     return '; '.join(queued_messages) if queued_messages else 'none'
+
+
+def _normalize_send_task_call(
+    call_args: tuple[Any, ...],
+    call_kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    max_positional_arguments = len(_SEND_TASK_POSITIONAL_PARAMETER_NAMES)
+    if len(call_args) > max_positional_arguments:
+        raise TypeError(
+            f'send_task() takes at most {max_positional_arguments} positional arguments after app, but {len(call_args)} were given',
+        )
+
+    normalized = dict(call_kwargs)
+    for parameter_name, value in zip(_SEND_TASK_POSITIONAL_PARAMETER_NAMES, call_args, strict=False):
+        if parameter_name in normalized:
+            raise TypeError(f"send_task() got multiple values for argument '{parameter_name}'")
+        normalized[parameter_name] = value
+
+    if 'name' not in normalized:
+        raise TypeError("send_task() missing required argument: 'name'")
+
+    return normalized
 
 
 def _format_remaining_rows(outbox_model: type[CeleryOutbox]) -> list[str]:
@@ -159,16 +212,18 @@ def fake_relay() -> Generator[FakeRelayRecorder, None, None]:
 
     def _record(
         _app: Celery,
-        *,
-        name: str,
-        args: list[Any] | tuple[Any, ...] | None = None,
-        kwargs: dict[str, Any] | None = None,
-        task_id: str | None = None,
-        headers: dict[str, Any] | None = None,
-        **options: Any,
+        *call_args: Any,
+        **call_kwargs: Any,
     ) -> object:
+        normalized_call = _normalize_send_task_call(call_args, call_kwargs)
+        name = normalized_call.pop('name')
+        args = normalized_call.pop('args', None)
+        kwargs = normalized_call.pop('kwargs', None)
+        task_id = normalized_call.pop('task_id', None)
+        headers = normalized_call.pop('headers', None)
+
         if _app is not relay_app:
-            delegated_options = dict(options)
+            delegated_options = dict(normalized_call)
             if headers is not None:
                 delegated_options['headers'] = headers
 
@@ -188,7 +243,7 @@ def fake_relay() -> Generator[FakeRelayRecorder, None, None]:
                 kwargs=dict(kwargs or {}),
                 task_id=task_id or '',
                 headers=dict(headers or {}),
-                options=dict(options),
+                options=dict(normalized_call),
             )
         )
         return None
