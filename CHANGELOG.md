@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
 
+## [0.3.0] — 2026-04-19
+
+### Added
+- **Public pytest plugin**: `pytest11` entry point and reusable fixtures for package consumers, including `outbox`, `drain_outbox`, `fake_relay`, and `assert_task_sent`
+- **Django system checks**: validation for `CELERY_OUTBOX_APP`, `CELERY_OUTBOX_EXCLUDE_TASKS`, database capabilities, and migration/schema state before runtime failures reach production
+- **Relay resilience controls**: broker outage circuit breaker, configurable send timeout, capped backoff, broker-outage cooldown, and bounded shutdown drain window
+- **Operational runbook coverage**: new troubleshooting and operations docs for relay behavior, health checks, and failure recovery
+
+### Changed
+- **Relay internals**: split the relay into focused selector, publisher, mutation, runtime, and policy components for easier testing and safer evolution
+- **Failure handling semantics**: broker outages are now deferred without consuming retry budget, while non-outage failures continue through normal retry/dead-letter flow
+- **Testing story**: package-level pytest integration is now documented and exercised through wheel/plugin tests, making third-party integration tests easier to write
+- **Dependency maintenance**: bumped `pytest` from `9.0.2` to `9.0.3`
+
+### Fixed
+- **Build cache reliability**: wheel/build cache handling is more predictable in local and CI packaging flows
+- **Relay robustness**: top-level relay loop now survives iteration failures, keeps liveness/metrics fresh during breaker cooldowns, and respects shutdown deadlines while draining
+- **Configuration feedback**: invalid settings and unsupported database setups now fail fast with explicit Django check output instead of surfacing later as runtime surprises
+
+
 ## [0.2.0] — 2026-04-13
 
 ### Added
