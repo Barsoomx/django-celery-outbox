@@ -133,6 +133,7 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
     docker_compose = Path('docker-compose.yml').read_text(encoding='utf-8')
     pyproject = Path('pyproject.toml').read_text(encoding='utf-8')
     smoke_script = Path('scripts/smoke_installed_wheel.py').read_text(encoding='utf-8')
+    readme = Path('README.md').read_text(encoding='utf-8')
 
     assert 'artifact_smoke:' in publish_workflow
     assert 'release_contract:' in publish_workflow
@@ -150,6 +151,7 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
 
     assert 'live_broker_smoke:' in tests_workflow
     assert 'parallel_broker_smoke:' in tests_workflow
+    assert 'coverage:' in tests_workflow
     assert 'rabbitmq:' in tests_workflow
     assert 'tests/live_broker_smoke_tests.py' in tests_workflow
     assert 'tests/parallel_broker_smoke_tests.py' in tests_workflow
@@ -157,6 +159,11 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
     assert "django: '5.1'" in tests_workflow or 'django: "5.1"' in tests_workflow
     assert 'Run Django compatibility smoke tests' in tests_workflow
     assert 'pytest -m "not release_artifact and not live_broker_smoke" -v' in tests_workflow
+    assert '--junitxml=junit.xml -o junit_family=legacy' in tests_workflow
+    assert 'python -m coverage xml -o coverage.xml' in tests_workflow
+    assert 'report_type: test_results' in tests_workflow
+    assert 'files: coverage.xml' in tests_workflow
+    assert 'files: junit.xml' in tests_workflow
 
     assert 'name: Test Example Project' in example_workflow
     assert 'push:\n    branches:\n      - master' in example_workflow
@@ -170,6 +177,8 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
 
     assert 'Framework :: Django :: 5.0' in pyproject
     assert 'Framework :: Django :: 5.1' in pyproject
+    assert '[![codecov](https://codecov.io/github/Barsoomx/django-celery-outbox/graph/badge.svg?token=PKOXQWYZVD)]' in readme
+    assert 'https://codecov.io/github/Barsoomx/django-celery-outbox/graphs/tree.svg?token=PKOXQWYZVD' in readme
 
 
 def test_architecture_docs_explicitly_mark_signal_payload_shape() -> None:

@@ -161,6 +161,94 @@ jobs:
           DB_PORT: ${{ matrix.db == 'postgresql' && '5432' || '3306' }}
         run: pytest -m "not release_artifact and not live_broker_smoke" -v
 
+  coverage:
+    name: Coverage (Py3.12 Dj5.2 Cel5.6 postgresql)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config default-libmysqlclient-dev
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install package with test dependencies
+        run: pip install -e '.[test]'
+
+      - name: Install Django and Celery versions under test
+        run: pip install "Django~=5.2" "celery~=5.6"
+
+      - name: Run tests and collect coverage
+        id: coverage_tests
+        continue-on-error: true
+        env:
+          DB_ENGINE: postgresql
+          DB_HOST: 127.0.0.1
+          DB_NAME: test_db
+          DB_USER: test
+          DB_PASSWORD: test
+          DB_PORT: 5432
+        run: >
+          python -m coverage run -m pytest
+          -m "not release_artifact and not live_broker_smoke"
+          -q
+          --junitxml=junit.xml -o junit_family=legacy
+
+      - name: Generate coverage reports
+        if: ${{ !cancelled() }}
+        run: |
+          python -m coverage xml -o coverage.xml
+          python -m coverage report -m
+
+      - name: Upload coverage to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: coverage.xml
+          disable_search: true
+          fail_ci_if_error: true
+
+      - name: Upload test results to Codecov
+        if: ${{ !cancelled() }}
+        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: junit.xml
+          disable_search: true
+          report_type: test_results
+          fail_ci_if_error: true
+
+      - name: Fail if coverage lane tests failed
+        if: steps.coverage_tests.outcome == 'failure'
+        run: exit 1
+
   live_broker_smoke:
     name: Live Broker Smoke (Django ${{ matrix.django }})
     runs-on: ubuntu-latest
