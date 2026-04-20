@@ -5,15 +5,48 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 
 ## [Unreleased]
 
+
+## [0.4.0] — 2026-04-20
+
+### Added
+- Bounded parallel publish mode via `--publish-concurrency` (default `1`; serial remains the default).
+- `--queue-snapshot-refresh-seconds` knob for sampled queue-wide gauge cadence.
+- `celery_outbox_replay_dead_letter` management command for DLQ recovery (explicit IDs, `--limit`, shared helper with admin bulk action).
+- Producer-side `messages.enqueued` counter emitted on commit.
+- System checks `celery_outbox.E007` (invalid `CELERY_OUTBOX_PII_REDACTOR`) and `E008` (invalid `CELERY_OUTBOX_DLQ_RETENTION`).
+- Admin summary exposes `live_backlog` and `never_attempted` counts aligned with relay selector semantics.
+- Inspection-time nested signature redaction for `link`, `link_error`, `chain`, and `chord` payloads.
+- Live RabbitMQ smoke CI lane and parallel broker smoke lane gating release.
+- Built-artifact smoke (`scripts/smoke_installed_wheel.py`) and changelog contract check (`scripts/check_release_contract.py`).
+- Codecov coverage reporting.
+
 ### Changed
-- Release artifacts now exclude internal `*_tests.py` modules from built wheels and source distributions.
-- Release publishing now runs built-artifact and changelog contract checks before PyPI upload.
-- CI now includes dedicated Django 5.0/5.1 compatibility smoke coverage, live RabbitMQ smoke lanes, and release-gating parallel broker smoke.
-- Relay queue-wide gauges (`queue.depth`, `dead_letter.count`, `oldest_pending_age_seconds`) are now sampled snapshots instead of exact per-batch recomputations, with configurable refresh cadence.
-- `celery_outbox_stats` now defaults to `--top=0`, making the expensive live `GROUP BY task_name` drilldown opt-in.
-- Broker-outage streak tracking now accumulates across batch boundaries until a successful publish or cooldown reset.
-- Dead-letter purge execution now deletes in ordered chunks instead of one large transaction.
-- Relay signal delivery now uses `send_robust()` consistently, so one bad receiver does not block later receivers.
+- Release artifacts exclude internal `*_tests.py` modules from built wheels and source distributions.
+- Release publishing runs built-artifact and changelog contract checks before PyPI upload.
+- CI covers dedicated Django 5.0/5.1 compatibility smoke, live RabbitMQ smoke, and release-gating parallel broker smoke.
+- Relay queue-wide gauges (`queue.depth`, `dead_letter.count`, `oldest_pending_age_seconds`) are now sampled snapshots with bounded refresh cadence instead of exact per-batch recomputations.
+- `celery_outbox_stats` defaults to `--top=0`, making the expensive live `GROUP BY task_name` drilldown opt-in.
+- Broker-outage streak tracking accumulates across batch boundaries until a successful publish or cooldown reset.
+- Dead-letter purge executes ordered chunked deletes instead of one large transaction.
+- All package-owned signal emission goes through `send_robust()` with receiver tracebacks preserved in `celery_outbox_signal_error` logs.
+- `sentry_baggage` storage widened to `TextField` in outbox and dead-letter tables.
+- Public pytest fixtures delegate to a package-owned `_fixture_support` module; no private internals imported.
+- Example workflow installs the built wheel artifact instead of the source tree.
+- GitHub Actions pinned to immutable SHAs across release-critical workflows.
+- DB setup docs reworked to least-privilege roles; alert rules standardized on rolling-window dead-letter signal.
+- Kubernetes `terminationGracePeriodSeconds` example aligned with shutdown + send timeouts.
+
+### Fixed
+- Breaker trip mid-batch correctly routes already-exceeded rows to DLQ instead of deferring them with the rest.
+- `replay_dead_letters()` uses the outbox DB alias and `select_for_update` for multi-DB and concurrent safety.
+- `celery_outbox_purge_dead_letter` reuses the validated DLQ retention parser instead of reading settings directly.
+- Duplicate `retry_after` index removed (migration `0006`, superseded by `(retry_after, id)`).
+- Long `sentry_baggage` values no longer raise `DataError` on enqueue.
+- Connection-recycling patches no longer applied globally across the test suite.
+
+### Removed
+- `up{job="celery-outbox-relay"}` from bundled alert examples (package does not provide that scrape target).
+- Ghost CHANGELOG entries that advertised unshipped features (PII redaction, log sampling, health endpoint).
 
 
 ## [0.3.0] — 2026-04-19
