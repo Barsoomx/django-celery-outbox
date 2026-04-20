@@ -1,0 +1,47 @@
+## postgres:selector_pending_sparse
+Limit  (cost=583.20..584.45 rows=100 width=14) (actual time=0.181..0.208 rows=100 loops=1)
+  ->  LockRows  (cost=583.20..585.36 rows=173 width=14) (actual time=0.181..0.203 rows=100 loops=1)
+        ->  Sort  (cost=583.20..583.63 rows=173 width=14) (actual time=0.176..0.180 rows=100 loops=1)
+              Sort Key: id
+              ->  Bitmap Heap Scan on celery_outbox  (cost=17.92..576.77 rows=173 width=14) (actual time=0.101..0.152 rows=300 loops=1)
+                    Recheck Cond: ((updated_at IS NULL) OR (retry_after <= now()) OR ((updated_at <= (now() - '00:05:00'::interval)) AND (retry_after IS NULL)))
+                    ->  BitmapOr  (cost=17.92..17.92 rows=173 width=0) (actual time=0.055..0.055 rows=0 loops=1)
+                          ->  Bitmap Index Scan on celery_outbox_pending_idx
+                          ->  Bitmap Index Scan on celery_outbox_retry_idx
+                                Index Cond: (retry_after <= now())
+                          ->  Bitmap Index Scan on celery_outbox_stale_idx
+                                Index Cond: (updated_at <= (now() - '00:05:00'::interval))
+decision: postgres selector_pending sparse backlog uses BitmapOr over pending/retry/stale selector indexes
+
+## mysql:selector_pending_sparse
+{'id': 1, 'select_type': 'SIMPLE', 'table': 'celery_outbox', 'type': 'index_merge', 'possible_keys': 'celery_outbox_retry_idx,celery_outbox_stale_idx', 'key': 'celery_outbox_stale_idx,celery_outbox_retry_idx', 'rows': 300, 'Extra': 'Using sort_union(celery_outbox_stale_idx,celery_outbox_retry_idx); Using where; Using filesort'}
+decision: mysql selector_pending sparse backlog uses index_merge on retry/stale selector indexes
+
+## postgres:dlq_dead_chunk_selector
+Limit  (cost=522.62..690.46 rows=1000 width=23) (actual time=3.636..3.727 rows=1000 loops=1)
+  ->  Incremental Sort  (cost=522.62..34090.86 rows=200000 width=23) (actual time=3.635..3.659 rows=1000 loops=1)
+        Sort Key: dead_at, id
+        Presorted Key: dead_at
+        ->  Index Scan using celery_outbox_dlq_dead_at_idx on celery_outbox_dead_letter  (cost=0.30..14890.99 rows=200000 width=23) (actual time=0.013..2.884 rows=3334 loops=1)
+              Index Cond: (dead_at < (now() - '30 days'::interval))
+decision: postgres destructive dead_at chunks should order by dead_at, id to keep chunk selection on the retention index
+
+## mysql:dlq_dead_chunk_selector
+{'id': 1, 'select_type': 'SIMPLE', 'table': 'celery_outbox_dead_letter', 'type': 'range', 'possible_keys': 'celery_outbox_dlq_dead_at_idx', 'key': 'celery_outbox_dlq_dead_at_idx', 'rows': 24957, 'Extra': 'Using index condition'}
+decision: mysql destructive dead_at chunks should order by dead_at, id to keep chunk selection on the retention index
+
+## postgres:dlq_created_chunk_selector
+Limit  (cost=12175.29..12290.29 rows=1000 width=23) (actual time=32.221..35.281 rows=1000 loops=1)
+  ->  Gather Merge  (cost=12175.29..25704.70 rows=117647 width=23) (actual time=32.219..35.226 rows=1000 loops=1)
+        ->  Sort  (cost=11175.28..11469.40 rows=117647 width=23) (actual time=30.767..30.796 rows=1000 loops=2)
+              Sort Key: created_at, id
+              Sort Method: top-N heapsort  Memory: 127kB
+              ->  Parallel Seq Scan on celery_outbox_dead_letter  (cost=0.00..4724.82 rows=117647 width=23) (actual time=0.025..22.541 rows=100000 loops=2)
+                    Filter: (created_at < (now() - '7 days'::interval))
+decision: postgres dense-match created_at purge may still prefer parallel seq scan even with created_at, id ordering
+
+## mysql:dlq_created_chunk_selector
+{'id': 1, 'select_type': 'SIMPLE', 'table': 'celery_outbox_dead_letter', 'type': 'range', 'possible_keys': 'celery_outbox_dlq_created_idx', 'key': 'celery_outbox_dlq_created_idx', 'rows': 24957, 'Extra': 'Using index condition'}
+decision: mysql destructive created_at chunks use the created_at retention index
+
+note: dense-match tables may still prefer PRIMARY / seq-scan style plans for ORDER BY id LIMIT queries; the relevant production path here is sparse selector matching and retention-ordered destructive chunk selection.

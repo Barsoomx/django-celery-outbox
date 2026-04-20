@@ -200,7 +200,7 @@ def test_logging_events_docs_include_relay_iteration_failed_alert_snippet() -> N
 
 
 def test_relay_index_explain_note_records_non_empty_table_evidence() -> None:
-    note = Path('docs/superpowers/plans/notes/2026-04-19-relay-index-explain.txt').read_text(encoding='utf-8')
+    note = Path('docs/superpowers/specs/notes/2026-04-19-relay-index-explain.txt').read_text(encoding='utf-8')
 
     assert 'BitmapOr' in note
     assert 'index_merge' in note
