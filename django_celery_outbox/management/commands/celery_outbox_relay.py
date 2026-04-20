@@ -3,7 +3,7 @@ from typing import Any
 from celery import Celery
 from django.core.management.base import BaseCommand, CommandParser
 
-from django_celery_outbox._settings import load_celery_app_setting
+from django_celery_outbox._settings import load_celery_app_setting, load_stale_timeout_seconds_setting
 from django_celery_outbox.relay import Relay, RelayConfig
 
 
@@ -30,9 +30,19 @@ class Command(BaseCommand):
             default=5,
         )
         parser.add_argument(
+            '--publish-concurrency',
+            type=int,
+            default=1,
+        )
+        parser.add_argument(
+            '--queue-snapshot-refresh-seconds',
+            type=float,
+            default=5.0,
+        )
+        parser.add_argument(
             '--stale-timeout-seconds',
             type=int,
-            default=300,
+            default=None,
         )
         parser.add_argument(
             '--send-timeout',
@@ -61,6 +71,8 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args: Any, **options: Any) -> None:
+        if options.get('stale_timeout_seconds') is None:
+            options['stale_timeout_seconds'] = load_stale_timeout_seconds_setting()
         app = self._get_celery_app()
         relay = Relay(
             app=app,

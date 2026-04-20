@@ -58,6 +58,8 @@ dev = [
 test = [
   "pytest>=7.0",
   "pytest-django>=4.5",
+  "coverage[toml]>=7.6",
+  "build>=1.2",
   "factory-boy>=3.3",
   "psycopg[binary]>=3.1",
   "mysqlclient>=2.2",
@@ -122,9 +124,26 @@ pythonpath = ['.']
 python_files = ['*_tests.py']
 python_classes = ['Test*']
 python_functions = ['test_*']
+markers = [
+    "release_artifact: tests that validate built wheel and sdist contents",
+    "release_contract: tests that validate release gates and contract checks",
+    "live_broker_smoke: tests that require a live RabbitMQ broker",
+]
 filterwarnings = [
     'ignore::pytest.PytestCollectionWarning',
 ]
+
+[tool.coverage.run]
+source = ["django_celery_outbox"]
+concurrency = ["thread"]
+omit = [
+  "django_celery_outbox/*_tests.py",
+  "django_celery_outbox/**/*_tests.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
 
 [tool.django-stubs]
 django_settings_module = "tests.settings"

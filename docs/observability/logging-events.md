@@ -36,6 +36,14 @@ Event names and field schemas are part of the public API.
 | exception_type | str | Exception class name |
 | exception_message | str | Exception message |
 
+Example Loki LogQL alert:
+
+```logql
+sum by (exception_type) (
+  count_over_time({app="relay"} |= "celery_outbox_relay_iteration_failed"[5m])
+) > 0
+```
+
 ### celery_outbox_relay_shutdown
 
 **Level:** INFO
@@ -54,10 +62,12 @@ Event names and field schemas are part of the public API.
 |-------|------|-------------|
 | cooldown_seconds | float | Seconds remaining before the relay retries a batch |
 
+Treat this as "relay alive but broker unavailable." It should route differently from process-down alerts.
+
 ### celery_outbox_relay_breaker_trip
 
 **Level:** WARNING
-**When:** A second consecutive broker outage in the same batch opens the process-local breaker
+**When:** A second consecutive broker outage without an intervening successful publish opens the process-local breaker
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -104,6 +114,16 @@ No additional fields.
 
 No additional fields.
 
+### celery_outbox_relay_iteration_failed
+
+**Level:** ERROR
+**When:** The top-level relay loop catches an unexpected exception, records it, and retries after the idle sleep
+
+| Field | Type | Description |
+|-------|------|-------------|
+| exception_type | str | Exception class name |
+| exception_message | str | Exception message |
+
 ### celery_outbox_send_failed
 
 **Level:** ERROR
@@ -133,16 +153,7 @@ No additional fields.
 1. **Pre-send exceeded:** Message was already at max retries when relay picked it up (e.g., after restart). `exception_type='pre_exceeded'`.
 2. **Post-send exceeded:** Send attempt failed on the last allowed retry. `exception_type` contains the actual exception category.
 
-### celery_outbox_signal_error
-
-**Level:** ERROR
-**When:** Django signal receiver raises exception
-
-| Field | Type | Description |
-|-------|------|-------------|
-| signal | str | Signal representation logged by `_send_signal_safe()` |
-| task_id | str | Task UUID |
-| task_name | str | Task name |
+`celery_outbox_relay_iteration_failed` is the catch-all relay-loop failure event. Promote it to a first-class log alert rather than relying only on stale liveness or backlog symptoms.
 
 ## App Events
 
@@ -155,6 +166,41 @@ No additional fields.
 |-------|------|-------------|
 | task_name | str | Task name |
 | task_id | str | Task UUID |
+
+### celery_outbox_signal_error
+
+**Level:** ERROR
+**When:** A package-owned Django signal receiver raises an exception; enqueue/relay continues because package-owned signal emission catches and logs receiver failures
+
+| Field | Type | Description |
+|-------|------|-------------|
+| signal | str | Signal name passed to `_send_signal_safe()` |
+| task_id | str | Task UUID |
+| task_name | str | Task name |
+| receiver | str | Receiver `__qualname__` or repr used in the log |
+| exception_type | str | Receiver exception class name |
+| exception_message | str | Receiver exception string form |
+
+### celery_outbox_metric_error
+
+**Level:** WARNING
+**When:** Producer-side metric emission fails during `messages.enqueued`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| metric | str | Metric name that failed to emit |
+| task_name | str | Task name being enqueued |
+
+## Inspection Events
+
+### celery_outbox_inspection_redaction_failed
+
+**Level:** WARNING
+**When:** Admin/debug inspection redaction fails and the package falls back to stored raw `options`
+
+| Field | Type | Description |
+|-------|------|-------------|
+| task_name | str | Task whose inspection payload could not be redacted |
 
 ## Serialization Events
 

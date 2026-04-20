@@ -140,7 +140,7 @@ Pending messages waiting for relay:
 | created_at | DateTimeField | When queued |
 | updated_at | DateTimeField | Last attempt timestamp |
 | sentry_trace_id | CharField(512) | Sentry trace propagation header |
-| sentry_baggage | CharField(2048) | Sentry baggage header |
+| sentry_baggage | TextField | Sentry baggage header |
 | structlog_context | TextField | Captured structlog context (JSON) |
 
 ### celery_outbox_dead_letter
@@ -158,7 +158,7 @@ Failed messages exceeding max retries:
 | redacted_kwargs | JSONField | Optional sanitized keyword arguments for inspection; falls back to original when `NULL` |
 | options | JSONField | Task options (serialized) |
 | sentry_trace_id | CharField(512) | Sentry trace propagation header |
-| sentry_baggage | CharField(2048) | Sentry baggage header |
+| sentry_baggage | TextField | Sentry baggage header |
 | structlog_context | TextField | Captured structlog context (JSON) |
 | schema_version | SmallIntegerField | Serialized payload format version |
 | retries | SmallIntegerField | Final retry count |
@@ -210,7 +210,7 @@ If publish already succeeded, that reclaim can lead to a resend. **Consumers mus
 `RelayPolicy` is the control layer for outage handling and draining mode:
 
 - `--send-timeout` bounds a single `Celery.send_task()` publish attempt.
-- Two consecutive broker outages in one batch open a process-local breaker for `--broker-outage-cooldown`.
+- Two consecutive broker outages without an intervening successful publish open a process-local breaker for `--broker-outage-cooldown`.
 - Broker-outage deferral does not increment `retries` and does not consume `--max-retries`.
 - `SIGTERM` or `SIGINT` starts draining mode.
 - The relay stops starting new sends after `--shutdown-timeout`.
@@ -243,6 +243,27 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 | Sentry trace | `sentry_sdk.get_traceparent()` | `sentry-trace` header |
 | Sentry baggage | `sentry_sdk.get_baggage()` | `baggage` header |
 | structlog | `structlog.contextvars.get_contextvars()` | `bound_contextvars()` inside the relay publish path |
+
+## Signal Contracts
+
+The package emits Django signals around enqueue and relay operations. The signal kwargs are part of the documented integration contract:
+
+| Signal | Sender | Shape | Kwargs |
+|--------|--------|-------|--------|
+| `outbox_message_created` | `OutboxCelery` | scalar | `task_id`, `task_name` |
+| `outbox_message_sent` | `Relay` | scalar | `task_id`, `task_name` |
+| `outbox_message_failed` | `Relay` | scalar | `task_id`, `task_name`, `retries` |
+| `outbox_message_dead_lettered` | `Relay` | batched | `task_ids`, `task_names` |
+
+`outbox_message_created` is emitted after the outbox row is written but before transaction commit. Use `transaction.on_commit()` if downstream work must observe only committed rows.
+
+All package-owned signal emission goes through `send_robust()`. Receiver failures are logged as `celery_outbox_signal_error`, but they do not abort enqueue or relay processing.
+
+Relay signal timing is:
+
+- `outbox_message_sent`: after broker publish succeeds for a row
+- `outbox_message_failed`: after an ordinary non-outage failure is classified for retry/backoff
+- `outbox_message_dead_lettered`: after rows are classified as exceeded and moved to dead letter
 
 ## Delivery Guarantees
 

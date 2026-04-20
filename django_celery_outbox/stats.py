@@ -1,10 +1,13 @@
 import json
 from dataclasses import dataclass
+from datetime import timedelta
 from typing import TypedDict, cast
 
 from django.db.models import Sum
 from django.utils import timezone
 
+from django_celery_outbox._pending import get_pending_filter
+from django_celery_outbox._settings import load_stale_timeout_seconds_setting
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 
 
@@ -62,11 +65,16 @@ class QueueStats:
         return f'{secs}s'
 
 
-def get_queue_stats(top_n: int = 10) -> QueueStats:
-    queue_depth = CeleryOutbox.objects.count()
+def get_queue_stats(top_n: int = 10, *, stale_timeout: timedelta | None = None) -> QueueStats:
+    if stale_timeout is None:
+        stale_timeout = timedelta(seconds=load_stale_timeout_seconds_setting())
+
+    pending_filter = get_pending_filter(stale_timeout)
+    pending_qs = CeleryOutbox.objects.filter(pending_filter)
+    queue_depth = pending_qs.count()
     dlq_count = CeleryOutboxDeadLetter.objects.count()
 
-    oldest = CeleryOutbox.objects.order_by('created_at').values_list('created_at', flat=True).first()
+    oldest = pending_qs.order_by('created_at').values_list('created_at', flat=True).first()
     if oldest:
         oldest_pending_seconds = (timezone.now() - oldest).total_seconds()
     else:

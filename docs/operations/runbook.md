@@ -24,9 +24,9 @@ just steady-state queue drain.
 
 | Field                     | Meaning                                           | Abnormal → playbook                                  |
 | ------------------------- | ------------------------------------------------- | ---------------------------------------------------- |
-| `queue_depth`             | rows in `celery_outbox` awaiting send             | trending up → [Queue growing](#queue-growing)        |
-| `oldest_pending_seconds`  | age of the oldest pending row (delivery latency)  | above your SLO → [Queue growing](#queue-growing)     |
-| `dlq_count`               | rows in `celery_outbox_dead_letter`               | delta from baseline → [Dead-letter queue growing](#dead-letter-queue-growing) |
+| `queue_depth`             | live backlog: rows eligible for relay send/recovery right now | trending up → [Queue growing](#queue-growing)        |
+| `oldest_pending_seconds`  | age of the oldest live-backlog row (delivery latency) | above your SLO → [Queue growing](#queue-growing)     |
+| `dlq_count`               | rows currently stored in `celery_outbox_dead_letter` | new increases over time → [Dead-letter queue growing](#dead-letter-queue-growing) |
 | `top_failing`             | current outbox task groups with the highest cumulative retry counts | one task dominating retries → [Queue growing](#queue-growing) or [Dead-letter queue growing](#dead-letter-queue-growing) |
 
 ### Metrics for graphing and alerting
@@ -35,9 +35,9 @@ StatsD names are shown with the default `MONITORING_STATSD_PREFIX = 'celery_outb
 
 | StatsD metric                               | Prometheus                                   | Type   | Use                                                                                           |
 | ------------------------------------------- | -------------------------------------------- | ------ | --------------------------------------------------------------------------------------------- |
-| `celery_outbox.queue.depth`                 | `celery_outbox_queue_depth`                  | gauge  | Chart as a time series. Sawtooth is healthy; monotonic rise means the queue is growing.       |
-| `celery_outbox.oldest_pending_age_seconds`  | `celery_outbox_oldest_pending_age_seconds`   | gauge  | Alert on crossing your SLO. Suggested starting threshold: 60s. Tune to your application.      |
-| `celery_outbox.dead_letter.count`           | `celery_outbox_dead_letter_count`            | gauge  | Alert on delta after the baseline stabilizes.                                                 |
+| `celery_outbox.queue.depth`                 | `celery_outbox_queue_depth`                  | gauge  | Sampled queue-wide live backlog, refreshed at most once per `--queue-snapshot-refresh-seconds`. Chart as a time series; monotonic rise means the queue is growing. |
+| `celery_outbox.oldest_pending_age_seconds`  | `celery_outbox_oldest_pending_age_seconds`   | gauge  | Sampled queue-wide oldest live backlog age, refreshed at most once per `--queue-snapshot-refresh-seconds`. Alert on crossing your SLO. |
+| `celery_outbox.dead_letter.count`           | `celery_outbox_dead_letter_count`            | gauge  | Sampled dead-letter backlog context, refreshed at most once per `--queue-snapshot-refresh-seconds`. Page from `increase(celery_outbox_messages_exceeded_total[10m]) > 0` instead of raw table size. |
 | `celery_outbox.batch.duration_ms`           | e.g. `celery_outbox_batch_duration_ms_bucket` | timing | Chart per-batch processing time. Absence of new samples means the relay has stalled.          |
 
 Full catalogue: [Metrics](../observability/metrics.md).
@@ -47,7 +47,8 @@ Full catalogue: [Metrics](../observability/metrics.md).
 - `celery_outbox_relay_started`
 - `celery_outbox_batch_processed` — absence during steady send is a stall signal
 - `celery_outbox_relay_breaker_trip`
-- `celery_outbox_relay_breaker_open`
+- `celery_outbox_relay_breaker_open` — relay alive, broker unavailable
+- `celery_outbox_relay_iteration_failed`
 - `celery_outbox_relay_shutdown_deadline_exceeded`
 - `celery_outbox_send_failed`
 - `celery_outbox_max_retries_exceeded`
@@ -123,7 +124,7 @@ Full catalogue: [Logging Events](../observability/logging-events.md).
 
 ### Dead-letter queue growing
 
-**Detect.** `celery_outbox_dead_letter_count` grows beyond your established baseline delta.
+**Detect.** `increase(celery_outbox_messages_exceeded_total[10m]) > 0` or another alert on new dead letters over time. Table size alone is secondary context, not the primary paging signal.
 
 **Triage:**
 
@@ -147,9 +148,37 @@ The first three are visible in the Django admin ([Admin Interface](admin-interfa
 - **Task name not registered on workers.** Roll workers forward to include the task, or revert the producer deploy.
 - **Serialization errors.** Fix the producing code and redeploy.
 
-**Replaying dead-lettered messages.** Use the Django admin: `CeleryOutboxDeadLetter` has a `retry_selected` bulk action that copies the selected rows back into `celery_outbox` for another send attempt. See [Admin Interface](admin-interface.md). There is no management-command equivalent; if you need automation, wrap the model-level `CeleryOutboxDeadLetter` → `CeleryOutbox` copy in your own command.
+**Replaying dead-lettered messages.** Use either:
 
-**Verify.** `celery_outbox_dead_letter_count` flat; the top `failure_reason` values stop appearing in newly-inserted rows.
+- Django admin: `CeleryOutboxDeadLetter` has a `retry_selected` bulk action.
+- CLI automation: `python manage.py celery_outbox_replay_dead_letter <dead_letter_id_1> <dead_letter_id_2>`.
+
+Both paths preserve the stored payload, schema version, and tracing/context fields and remove the replayed rows from `celery_outbox_dead_letter`. See [Admin Interface](admin-interface.md).
+
+**Verify.** `increase(celery_outbox_messages_exceeded_total[10m])` returns to zero; the top `failure_reason` values stop appearing in newly-inserted rows.
+
+### Relay iteration failed
+
+**Detect.** `celery_outbox_relay_iteration_failed` appears in the relay log or your log-alerting stack.
+
+**Triage:**
+
+1. **Read `exception_type` and `exception_message` first.** This event is a catch-all; the exception payload tells you whether to route to broker, DB, or config investigation.
+2. **Correlate the previous and next relay events.** If the surrounding logs show `celery_outbox_relay_breaker_trip` or `celery_outbox_relay_breaker_open`, switch to [Broker unreachable / outage cooldown active](#broker-unreachable-outage-cooldown-active).
+3. **Check for schema/config drift.** Recent deploys, unapplied migrations, or changed Celery settings are common causes because the relay loop retries instead of crashing hard.
+4. **Check whether the failure repeats.** A single iteration failure can be transient; repeated identical failures mean the relay is stuck in a retry loop.
+
+**Fix:**
+
+- Broker/auth/network error → restore connectivity and credentials, then follow [Broker unreachable / outage cooldown active](#broker-unreachable-outage-cooldown-active).
+- Database/schema error → apply migrations or roll back the incompatible deploy before the relay retries the same failing code path.
+- Bad package setting or broken callback → correct the setting/code and redeploy.
+
+**Verify.**
+
+- `celery_outbox_relay_iteration_failed` stops repeating for the same root cause.
+- `celery_outbox_batch_processed` resumes.
+- `celery_outbox_queue_depth` or `celery_outbox_oldest_pending_age_seconds` move in the expected direction again.
 
 ### Relay hanging
 

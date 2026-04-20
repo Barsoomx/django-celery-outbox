@@ -29,13 +29,14 @@ class RelayPolicy:
         self._outage_streak = 0
 
     def begin_batch(self) -> None:
-        self._outage_streak = 0
+        return
 
     def should_skip_batch(self, now_monotonic: float) -> bool:
         if self._breaker_open_until is None:
             return False
         if now_monotonic >= self._breaker_open_until:
             self._breaker_open_until = None
+            self._outage_streak = 0
             return False
         return True
 

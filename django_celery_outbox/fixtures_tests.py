@@ -174,23 +174,138 @@ def test_fixture_types_are_importable() -> None:
     assert RecordedRelayCall is not None
 
 
-@dataclass(slots=True)
-class FakeQueuedMessage:
-    id: int
-    task_name: str
-    task_id: str
-    args: list[Any]
-    kwargs: dict[str, Any]
-    redacted_args: list[Any] | None = None
-    redacted_kwargs: dict[str, Any] | None = None
+def test_fixture_support_exports_semver_stable_boundary() -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
 
-    @property
-    def inspection_args(self) -> list[Any]:
-        return self.redacted_args if self.redacted_args is not None else self.args
+    assert fixture_support_module.__all__ == [
+        'FakeRelayRecorder',
+        'RecordedRelayCall',
+        'load_fixture_celery_app',
+        'patch_fake_relay_send_task',
+        'reset_fixture_state',
+        'run_drain_outbox_once',
+    ]
 
-    @property
-    def inspection_kwargs(self) -> dict[str, Any]:
-        return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
+
+def test_reset_fixture_state_clears_models_redactor_cache_and_contextvars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+    import django_celery_outbox.app as app_module
+    import django_celery_outbox.models as models_module
+
+    outbox_model = _build_fake_model(
+        [
+            FakeQueuedMessage(
+                id=1,
+                task_name='queued.task',
+                task_id='queued-1',
+                args=[],
+                kwargs={},
+            ),
+        ],
+    )
+    dead_letter_model = _build_fake_model(
+        [
+            FakeQueuedMessage(
+                id=2,
+                task_name='dead.task',
+                task_id='dead-1',
+                args=[],
+                kwargs={},
+            ),
+        ],
+    )
+    redactor_tracker = CacheClearTracker()
+    contextvars_tracker = ContextVarsTracker()
+
+    monkeypatch.setattr(app_module, '_get_redactor', redactor_tracker)
+    monkeypatch.setattr(structlog.contextvars, 'clear_contextvars', contextvars_tracker)
+    monkeypatch.setattr(models_module, 'CeleryOutbox', outbox_model)
+    monkeypatch.setattr(models_module, 'CeleryOutboxDeadLetter', dead_letter_model)
+
+    fixture_support_module.reset_fixture_state()
+
+    assert outbox_model.objects.rows == []
+    assert dead_letter_model.objects.rows == []
+    assert outbox_model.objects.delete_calls == 1
+    assert dead_letter_model.objects.delete_calls == 1
+    assert redactor_tracker.clear_calls == 1
+    assert contextvars_tracker.clear_calls == 1
+
+
+def test_fake_relay_uses_fixture_support_patch_target(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[FakeRelayRecorder] = []
+
+    class _PatchContext:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, exc_type: object, exc: object, tb: object) -> None:
+            del exc_type, exc, tb
+
+    def fake_patch_fake_relay_send_task(recorder: FakeRelayRecorder) -> _PatchContext:
+        called.append(recorder)
+        return _PatchContext()
+
+    monkeypatch.setattr(
+        fixtures_module,
+        'patch_fake_relay_send_task',
+        fake_patch_fake_relay_send_task,
+        raising=False,
+    )
+
+    generator = cast(Any, fixtures_module.fake_relay).__wrapped__()
+    recorder = next(generator)
+
+    assert called == [recorder]
+
+    with pytest.raises(StopIteration):
+        next(generator)
+
+
+@pytest.mark.django_db
+def test_drain_outbox_uses_fixture_support_run_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[tuple[object, float]] = []
+
+    def fake_run_drain_outbox_once(app: object, *, idle_time: float = 0.0) -> None:
+        called.append((app, idle_time))
+
+    monkeypatch.setattr(
+        fixtures_module,
+        'run_drain_outbox_once',
+        fake_run_drain_outbox_once,
+        raising=False,
+    )
+
+    drain_outbox = cast(Any, fixtures_module.drain_outbox_fixture).__wrapped__(outbox=CeleryOutbox)
+
+    with patch.object(CeleryOutbox.objects, 'count', side_effect=[1, 0]):
+        drain_outbox()
+
+    assert len(called) == 1
+
+
+@pytest.mark.django_db
+def test_drain_outbox_returns_immediately_when_queue_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[tuple[object, float]] = []
+
+    def fake_run_drain_outbox_once(app: object, *, idle_time: float = 0.0) -> None:
+        called.append((app, idle_time))
+
+    monkeypatch.setattr(
+        fixtures_module,
+        'run_drain_outbox_once',
+        fake_run_drain_outbox_once,
+        raising=False,
+    )
+
+    drain_outbox = cast(Any, fixtures_module.drain_outbox_fixture).__wrapped__(outbox=CeleryOutbox)
+
+    with patch.object(CeleryOutbox.objects, 'count', return_value=0):
+        drain_outbox()
+
+    assert called == []
 
 
 class FakeDeleteQuerySet:
@@ -290,42 +405,41 @@ def _build_assert_task_sent(
     return assert_task_sent, outbox_model
 
 
-def test_outbox_fixture_cleans_models_redactor_cache_and_contextvars(
+@dataclass(slots=True)
+class FakeQueuedMessage:
+    id: int
+    task_name: str
+    task_id: str
+    args: list[Any]
+    kwargs: dict[str, Any]
+    redacted_args: list[Any] | None = None
+    redacted_kwargs: dict[str, Any] | None = None
+
+    @property
+    def inspection_args(self) -> list[Any]:
+        return self.redacted_args if self.redacted_args is not None else self.args
+
+    @property
+    def inspection_kwargs(self) -> dict[str, Any]:
+        return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
+
+
+def test_outbox_fixture_uses_fixture_support_reset_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import django_celery_outbox.app as app_module
     import django_celery_outbox.models as models_module
 
-    outbox_model = _build_fake_model(
-        [
-            FakeQueuedMessage(
-                id=1,
-                task_name='queued.task',
-                task_id='queued-1',
-                args=[],
-                kwargs={},
-            ),
-        ],
-    )
-    dead_letter_model = _build_fake_model(
-        [
-            FakeQueuedMessage(
-                id=2,
-                task_name='dead.task',
-                task_id='dead-1',
-                args=[],
-                kwargs={},
-            ),
-        ],
-    )
-    redactor_tracker = CacheClearTracker()
-    contextvars_tracker = ContextVarsTracker()
+    outbox_model = _build_fake_model([])
+    dead_letter_model = _build_fake_model([])
     blocker_tracker = DjangoDbBlockerTracker()
+    reset_calls: list[None] = []
 
-    monkeypatch.setattr(app_module, '_get_redactor', redactor_tracker)
-    monkeypatch.setattr(structlog.contextvars, 'clear_contextvars', contextvars_tracker)
+    def fake_reset_fixture_state() -> None:
+        reset_calls.append(None)
+
     monkeypatch.setattr(models_module, 'CeleryOutbox', outbox_model)
     monkeypatch.setattr(models_module, 'CeleryOutboxDeadLetter', dead_letter_model)
+    monkeypatch.setattr(fixtures_module, 'reset_fixture_state', fake_reset_fixture_state, raising=False)
 
     outbox_fixture = cast(Any, fixtures_module.outbox)
     generator = outbox_fixture.__wrapped__(
@@ -335,43 +449,14 @@ def test_outbox_fixture_cleans_models_redactor_cache_and_contextvars(
     yielded_model = next(generator)
 
     assert yielded_model is outbox_model
-    assert outbox_model.objects.rows == []
-    assert dead_letter_model.objects.rows == []
-    assert outbox_model.objects.delete_calls == 1
-    assert dead_letter_model.objects.delete_calls == 1
-    assert redactor_tracker.clear_calls == 1
-    assert contextvars_tracker.clear_calls == 1
+    assert reset_calls == [None]
     assert blocker_tracker.enter_calls == 1
     assert blocker_tracker.exit_calls == 0
-
-    outbox_model.objects.rows.append(
-        FakeQueuedMessage(
-            id=3,
-            task_name='later.task',
-            task_id='later-1',
-            args=[],
-            kwargs={},
-        ),
-    )
-    dead_letter_model.objects.rows.append(
-        FakeQueuedMessage(
-            id=4,
-            task_name='later.dead',
-            task_id='dead-2',
-            args=[],
-            kwargs={},
-        ),
-    )
 
     with pytest.raises(StopIteration):
         next(generator)
 
-    assert outbox_model.objects.rows == []
-    assert dead_letter_model.objects.rows == []
-    assert outbox_model.objects.delete_calls == 2
-    assert dead_letter_model.objects.delete_calls == 2
-    assert redactor_tracker.clear_calls == 2
-    assert contextvars_tracker.clear_calls == 2
+    assert reset_calls == [None, None]
     assert blocker_tracker.enter_calls == 1
     assert blocker_tracker.exit_calls == 1
 
@@ -420,6 +505,24 @@ def test_assert_task_sent_treats_ellipsis_as_omitted_with_fake_model() -> None:
         'ellipsis.task',
         args=...,
         kwargs=...,
+    )
+
+    assert matched is message
+
+
+def test_assert_task_sent_accepts_list_args_without_tuple_normalization_with_fake_model() -> None:
+    message = FakeQueuedMessage(
+        id=1,
+        task_name='list.task',
+        task_id='list-1',
+        args=[1, 2],
+        kwargs={},
+    )
+    assert_task_sent, _ = _build_assert_task_sent([message])
+
+    matched = assert_task_sent(
+        'list.task',
+        args=[1, 2],
     )
 
     assert matched is message
@@ -533,6 +636,27 @@ def test_fake_relay_delegates_non_relay_celery_sends(
             },
         )
     ]
+
+
+def test_fixture_support_normalize_send_task_call_rejects_too_many_positionals() -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+
+    with pytest.raises(TypeError, match='takes at most'):
+        fixture_support_module._normalize_send_task_call(tuple(range(64)), {})
+
+
+def test_fixture_support_normalize_send_task_call_rejects_duplicate_argument() -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+
+    with pytest.raises(TypeError, match="multiple values for argument 'name'"):
+        fixture_support_module._normalize_send_task_call(('demo.task',), {'name': 'other.task'})
+
+
+def test_fixture_support_normalize_send_task_call_requires_name() -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+
+    with pytest.raises(TypeError, match="missing required argument: 'name'"):
+        fixture_support_module._normalize_send_task_call((), {})
 
 
 def test_fake_relay_records_relay_celery_sends_with_positional_arguments(

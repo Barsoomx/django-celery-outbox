@@ -224,3 +224,20 @@ def test_outbox_fixture_cleans_between_tests(tmp_path: Path) -> None:
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_example_workflow_uses_built_artifact() -> None:
+    workflow = Path('.github/workflows/example.yml').read_text(encoding='utf-8')
+    compose = Path('examples/minimal_django/docker-compose.yml').read_text(encoding='utf-8')
+    readme = Path('examples/minimal_django/README.md').read_text(encoding='utf-8')
+
+    assert 'push:\n    branches:\n      - master' in workflow
+    assert 'pull_request:' in workflow
+    assert 'paths:' not in workflow
+    assert 'rm -rf dist/example' in workflow
+    assert 'python -Im build --outdir dist/example' in workflow
+    assert '/package/dist/example/django_celery_outbox-*.whl' in compose
+    assert 'Expected exactly one built wheel' in compose
+    assert 'cp -r /package /tmp/package && pip install /tmp/package' not in compose
+    assert 'python -Im build --outdir dist/example' in readme
+    assert 'docker compose -f examples/minimal_django/docker-compose.yml up -d' in readme

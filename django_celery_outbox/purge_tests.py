@@ -2,11 +2,13 @@ from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
+from django.db import connection
+from django.test.utils import CaptureQueriesContext
 from django.utils import timezone
 
 from django_celery_outbox.factories import CeleryOutboxDeadLetterFactory
 from django_celery_outbox.models import CeleryOutboxDeadLetter
-from django_celery_outbox.purge import PurgeResult, parse_duration, purge_dead_letter
+from django_celery_outbox.purge import PurgeResult, _chunk_ordering, parse_duration, purge_dead_letter
 
 
 class TestParseDuration:
@@ -67,6 +69,32 @@ class TestPurgeResult:
 
         assert result.deleted_count == 0
         assert result.task_names == {}
+
+
+class TestChunkOrdering:
+    def test_prefers_dead_at_when_dead_retention_present(self) -> None:
+        assert _chunk_ordering(
+            older_than_dead=timedelta(days=30),
+            older_than_created=None,
+        ) == ('dead_at', 'pk')
+
+    def test_uses_created_at_when_only_created_retention_present(self) -> None:
+        assert _chunk_ordering(
+            older_than_dead=None,
+            older_than_created=timedelta(days=90),
+        ) == ('created_at', 'pk')
+
+    def test_prefers_dead_at_when_both_retentions_present(self) -> None:
+        assert _chunk_ordering(
+            older_than_dead=timedelta(days=30),
+            older_than_created=timedelta(days=90),
+        ) == ('dead_at', 'pk')
+
+    def test_falls_back_to_primary_key_when_no_retention_dimension_is_selected(self) -> None:
+        assert _chunk_ordering(
+            older_than_dead=None,
+            older_than_created=None,
+        ) == ('pk',)
 
 
 class TestPurgeDeadLetterValidation:
@@ -274,3 +302,36 @@ class TestPurgeDeadLetterDryRun:
 
         assert result.deleted_count == 1
         assert not CeleryOutboxDeadLetter.objects.filter(pk=record.pk).exists()
+
+
+@pytest.mark.django_db
+def test_purge_dead_letter_deletes_in_deterministic_chunks() -> None:
+    now = timezone.now()
+    old_time = now - timedelta(days=31)
+    with patch('django.utils.timezone.now', return_value=now):
+        records = CeleryOutboxDeadLetterFactory.create_batch(3, task_name='myapp.task')
+    CeleryOutboxDeadLetter.objects.filter(pk__in=[row.pk for row in records]).update(dead_at=old_time)
+
+    with patch('django_celery_outbox.purge._DELETE_CHUNK_SIZE', 2):
+        with CaptureQueriesContext(connection) as ctx:
+            result = purge_dead_letter(older_than_dead=timedelta(days=30), dry_run=False)
+
+    delete_queries = [query['sql'] for query in ctx.captured_queries if query['sql'].lstrip().upper().startswith('DELETE')]
+    assert result.deleted_count == 3
+    assert len(delete_queries) == 2
+    assert CeleryOutboxDeadLetter.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_purge_dead_letter_dry_run_unchanged() -> None:
+    now = timezone.now()
+    old_time = now - timedelta(days=31)
+    with patch('django.utils.timezone.now', return_value=now):
+        record = CeleryOutboxDeadLetterFactory.create(task_name='myapp.task')
+    CeleryOutboxDeadLetter.objects.filter(pk=record.pk).update(dead_at=old_time)
+
+    with patch('django_celery_outbox.purge._DELETE_CHUNK_SIZE', 2):
+        result = purge_dead_letter(older_than_dead=timedelta(days=30), dry_run=True)
+
+    assert result.deleted_count == 1
+    assert CeleryOutboxDeadLetter.objects.filter(pk=record.pk).exists()

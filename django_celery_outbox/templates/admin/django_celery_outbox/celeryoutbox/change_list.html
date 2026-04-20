@@ -5,7 +5,8 @@
     <h3 style="margin-top: 0;">Outbox Summary</h3>
     <ul style="list-style: none; padding: 0; margin: 0;">
         <li><strong>Total:</strong> {{ total_count }}</li>
-        <li><strong>Pending:</strong> {{ pending_count }}</li>
+        <li><strong>Live backlog:</strong> {{ live_backlog }}</li>
+        <li><strong>Never attempted:</strong> {{ never_attempted }}</li>
         <li><strong>Failed (retries &gt; 0):</strong> {{ failed_count }}</li>
         <li><strong>Oldest pending:</strong> {% if oldest_pending %}{{ oldest_pending }}{% else %}None{% endif %}</li>
     </ul>

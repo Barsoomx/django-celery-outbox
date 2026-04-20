@@ -72,13 +72,14 @@ The package does not ship an HTTP health endpoint. If your platform requires one
 
 ```python
 from django.http import JsonResponse
-from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.stats import get_queue_stats
 
 def health(request):
+    stats = get_queue_stats(top_n=0)
     return JsonResponse({
         'status': 'ok',
-        'queue_depth': CeleryOutbox.objects.count(),
-        'dead_letter_count': CeleryOutboxDeadLetter.objects.count(),
+        'queue_depth': stats.queue_depth,
+        'dead_letter_count': stats.dlq_count,
     })
 ```
 

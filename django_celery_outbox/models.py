@@ -1,3 +1,5 @@
+from typing import Any
+
 from django.db import models
 
 
@@ -7,7 +9,7 @@ class CeleryOutbox(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(null=True)
     retries = models.SmallIntegerField(default=0)
-    retry_after = models.DateTimeField(null=True, db_index=True)
+    retry_after = models.DateTimeField(null=True)
 
     task_id = models.CharField(max_length=255, db_index=True)
     task_name = models.CharField(max_length=255, db_index=True)
@@ -18,7 +20,7 @@ class CeleryOutbox(models.Model):
     options = models.JSONField(default=dict)
 
     sentry_trace_id = models.CharField(max_length=512, null=True, blank=True)
-    sentry_baggage = models.CharField(max_length=2048, null=True, blank=True)
+    sentry_baggage = models.TextField(null=True, blank=True)
     structlog_context = models.TextField(null=True, blank=True)
     schema_version = models.SmallIntegerField(default=1)
 
@@ -32,6 +34,12 @@ class CeleryOutbox(models.Model):
                 condition=models.Q(updated_at__isnull=True),
                 name='celery_outbox_pending_idx',
             ),
+            models.Index(fields=['retry_after', 'id'], name='celery_outbox_retry_idx'),
+            models.Index(
+                fields=['updated_at', 'id'],
+                condition=models.Q(retry_after__isnull=True),
+                name='celery_outbox_stale_idx',
+            ),
         ]
 
     def __str__(self) -> str:
@@ -44,6 +52,12 @@ class CeleryOutbox(models.Model):
     @property
     def inspection_kwargs(self) -> dict:
         return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
+
+    @property
+    def inspection_options(self) -> dict[str, Any]:
+        from django_celery_outbox.app import _redact_options_for_inspection
+
+        return _redact_options_for_inspection(self.task_name, self.options)
 
 
 class CeleryOutboxDeadLetter(models.Model):
@@ -62,7 +76,7 @@ class CeleryOutboxDeadLetter(models.Model):
     options = models.JSONField(default=dict)
 
     sentry_trace_id = models.CharField(max_length=512, null=True, blank=True)
-    sentry_baggage = models.CharField(max_length=2048, null=True, blank=True)
+    sentry_baggage = models.TextField(null=True, blank=True)
     structlog_context = models.TextField(null=True, blank=True)
 
     failure_reason = models.TextField(null=True, blank=True)
@@ -72,6 +86,10 @@ class CeleryOutboxDeadLetter(models.Model):
         db_table = 'celery_outbox_dead_letter'
         verbose_name = 'CeleryOutboxDeadLetter'
         verbose_name_plural = 'CeleryOutboxDeadLetter'
+        indexes = [
+            models.Index(fields=['dead_at'], name='celery_outbox_dlq_dead_at_idx'),
+            models.Index(fields=['created_at'], name='celery_outbox_dlq_created_idx'),
+        ]
 
     @property
     def inspection_args(self) -> list:
@@ -80,3 +98,9 @@ class CeleryOutboxDeadLetter(models.Model):
     @property
     def inspection_kwargs(self) -> dict:
         return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
+
+    @property
+    def inspection_options(self) -> dict[str, Any]:
+        from django_celery_outbox.app import _redact_options_for_inspection
+
+        return _redact_options_for_inspection(self.task_name, self.options)

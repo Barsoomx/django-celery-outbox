@@ -1,9 +1,9 @@
 from datetime import timedelta
 from typing import Any
 
-from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError, CommandParser
 
+from django_celery_outbox._settings import load_dlq_retention_setting
 from django_celery_outbox.purge import PurgeResult, parse_duration, purge_dead_letter
 
 
@@ -37,14 +37,15 @@ class Command(BaseCommand):
 
     def handle(self, *args: Any, **options: Any) -> None:
         cli_has_retention = bool(options.get('older_than_dead') or options.get('older_than_created'))
+        retention = {} if cli_has_retention else self._load_retention()
 
         try:
-            older_than_dead = self._get_duration('older_than_dead', options, cli_has_retention)
-            older_than_created = self._get_duration('older_than_created', options, cli_has_retention)
-        except ValueError as e:
+            older_than_dead = self._get_duration('older_than_dead', options, cli_has_retention, retention)
+            older_than_created = self._get_duration('older_than_created', options, cli_has_retention, retention)
+        except (TypeError, ValueError) as e:
             raise CommandError(str(e)) from e
 
-        task_name_pattern = self._get_task_name_pattern(options, cli_has_retention)
+        task_name_pattern = self._get_task_name_pattern(options, cli_has_retention, retention)
         dry_run = options['dry_run']
 
         if older_than_dead is None and older_than_created is None:
@@ -59,7 +60,19 @@ class Command(BaseCommand):
 
         self._output_result(result, dry_run)
 
-    def _get_duration(self, key: str, options: dict[str, Any], cli_has_retention: bool) -> timedelta | None:
+    def _load_retention(self) -> dict[str, timedelta | str | None]:
+        try:
+            return load_dlq_retention_setting() or {}
+        except (TypeError, ValueError) as e:
+            raise CommandError(str(e)) from e
+
+    def _get_duration(
+        self,
+        key: str,
+        options: dict[str, Any],
+        cli_has_retention: bool,
+        retention: dict[str, timedelta | str | None],
+    ) -> timedelta | None:
         cli_value = options.get(key)
         if cli_value:
             return parse_duration(cli_value)
@@ -67,14 +80,14 @@ class Command(BaseCommand):
         if cli_has_retention:
             return None
 
-        retention = getattr(settings, 'CELERY_OUTBOX_DLQ_RETENTION', None) or {}
-        settings_value = retention.get(key)
-        if settings_value:
-            return parse_duration(settings_value)
+        return retention.get(key)  # type: ignore[return-value]
 
-        return None
-
-    def _get_task_name_pattern(self, options: dict[str, Any], cli_has_retention: bool) -> str | None:
+    def _get_task_name_pattern(
+        self,
+        options: dict[str, Any],
+        cli_has_retention: bool,
+        retention: dict[str, timedelta | str | None],
+    ) -> str | None:
         cli_value = options.get('task_name')
         if cli_value:
             return cli_value
@@ -82,9 +95,7 @@ class Command(BaseCommand):
         if cli_has_retention:
             return None
 
-        retention = getattr(settings, 'CELERY_OUTBOX_DLQ_RETENTION', None) or {}
-
-        return retention.get('task_name')
+        return retention.get('task_name_pattern')  # type: ignore[return-value]
 
     def _output_result(self, result: PurgeResult, dry_run: bool) -> None:
         if result.deleted_count == 0:

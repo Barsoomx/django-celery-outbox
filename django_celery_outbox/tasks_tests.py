@@ -59,3 +59,27 @@ class TestPurgeDeadLetterTask:
 
         with pytest.raises(ValueError, match='CELERY_OUTBOX_DLQ_RETENTION must specify'):
             purge_dead_letter_task()
+
+    @patch('django_celery_outbox.tasks.purge_dead_letter')
+    def test_reuses_validated_retention_setting(self, m_purge: MagicMock) -> None:
+        from django_celery_outbox.tasks import purge_dead_letter_task
+
+        m_purge.return_value = PurgeResult(deleted_count=0, task_names={})
+
+        with patch(
+            'django_celery_outbox.tasks.load_dlq_retention_setting',
+            return_value={
+                'older_than_dead': timedelta(days=7),
+                'older_than_created': None,
+                'task_name_pattern': 'myapp.*',
+            },
+        ) as load_retention:
+            purge_dead_letter_task()
+
+        load_retention.assert_called_once_with()
+        m_purge.assert_called_once_with(
+            older_than_dead=timedelta(days=7),
+            older_than_created=None,
+            task_name_pattern='myapp.*',
+            dry_run=False,
+        )

@@ -1,3 +1,4 @@
 include README.md
 include LICENSE
 include django_celery_outbox/py.typed
+recursive-exclude django_celery_outbox *_tests.py

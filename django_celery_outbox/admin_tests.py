@@ -4,6 +4,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.contrib import admin, messages
+from django.contrib.auth.models import AnonymousUser
+from django.test import override_settings
 from django.utils import timezone
 
 if TYPE_CHECKING:
@@ -12,6 +14,14 @@ if TYPE_CHECKING:
 from django_celery_outbox.admin import CeleryOutboxAdmin, CeleryOutboxDeadLetterAdmin
 from django_celery_outbox.factories import CeleryOutboxDeadLetterFactory, CeleryOutboxFactory
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.replay import replay_dead_letters as real_replay_dead_letters
+
+
+def _redact_payloads(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
+    del task_name
+    redacted_args = [{'email': '[REDACTED]'} if isinstance(item, dict) and 'email' in item else item for item in args]
+    redacted_kwargs = {key: '[REDACTED]' if key in {'email', 'token'} else value for key, value in kwargs.items()}
+    return redacted_args, redacted_kwargs
 
 
 def test_registered_for_model() -> None:
@@ -59,7 +69,7 @@ def test_readonly_fields() -> None:
         'task_id',
         'display_args',
         'display_kwargs',
-        'options',
+        'display_options',
         'retries',
         'schema_version',
         'created_at',
@@ -70,6 +80,39 @@ def test_readonly_fields() -> None:
         'structlog_context',
     ]
     assert admin_instance.readonly_fields == expected
+
+
+@pytest.mark.django_db
+def test_admin_display_options_uses_inspection_options() -> None:
+    admin_instance: CeleryOutboxAdmin = admin.site._registry[CeleryOutbox]  # type: ignore[assignment]
+    entry = CeleryOutboxFactory.build(
+        task_name='parent.task',
+        options={
+            'link': [
+                {
+                    'task': 'callback.task',
+                    'args': [],
+                    'kwargs': {'token': 'secret'},
+                    'options': {},
+                    'subtask_type': None,
+                    'immutable': False,
+                    'chord_size': None,
+                }
+            ]
+        },
+    )
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=_redact_payloads):
+        displayed = admin_instance.display_options(entry)
+
+    assert displayed['link'][0]['kwargs']['token'] == '[REDACTED]'
+
+
+def test_admin_display_kwargs_uses_inspection_kwargs() -> None:
+    admin_instance: CeleryOutboxAdmin = admin.site._registry[CeleryOutbox]  # type: ignore[assignment]
+    entry = CeleryOutboxFactory.build(kwargs={'email': 'user@example.com'}, redacted_kwargs={'email': '[REDACTED]'})
+
+    assert admin_instance.display_kwargs(entry) == {'email': '[REDACTED]'}
 
 
 def test_has_delete_permission_returns_false() -> None:
@@ -91,10 +134,22 @@ def test_change_list_template() -> None:
 
 
 @pytest.mark.django_db
-def test_changelist_view_injects_summary_stats() -> None:
-    CeleryOutboxFactory.create()
-    CeleryOutboxFactory.create(updated_at=timezone.now())
-    CeleryOutboxFactory.create(retries=3)
+def test_changelist_view_uses_live_backlog_from_queue_stats() -> None:
+    from django_celery_outbox.stats import get_queue_stats
+
+    CeleryOutboxFactory.create(task_id='never-1', task_name='some.task', updated_at=None)
+    CeleryOutboxFactory.create(
+        task_id='retry-1',
+        task_name='some.task',
+        updated_at=timezone.now(),
+        retry_after=timezone.now() - timedelta(seconds=30),
+    )
+    CeleryOutboxFactory.create(
+        task_id='inflight-1',
+        task_name='some.task',
+        updated_at=timezone.now(),
+        retry_after=None,
+    )
 
     admin_instance = admin.site._registry[CeleryOutbox]
     m_request = MagicMock()
@@ -103,11 +158,13 @@ def test_changelist_view_injects_summary_stats() -> None:
     with patch.object(admin.ModelAdmin, 'changelist_view', return_value=MagicMock()) as m_super:
         admin_instance.changelist_view(m_request)
 
-    extra_context = m_super.call_args[1]['extra_context']
-    assert extra_context['pending_count'] == 2
-    assert extra_context['failed_count'] == 1
+    stats = get_queue_stats(top_n=0)
+    extra_context = m_super.call_args.kwargs['extra_context']
+    assert extra_context['live_backlog'] == 2
+    assert extra_context['live_backlog'] == stats.queue_depth
+    assert extra_context['never_attempted'] == 1
+    assert extra_context['failed_count'] == 0
     assert extra_context['total_count'] == 3
-    assert extra_context['oldest_pending'] is not None
 
 
 @pytest.mark.django_db
@@ -126,8 +183,9 @@ def test_changelist_view_oldest_pending_none_when_no_pending() -> None:
 
 
 @pytest.mark.django_db
-def test_changelist_view_oldest_pending_is_timedelta() -> None:
-    CeleryOutboxFactory.create()
+def test_changelist_view_oldest_pending_uses_shared_queue_stats_snapshot() -> None:
+    pending = CeleryOutboxFactory.create(task_id='oldest-1', task_name='some.task', updated_at=None)
+    CeleryOutbox.objects.filter(pk=pending.pk).update(created_at=timezone.now() - timedelta(minutes=2))
 
     admin_instance = admin.site._registry[CeleryOutbox]
     m_request = MagicMock()
@@ -136,8 +194,31 @@ def test_changelist_view_oldest_pending_is_timedelta() -> None:
     with patch.object(admin.ModelAdmin, 'changelist_view', return_value=MagicMock()) as m_super:
         admin_instance.changelist_view(m_request)
 
-    extra_context = m_super.call_args[1]['extra_context']
+    extra_context = m_super.call_args.kwargs['extra_context']
     assert isinstance(extra_context['oldest_pending'], timedelta)
+    assert extra_context['oldest_pending'] >= timedelta(seconds=110)
+
+
+@pytest.mark.django_db
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=900)
+def test_changelist_view_uses_configured_stale_timeout_for_live_backlog() -> None:
+    CeleryOutboxFactory.create(
+        task_id='inflight-configured-timeout-1',
+        task_name='some.task',
+        updated_at=timezone.now() - timedelta(minutes=10),
+        retry_after=None,
+    )
+
+    admin_instance = admin.site._registry[CeleryOutbox]
+    m_request = MagicMock()
+    m_request.GET = {}
+
+    with patch.object(admin.ModelAdmin, 'changelist_view', return_value=MagicMock()) as m_super:
+        admin_instance.changelist_view(m_request)
+
+    extra_context = m_super.call_args.kwargs['extra_context']
+    assert extra_context['live_backlog'] == 0
+    assert extra_context['oldest_pending'] is None
 
 
 @pytest.mark.django_db
@@ -208,6 +289,61 @@ def test_dead_letter_actions_include_retry_selected() -> None:
     admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
 
     assert 'retry_selected' in admin_instance.actions
+
+
+def test_dead_letter_readonly_fields_use_display_options() -> None:
+    dead_letter_admin = admin.site._registry[CeleryOutboxDeadLetter]
+
+    assert 'display_options' in dead_letter_admin.readonly_fields
+    assert 'options' not in dead_letter_admin.readonly_fields
+
+
+def test_dead_letter_display_args_prefers_redacted_payload() -> None:
+    admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
+    entry = CeleryOutboxDeadLetterFactory.build(args=[1], redacted_args=['[REDACTED]'])
+
+    assert admin_instance.display_args(entry) == ['[REDACTED]']
+
+
+@pytest.mark.django_db
+def test_dead_letter_display_options_uses_inspection_options() -> None:
+    admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
+    entry = CeleryOutboxDeadLetterFactory.build(
+        task_name='parent.task',
+        options={
+            'link': [
+                {
+                    'task': 'callback.task',
+                    'args': [],
+                    'kwargs': {'token': 'secret'},
+                    'options': {},
+                    'subtask_type': None,
+                    'immutable': False,
+                    'chord_size': None,
+                }
+            ]
+        },
+    )
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=_redact_payloads):
+        displayed = admin_instance.display_options(entry)
+
+    assert displayed['link'][0]['kwargs']['token'] == '[REDACTED]'
+
+
+@pytest.mark.django_db
+def test_dead_letter_retry_selected_uses_replay_helper(f_user: 'User') -> None:
+    dead = CeleryOutboxDeadLetterFactory.create(task_id='task-retry-helper')
+
+    admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
+    queryset = CeleryOutboxDeadLetter.objects.filter(pk=dead.pk)
+    m_request = MagicMock()
+    m_request.user = f_user
+
+    with patch('django_celery_outbox.admin.replay_dead_letters', return_value=1) as m_replay:
+        admin_instance.retry_selected(m_request, queryset)
+
+    m_replay.assert_called_once_with([dead.pk])
 
 
 @pytest.mark.django_db
@@ -353,6 +489,35 @@ def test_retry_selected_creates_log_entries_for_dead_letter(f_user: 'User') -> N
 
 
 @pytest.mark.django_db
+def test_retry_selected_logs_only_rows_actually_replayed(f_user: 'User') -> None:
+    from django.contrib.admin.models import LogEntry
+    from django.contrib.contenttypes.models import ContentType
+
+    dead1 = CeleryOutboxDeadLetterFactory.create(task_id='audit-partial-1')
+    dead2 = CeleryOutboxDeadLetterFactory.create(task_id='audit-partial-2')
+
+    admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
+    queryset = CeleryOutboxDeadLetter.objects.filter(pk__in=[dead1.pk, dead2.pk])
+    m_request = MagicMock()
+    m_request.user = f_user
+
+    def replay_only_first(dead_letter_ids: list[int]) -> int:
+        real_replay_dead_letters([dead1.pk])
+        assert dead_letter_ids == [dead1.pk, dead2.pk]
+        return 1
+
+    with patch('django_celery_outbox.admin.replay_dead_letters', side_effect=replay_only_first):
+        admin_instance.retry_selected(m_request, queryset)
+
+    content_type = ContentType.objects.get_for_model(CeleryOutboxDeadLetter)
+    logs = LogEntry.objects.filter(content_type=content_type).order_by('object_id')
+
+    assert logs.count() == 1
+    log = logs.get()
+    assert log.object_id == str(dead1.pk)
+
+
+@pytest.mark.django_db
 def test_display_args_prefers_redacted_payload() -> None:
     admin_instance: CeleryOutboxAdmin = admin.site._registry[CeleryOutbox]  # type: ignore[assignment]
     entry = CeleryOutboxFactory.build(args=[1], redacted_args=['[REDACTED]'])
@@ -366,3 +531,12 @@ def test_dead_letter_display_kwargs_prefers_redacted_payload() -> None:
     entry = CeleryOutboxDeadLetterFactory.build(kwargs={'email': 'user@example.com'}, redacted_kwargs={'email': '[REDACTED]'})
 
     assert admin_instance.display_kwargs(entry) == {'email': '[REDACTED]'}
+
+
+def test_admin_actions_require_authenticated_user() -> None:
+    request = MagicMock()
+    request.user = AnonymousUser()
+    admin_instance: CeleryOutboxAdmin = admin.site._registry[CeleryOutbox]  # type: ignore[assignment]
+
+    with pytest.raises(ValueError, match='authenticated user'):
+        admin_instance.reset_retries(request, MagicMock())

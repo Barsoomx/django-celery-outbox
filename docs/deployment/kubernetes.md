@@ -82,8 +82,10 @@ Set `terminationGracePeriodSeconds` to allow batch completion:
 
 ```yaml
 spec:
-  terminationGracePeriodSeconds: 30
+  terminationGracePeriodSeconds: 120  # >= shutdown_timeout + send_timeout + margin
 ```
+
+Size the grace period to cover your configured `--shutdown-timeout`, `--send-timeout`, and some scheduling margin. A shorter window can force SIGKILL before the relay finishes draining.
 
 ## Resource Requirements
 

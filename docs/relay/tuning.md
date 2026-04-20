@@ -98,15 +98,67 @@ controls how long the relay may keep starting additional sends after `SIGTERM` o
 Pick `--shutdown-timeout` to cover a healthy drain window, and size `--send-timeout` to the
 slowest broker publish you still consider healthy.
 
+## Publish Concurrency
+
+`--publish-concurrency` enables a bounded parallel publish mode. The default is `1`, which keeps
+the serial relay path and remains the recommended baseline.
+
+Treat higher values as advanced tuning:
+
+- Start with `1`.
+- Increase gradually only after verifying behavior against the supported live RabbitMQ smoke lane.
+- Remember that only broker publish I/O runs in worker threads. Result classification, signals,
+  metrics, and database mutation still happen on the main relay thread.
+
+```bash
+--publish-concurrency 2
+```
+
+## Queue Snapshot Refresh Cadence
+
+`--queue-snapshot-refresh-seconds` controls how often the relay refreshes queue-wide snapshot data
+used by:
+
+- `queue.depth`
+- `dead_letter.count`
+- `oldest_pending_age_seconds`
+- `celery_outbox_batch_processed` summary fields
+
+These values are sampled queue-wide gauges, not exact per-batch recomputations. The default is
+`5.0` seconds, which keeps hot-path DB work bounded while still updating dashboards and logs
+frequently enough for normal operations.
+
+```bash
+--queue-snapshot-refresh-seconds 5.0
+```
+
+## Planner Behavior
+
+The shipped selector and dead-letter purge shapes were verified against large synthetic PostgreSQL
+15 and MySQL 8 tables during release hardening.
+
+Observed planner behavior:
+
+- Sparse active outbox on PostgreSQL used a `BitmapOr` over `celery_outbox_pending_idx`,
+  `celery_outbox_retry_idx`, and `celery_outbox_stale_idx`.
+- Sparse active outbox on MySQL used `index_merge` over the retry/stale selector indexes.
+- Dead-letter destructive chunks now order by the active retention field (`dead_at, pk` or
+  `created_at, pk`), which lets both PostgreSQL and MySQL use the matching retention index on the
+  chunk-selection path.
+
+When almost every row matches the filter, planners may still prefer the primary key or a sequential
+scan for `ORDER BY ... LIMIT ...`. That is expected for dense-match tables and does not invalidate
+the sparse-backlog fast path the package is optimized for.
+
 ## Monitoring Metrics
 
 The relay emits these StatsD metrics:
 
 | Metric | Type | Tags | Description |
 |--------|------|------|-------------|
-| `queue.depth` | gauge | | Messages waiting |
-| `dead_letter.count` | gauge | | Dead letter entries |
-| `oldest_pending_age_seconds` | gauge | | Age of oldest pending message in seconds |
+| `queue.depth` | gauge | | Sampled live backlog gauge refreshed at most once per `--queue-snapshot-refresh-seconds` window |
+| `dead_letter.count` | gauge | | Sampled dead-letter backlog gauge refreshed at most once per `--queue-snapshot-refresh-seconds` window |
+| `oldest_pending_age_seconds` | gauge | | Sampled age of the oldest live-backlog row |
 | `batch.duration_ms` | timing | | Batch processing time |
 | `send_latency_ms` | timing | `task_name` | Time from enqueue to publish |
 | `messages.published` | counter | `task_name` | Successfully sent |

@@ -1,5 +1,7 @@
 import signal
 import time
+from collections import deque
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from datetime import timedelta
 from types import FrameType
 
@@ -8,16 +10,16 @@ import structlog
 from celery import Celery
 from django.db import close_old_connections, connections, transaction
 from django.dispatch import Signal
-from django.utils import timezone
 from kombu.transport.native_delayed_delivery import (
     declare_native_delayed_delivery_exchanges_and_queues,
 )
 
 from django_celery_outbox import metrics
+from django_celery_outbox._pending import get_pending_filter
 from django_celery_outbox.metrics import get_task_tag
-from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.relay._config import RelayConfig
-from django_celery_outbox.relay._message_selector import MessageSelector, get_pending_filter
+from django_celery_outbox.relay._message_selector import MessageSelector
 from django_celery_outbox.relay._mutations import RelayMutations
 from django_celery_outbox.relay._policy import RelayPolicy, is_broker_outage
 from django_celery_outbox.relay._publisher import RelayPublisher
@@ -27,8 +29,28 @@ from django_celery_outbox.signals import (
     outbox_message_failed,
     outbox_message_sent,
 )
+from django_celery_outbox.stats import QueueStats, get_queue_stats
 
 _logger = structlog.getLogger(__name__)
+
+
+class QueueSnapshotSampler:
+    def __init__(self, *, refresh_interval_seconds: float = 5.0, stale_timeout: timedelta | None = None) -> None:
+        self._refresh_interval_seconds = refresh_interval_seconds
+        self._stale_timeout = stale_timeout
+        self._last_sampled_at: float | None = None
+        self._last_stats = QueueStats(
+            queue_depth=0,
+            dlq_count=0,
+            oldest_pending_seconds=None,
+            top_failing=[],
+        )
+
+    def get(self, *, now_monotonic: float) -> QueueStats:
+        if self._last_sampled_at is None or now_monotonic - self._last_sampled_at >= self._refresh_interval_seconds:
+            self._last_stats = get_queue_stats(top_n=0, stale_timeout=self._stale_timeout)
+            self._last_sampled_at = now_monotonic
+        return self._last_stats
 
 
 class Relay:
@@ -49,9 +71,10 @@ class Relay:
 
         self._app = app
         self._config = config
+        self._stale_timeout = timedelta(seconds=config.stale_timeout_seconds)
         self._selector = selector or MessageSelector(
             batch_size=config.batch_size,
-            stale_timeout=timedelta(seconds=config.stale_timeout_seconds),
+            stale_timeout=self._stale_timeout,
         )
         self._publisher = RelayPublisher(app=app, send_timeout=config.send_timeout)
         self._mutations = RelayMutations(
@@ -61,6 +84,10 @@ class Relay:
         self._policy = RelayPolicy(
             broker_outage_cooldown=config.broker_outage_cooldown,
             shutdown_timeout=config.shutdown_timeout,
+        )
+        self._queue_snapshot_sampler = QueueSnapshotSampler(
+            refresh_interval_seconds=config.queue_snapshot_refresh_seconds,
+            stale_timeout=self._stale_timeout,
         )
         self._running = True
 
@@ -122,29 +149,24 @@ class Relay:
         if self._policy.shutdown_deadline_exceeded(time.monotonic()):
             return False
 
-        return CeleryOutbox.objects.filter(get_pending_filter()).exists()
+        return CeleryOutbox.objects.filter(get_pending_filter(self._stale_timeout)).exists()
 
     def _finalize_processing_cycle(
         self,
         *,
         start_time: float,
+        finished_at: float,
+        snapshot: QueueStats,
         published: int,
         failed: int,
         exceeded: int,
         deferred_due_to_outage: int,
         shutdown_aborted: int,
     ) -> None:
-        queue_depth = CeleryOutbox.objects.count()
-        metrics.gauge('queue.depth', queue_depth)
-        metrics.gauge('dead_letter.count', CeleryOutboxDeadLetter.objects.count())
-        metrics.timing('batch.duration_ms', (time.monotonic() - start_time) * 1000)
-
-        oldest = CeleryOutbox.objects.filter(get_pending_filter()).order_by('created_at').values_list('created_at', flat=True).first()
-        if oldest:
-            age_seconds = (timezone.now() - oldest).total_seconds()
-            metrics.gauge('oldest_pending_age_seconds', age_seconds)
-        else:
-            metrics.gauge('oldest_pending_age_seconds', 0)
+        metrics.gauge('queue.depth', snapshot.queue_depth)
+        metrics.gauge('dead_letter.count', snapshot.dlq_count)
+        metrics.timing('batch.duration_ms', (finished_at - start_time) * 1000)
+        metrics.gauge('oldest_pending_age_seconds', snapshot.oldest_pending_seconds or 0)
 
         _logger.info(
             'celery_outbox_batch_processed',
@@ -153,7 +175,7 @@ class Relay:
             exceeded=exceeded,
             deferred_due_to_outage=deferred_due_to_outage,
             shutdown_aborted=shutdown_aborted,
-            queue_depth=queue_depth,
+            queue_depth=snapshot.queue_depth,
         )
 
         self._touch_liveness()
@@ -183,8 +205,12 @@ class Relay:
                 close_old_connections()
                 time.sleep(sleep_for)
                 close_old_connections()
+                finished_at = time.monotonic()
+                snapshot = self._queue_snapshot_sampler.get(now_monotonic=finished_at)
                 self._finalize_processing_cycle(
                     start_time=start_time,
+                    finished_at=finished_at,
+                    snapshot=snapshot,
                     published=0,
                     failed=0,
                     exceeded=0,
@@ -213,8 +239,9 @@ class Relay:
                 for msg in exceeded:
                     self._send_signal_safe(
                         outbox_message_dead_lettered,
-                        msg.task_id,
-                        msg.task_name,
+                        'outbox_message_dead_lettered',
+                        None,
+                        None,
                         task_ids=[msg.task_id],
                         task_names=[msg.task_name],
                     )
@@ -231,8 +258,12 @@ class Relay:
             else:
                 batch_span.set_status('ok')
 
+        finished_at = time.monotonic()
+        snapshot = self._queue_snapshot_sampler.get(now_monotonic=finished_at)
         self._finalize_processing_cycle(
             start_time=start_time,
+            finished_at=finished_at,
+            snapshot=snapshot,
             published=len(published),
             failed=len(failed),
             exceeded=len(exceeded),
@@ -250,6 +281,15 @@ class Relay:
         self,
         messages: list[CeleryOutbox],
     ) -> tuple[list[int], list[tuple[int, int]], list[CeleryOutbox], list[int], list[CeleryOutbox]]:
+        if self._config.publish_concurrency == 1:
+            return self._process_messages_serial(messages)
+
+        return self._process_messages_parallel(messages)
+
+    def _process_messages_serial(
+        self,
+        messages: list[CeleryOutbox],
+    ) -> tuple[list[int], list[tuple[int, int]], list[CeleryOutbox], list[int], list[CeleryOutbox]]:
         published: list[int] = []
         failed: list[tuple[int, int]] = []
         exceeded: list[CeleryOutbox] = []
@@ -261,32 +301,12 @@ class Relay:
         for index, msg in enumerate(messages):
             if self._policy.shutdown_deadline_exceeded(time.monotonic()):
                 shutdown_aborted = messages[index:]
-                _logger.warning(
-                    'celery_outbox_relay_shutdown_deadline_exceeded',
-                    aborted_count=len(shutdown_aborted),
-                    aborted_task_ids=[item.task_id for item in shutdown_aborted],
-                    aborted_task_names=[item.task_name for item in shutdown_aborted],
-                )
+                self._log_shutdown_aborted(shutdown_aborted)
                 break
 
-            msg_context = {
-                'outbox_id': msg.id,
-                'task_name': msg.task_name,
-                'task_id': msg.task_id,
-                'retries': msg.retries,
-            }
-
-            with structlog.contextvars.bound_contextvars(**msg_context):
+            with structlog.contextvars.bound_contextvars(**self._message_context(msg)):
                 if msg.retries >= self._config.max_retries:
-                    _logger.warning(
-                        'celery_outbox_max_retries_exceeded',
-                        exception_type='pre_exceeded',
-                        exception_message='message already exceeded max retries before send attempt',
-                    )
-                    tags = get_task_tag(msg.task_name)
-                    tags['exception_type'] = 'pre_exceeded'
-                    metrics.increment('messages.exceeded', tags=tags)
-                    exceeded.append(msg)
+                    self._record_pre_exceeded(msg, exceeded)
                     continue
 
                 with sentry_sdk.start_span(op='celery_outbox.relay.send', name=msg.task_name) as span:
@@ -303,60 +323,336 @@ class Relay:
                             breaker_opened = self._policy.record_outage(time.monotonic())
                             if breaker_opened:
                                 remaining_messages = messages[index + 1 :]
-                                deferred_due_to_outage.extend(item.id for item in remaining_messages)
-                                _logger.warning(
-                                    'celery_outbox_relay_breaker_trip',
-                                    deferred_count=len(deferred_due_to_outage),
-                                    exception_type=type(exc).__name__,
-                                    exception_message=str(exc),
+                                self._classify_breaker_remaining_messages(
+                                    remaining_messages,
+                                    exceeded,
+                                    deferred_due_to_outage,
                                 )
+                                self._log_breaker_trip(exc, len(deferred_due_to_outage))
                                 break
                             continue
 
-                        self._policy.record_success()
-                        exc_type = classify_exception(exc)
-                        log_kwargs = {
-                            'exception_type': exc_type,
-                            'exception_message': str(exc),
-                        }
-
-                        if should_log_traceback():
-                            _logger.error('celery_outbox_send_failed', **log_kwargs, exc_info=True)
-                        else:
-                            _logger.error('celery_outbox_send_failed', **log_kwargs)
-
-                        if msg.retries >= self._config.max_retries - 1:
-                            _logger.warning(
-                                'celery_outbox_max_retries_exceeded',
-                                exception_type=exc_type,
-                                exception_message=str(exc),
-                            )
-                            tags = get_task_tag(msg.task_name)
-                            tags['exception_type'] = exc_type
-                            metrics.increment('messages.exceeded', tags=tags)
-                            exceeded.append(msg)
-                        else:
-                            tags = get_task_tag(msg.task_name)
-                            tags['exception_type'] = exc_type
-                            metrics.increment('messages.failed', tags=tags)
-                            self._send_signal_safe(
-                                outbox_message_failed,
-                                msg.task_id,
-                                msg.task_name,
-                                retries=msg.retries,
-                            )
-                            failed.append((msg.id, msg.retries))
+                        self._record_non_outage_failure(msg, exc, failed, exceeded)
                     else:
                         span.set_status('ok')
-                        self._policy.record_success()
-                        latency_ms = (time.time() - msg.created_at.timestamp()) * 1000
-                        tags = get_task_tag(msg.task_name)
-                        metrics.timing('send_latency_ms', latency_ms, tags=tags)
-                        metrics.increment('messages.published', tags=tags)
-                        self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
-                        published.append(msg.id)
+                        self._record_publish_success(msg, published)
 
         return published, failed, exceeded, deferred_due_to_outage, shutdown_aborted
+
+    def _process_messages_parallel(
+        self,
+        messages: list[CeleryOutbox],
+    ) -> tuple[list[int], list[tuple[int, int]], list[CeleryOutbox], list[int], list[CeleryOutbox]]:
+        published: list[int] = []
+        failed: list[tuple[int, int]] = []
+        exceeded: list[CeleryOutbox] = []
+        deferred_due_to_outage: list[int] = []
+        shutdown_aborted: list[CeleryOutbox] = []
+
+        self._policy.begin_batch()
+
+        remaining: deque[CeleryOutbox] = deque(messages)
+        pending: dict[Future[None], CeleryOutbox] = {}
+        stop_reason: str | None = None
+        breaker_exc: Exception | None = None
+        wait_for_inflight_after_outage = False
+
+        with ThreadPoolExecutor(max_workers=self._config.publish_concurrency) as pool:
+            while pending or remaining:
+                if stop_reason is None and self._policy.shutdown_deadline_exceeded(time.monotonic()):
+                    stop_reason = 'shutdown'
+
+                stop_reason, breaker_exc = self._fill_parallel_window(
+                    remaining,
+                    pending,
+                    pool,
+                    failed,
+                    exceeded,
+                    deferred_due_to_outage,
+                    stop_reason=stop_reason,
+                    breaker_exc=breaker_exc,
+                    wait_for_inflight_after_outage=wait_for_inflight_after_outage,
+                )
+
+                if not pending:
+                    break
+
+                stop_reason, breaker_exc, wait_for_inflight_after_outage = self._drain_parallel_completions(
+                    pending,
+                    published,
+                    failed,
+                    exceeded,
+                    deferred_due_to_outage,
+                    stop_reason=stop_reason,
+                    breaker_exc=breaker_exc,
+                )
+
+        if stop_reason == 'shutdown' and remaining:
+            shutdown_aborted = list(remaining)
+            self._log_shutdown_aborted(shutdown_aborted)
+
+        if stop_reason == 'breaker' and breaker_exc is not None:
+            self._classify_breaker_remaining_messages(list(remaining), exceeded, deferred_due_to_outage)
+            self._log_breaker_trip(breaker_exc, len(deferred_due_to_outage))
+
+        return published, failed, exceeded, deferred_due_to_outage, shutdown_aborted
+
+    def _fill_parallel_window(
+        self,
+        remaining: deque[CeleryOutbox],
+        pending: dict[Future[None], CeleryOutbox],
+        pool: ThreadPoolExecutor,
+        failed: list[tuple[int, int]],
+        exceeded: list[CeleryOutbox],
+        deferred_due_to_outage: list[int],
+        *,
+        stop_reason: str | None,
+        breaker_exc: Exception | None,
+        wait_for_inflight_after_outage: bool,
+    ) -> tuple[str | None, Exception | None]:
+        if wait_for_inflight_after_outage:
+            return stop_reason, breaker_exc
+
+        while remaining and len(pending) < self._config.publish_concurrency and stop_reason is None:
+            if self._policy.shutdown_deadline_exceeded(time.monotonic()):
+                return 'shutdown', breaker_exc
+
+            msg = remaining.popleft()
+            with structlog.contextvars.bound_contextvars(**self._message_context(msg)):
+                if msg.retries >= self._config.max_retries:
+                    self._record_pre_exceeded(msg, exceeded)
+                    continue
+
+                try:
+                    prepared = self._publisher.prepare_publish_call(msg)
+                except Exception as exc:
+                    if self._classify_parallel_publish_exception(
+                        msg,
+                        exc,
+                        failed,
+                        exceeded,
+                        deferred_due_to_outage,
+                    ):
+                        return 'breaker', exc
+                    continue
+
+                pending[pool.submit(self._publisher.publish_prepared, prepared)] = msg
+
+        return stop_reason, breaker_exc
+
+    def _drain_parallel_completions(
+        self,
+        pending: dict[Future[None], CeleryOutbox],
+        published: list[int],
+        failed: list[tuple[int, int]],
+        exceeded: list[CeleryOutbox],
+        deferred_due_to_outage: list[int],
+        *,
+        stop_reason: str | None,
+        breaker_exc: Exception | None,
+    ) -> tuple[str | None, Exception | None, bool]:
+        wait_for_inflight_after_outage = False
+
+        for future in as_completed(list(pending)):
+            stop_reason, breaker_exc, should_wait_for_inflight = self._consume_parallel_future(
+                future,
+                pending,
+                published,
+                failed,
+                exceeded,
+                deferred_due_to_outage,
+                stop_reason=stop_reason,
+                breaker_exc=breaker_exc,
+            )
+            wait_for_inflight_after_outage = wait_for_inflight_after_outage or should_wait_for_inflight
+            # Block for only one completion here, then return control so the caller can refill the
+            # sliding window promptly instead of draining every in-flight future before submitting again.
+            break
+
+        for future in [future for future in list(pending) if future.done()]:
+            stop_reason, breaker_exc, should_wait_for_inflight = self._consume_parallel_future(
+                future,
+                pending,
+                published,
+                failed,
+                exceeded,
+                deferred_due_to_outage,
+                stop_reason=stop_reason,
+                breaker_exc=breaker_exc,
+            )
+            wait_for_inflight_after_outage = wait_for_inflight_after_outage or should_wait_for_inflight
+
+        return stop_reason, breaker_exc, wait_for_inflight_after_outage
+
+    def _consume_parallel_future(
+        self,
+        future: Future[None],
+        pending: dict[Future[None], CeleryOutbox],
+        published: list[int],
+        failed: list[tuple[int, int]],
+        exceeded: list[CeleryOutbox],
+        deferred_due_to_outage: list[int],
+        *,
+        stop_reason: str | None,
+        breaker_exc: Exception | None,
+    ) -> tuple[str | None, Exception | None, bool]:
+        msg = pending.pop(future)
+        breaker_opened, trigger_exc, saw_outage = self._process_parallel_completion(
+            msg,
+            future.exception(),
+            published,
+            failed,
+            exceeded,
+            deferred_due_to_outage,
+        )
+        if breaker_opened:
+            if stop_reason == 'shutdown':
+                return stop_reason, trigger_exc, False
+            return 'breaker', trigger_exc, bool(pending)
+        return stop_reason, breaker_exc, saw_outage and bool(pending)
+
+    @staticmethod
+    def _message_context(msg: CeleryOutbox) -> dict[str, object]:
+        return {
+            'outbox_id': msg.id,
+            'task_name': msg.task_name,
+            'task_id': msg.task_id,
+            'retries': msg.retries,
+        }
+
+    def _record_pre_exceeded(self, msg: CeleryOutbox, exceeded: list[CeleryOutbox]) -> None:
+        _logger.warning(
+            'celery_outbox_max_retries_exceeded',
+            exception_type='pre_exceeded',
+            exception_message='message already exceeded max retries before send attempt',
+        )
+        tags = get_task_tag(msg.task_name)
+        tags['exception_type'] = 'pre_exceeded'
+        metrics.increment('messages.exceeded', tags=tags)
+        exceeded.append(msg)
+
+    def _record_non_outage_failure(
+        self,
+        msg: CeleryOutbox,
+        exc: Exception,
+        failed: list[tuple[int, int]],
+        exceeded: list[CeleryOutbox],
+    ) -> None:
+        exc_type = classify_exception(exc)
+        log_kwargs = {
+            'exception_type': exc_type,
+            'exception_message': str(exc),
+        }
+
+        if should_log_traceback():
+            _logger.error('celery_outbox_send_failed', **log_kwargs, exc_info=True)
+        else:
+            _logger.error('celery_outbox_send_failed', **log_kwargs)
+
+        if msg.retries >= self._config.max_retries - 1:
+            _logger.warning(
+                'celery_outbox_max_retries_exceeded',
+                exception_type=exc_type,
+                exception_message=str(exc),
+            )
+            tags = get_task_tag(msg.task_name)
+            tags['exception_type'] = exc_type
+            metrics.increment('messages.exceeded', tags=tags)
+            exceeded.append(msg)
+            return
+
+        tags = get_task_tag(msg.task_name)
+        tags['exception_type'] = exc_type
+        metrics.increment('messages.failed', tags=tags)
+        self._send_signal_safe(
+            outbox_message_failed,
+            'outbox_message_failed',
+            msg.task_id,
+            msg.task_name,
+            retries=msg.retries,
+        )
+        failed.append((msg.id, msg.retries))
+
+    def _record_publish_success(self, msg: CeleryOutbox, published: list[int]) -> None:
+        self._policy.record_success()
+        latency_ms = (time.time() - msg.created_at.timestamp()) * 1000
+        tags = get_task_tag(msg.task_name)
+        metrics.timing('send_latency_ms', latency_ms, tags=tags)
+        metrics.increment('messages.published', tags=tags)
+        self._send_signal_safe(outbox_message_sent, 'outbox_message_sent', msg.task_id, msg.task_name)
+        published.append(msg.id)
+
+    def _classify_parallel_publish_exception(
+        self,
+        msg: CeleryOutbox,
+        exc: Exception,
+        failed: list[tuple[int, int]],
+        exceeded: list[CeleryOutbox],
+        deferred_due_to_outage: list[int],
+    ) -> bool:
+        if is_broker_outage(exc):
+            deferred_due_to_outage.append(msg.id)
+            return self._policy.record_outage(time.monotonic())
+
+        self._record_non_outage_failure(msg, exc, failed, exceeded)
+        return False
+
+    def _process_parallel_completion(
+        self,
+        msg: CeleryOutbox,
+        exc: BaseException | None,
+        published: list[int],
+        failed: list[tuple[int, int]],
+        exceeded: list[CeleryOutbox],
+        deferred_due_to_outage: list[int],
+    ) -> tuple[bool, Exception | None, bool]:
+        with structlog.contextvars.bound_contextvars(**self._message_context(msg)):
+            if exc is None:
+                self._record_publish_success(msg, published)
+                return False, None, False
+
+            if not isinstance(exc, Exception):
+                raise exc
+
+            breaker_opened = self._classify_parallel_publish_exception(
+                msg,
+                exc,
+                failed,
+                exceeded,
+                deferred_due_to_outage,
+            )
+            return breaker_opened, exc, is_broker_outage(exc)
+
+    def _classify_breaker_remaining_messages(
+        self,
+        messages: list[CeleryOutbox],
+        exceeded: list[CeleryOutbox],
+        deferred_due_to_outage: list[int],
+    ) -> None:
+        for msg in messages:
+            with structlog.contextvars.bound_contextvars(**self._message_context(msg)):
+                if msg.retries >= self._config.max_retries:
+                    self._record_pre_exceeded(msg, exceeded)
+                else:
+                    deferred_due_to_outage.append(msg.id)
+
+    @staticmethod
+    def _log_breaker_trip(exc: Exception, deferred_count: int) -> None:
+        _logger.warning(
+            'celery_outbox_relay_breaker_trip',
+            deferred_count=deferred_count,
+            exception_type=type(exc).__name__,
+            exception_message=str(exc),
+        )
+
+    @staticmethod
+    def _log_shutdown_aborted(shutdown_aborted: list[CeleryOutbox]) -> None:
+        _logger.warning(
+            'celery_outbox_relay_shutdown_deadline_exceeded',
+            aborted_count=len(shutdown_aborted),
+            aborted_task_ids=[item.task_id for item in shutdown_aborted],
+            aborted_task_names=[item.task_name for item in shutdown_aborted],
+        )
 
     def _touch_liveness(self) -> None:
         if self._config.liveness_file is None:
@@ -365,14 +661,31 @@ class Relay:
         self._config.liveness_file.touch()
 
     @staticmethod
-    def _send_signal_safe(sig: Signal, task_id: str, task_name: str, **kwargs: object) -> None:
-        try:
-            sig.send(sender=Relay, task_id=task_id, task_name=task_name, **kwargs)
-        except Exception:
-            _logger.error(
-                'celery_outbox_signal_error',
-                signal=getattr(sig, 'providing_args', str(sig)),
-                task_id=task_id,
-                task_name=task_name,
-                exc_info=True,
-            )
+    def _send_signal_safe(
+        sig: Signal,
+        signal_name: str,
+        task_id: str | None,
+        task_name: str | None,
+        **kwargs: object,
+    ) -> None:
+        payload = dict(kwargs)
+        if task_id is not None:
+            payload['task_id'] = task_id
+        if task_name is not None:
+            payload['task_name'] = task_name
+
+        for receiver, response in sig.send_robust(sender=Relay, **payload):
+            if not isinstance(response, Exception):
+                continue
+
+            log_kwargs: dict[str, object] = {
+                'signal': signal_name,
+                'receiver': getattr(receiver, '__qualname__', repr(receiver)),
+                'exception_type': type(response).__name__,
+                'exception_message': str(response),
+                'exc_info': (type(response), response, response.__traceback__),
+            }
+            for key in ('task_id', 'task_name', 'task_ids', 'task_names', 'retries'):
+                if key in payload:
+                    log_kwargs[key] = payload[key]
+            _logger.error('celery_outbox_signal_error', **log_kwargs)

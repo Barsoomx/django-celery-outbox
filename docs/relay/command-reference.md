@@ -16,7 +16,9 @@ python manage.py celery_outbox_relay [OPTIONS]
 | `--idle-time` | float | 1.0 | Seconds to sleep when queue empty |
 | `--backoff-time` | int | 120 | Base seconds for exponential backoff |
 | `--max-retries` | int | 5 | Retries before dead letter |
-| `--stale-timeout-seconds` | int | 300 | Seconds before in-flight rows are considered stale |
+| `--publish-concurrency` | int | 1 | Maximum concurrent publish operations per batch |
+| `--queue-snapshot-refresh-seconds` | float | 5.0 | Refresh cadence for sampled queue-wide gauges and batch summary snapshot data |
+| `--stale-timeout-seconds` | int | `CELERY_OUTBOX_STALE_TIMEOUT_SECONDS` or 300 | Seconds before in-flight rows are considered stale |
 | `--send-timeout` | float | 10.0 | Timeout passed to broker publish |
 | `--shutdown-timeout` | float | 30.0 | Drain window for starting additional sends after SIGTERM |
 | `--broker-outage-cooldown` | float | 30.0 | Breaker cooldown before the next batch attempt |
@@ -38,6 +40,8 @@ python manage.py celery_outbox_relay \
   --idle-time 1.0 \
   --backoff-time 120 \
   --max-retries 5 \
+  --publish-concurrency 1 \
+  --queue-snapshot-refresh-seconds 5.0 \
   --stale-timeout-seconds 300 \
   --send-timeout 10.0 \
   --shutdown-timeout 30.0 \
@@ -51,7 +55,7 @@ python manage.py celery_outbox_relay \
 Show outbox statistics.
 
 ```bash
-python manage.py celery_outbox_stats [--format text|json] [--top N]
+python manage.py celery_outbox_stats [--format text|json] [--top N] [--stale-timeout-seconds N]
 ```
 
 ### Options
@@ -59,7 +63,8 @@ python manage.py celery_outbox_stats [--format text|json] [--top N]
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
 | `--format` | `text` \| `json` | `text` | Render human-readable or JSON output |
-| `--top` | int | `10` | Number of top failing task groups to include |
+| `--top` | int | `0` | Number of top failing task groups to include (`0` disables the live `GROUP BY task_name` section) |
+| `--stale-timeout-seconds` | int | `CELERY_OUTBOX_STALE_TIMEOUT_SECONDS` or `300` | Recovery window used when classifying stale in-flight rows as live backlog |
 
 Text output:
 

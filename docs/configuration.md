@@ -18,8 +18,15 @@ django-celery-outbox also registers Django system checks for database support, a
 | `CELERY_OUTBOX_STRUCTLOG_ENABLED` | `bool` | `True` | Enable structlog context propagation |
 | `CELERY_OUTBOX_STRUCTLOG_CONTEXT_KEYS` | `list[str] \| None` | `None` | structlog keys to capture. `None` captures all keys |
 | `CELERY_OUTBOX_LOG_EXCEPTION_TRACEBACK` | `bool` | `True` | Include full traceback in exception logs |
-| `CELERY_OUTBOX_PII_REDACTOR` | `str \| callable` | `None` | Callable (or dotted path to one) that stores redacted inspection copies of task args/kwargs |
+| `CELERY_OUTBOX_PII_REDACTOR` | `str \| callable` | `None` | Callable (or dotted path to one) that stores redacted inspection copies of task args/kwargs and redacts nested serialized signatures for admin/model inspection |
 | `CELERY_OUTBOX_DLQ_RETENTION` | `dict[str, str] \| None` | `None` | Optional default retention policy for dead-letter purge. Supported keys: `older_than_dead`, `older_than_created`, `task_name`. |
+| `CELERY_OUTBOX_STALE_TIMEOUT_SECONDS` | `int` | `300` | Shared stale-row recovery window used by relay defaults, admin live-backlog summaries, and `celery_outbox_stats`. |
+
+## Redaction Notes
+
+- The redactor callable must accept `(task_name, args, kwargs)`.
+- Top-level redaction affects the stored `redacted_args` and `redacted_kwargs` inspection fields only; the relay still publishes the original payload.
+- Nested signatures inside serialized `options` (`link`, `link_error`, `chain`, `chord`) are redacted only for inspection surfaces such as Django admin and model properties.
 
 ## Relay Command Options
 
@@ -33,7 +40,7 @@ python manage.py celery_outbox_relay [OPTIONS]
 | `--idle-time` | `1.0` | Seconds to sleep when queue is empty |
 | `--backoff-time` | `120` | Base seconds for exponential backoff |
 | `--max-retries` | `5` | Retries before dead letter |
-| `--stale-timeout-seconds` | `300` | Seconds before in-flight rows are considered stale and reclaimable |
+| `--stale-timeout-seconds` | `CELERY_OUTBOX_STALE_TIMEOUT_SECONDS` or `300` | Seconds before in-flight rows are considered stale and reclaimable |
 | `--send-timeout` | `10.0` | Timeout passed to `Celery.send_task()` during broker publish |
 | `--shutdown-timeout` | `30.0` | Drain window for starting additional sends after `SIGTERM`/`SIGINT` |
 | `--broker-outage-cooldown` | `30.0` | Process-local breaker cooldown before the next batch attempt |

@@ -1,8 +1,12 @@
 import json
+from datetime import timedelta
 from io import StringIO
 
 import pytest
 from django.core.management import call_command
+from django.core.management.base import CommandError
+from django.test import override_settings
+from django.utils import timezone
 
 from django_celery_outbox.factories import CeleryOutboxFactory
 
@@ -43,3 +47,63 @@ def test_command_respects_top_argument() -> None:
     output = out.getvalue()
     data = json.loads(output)
     assert len(data['top_failing']) == 2
+
+
+@pytest.mark.django_db
+def test_stats_command_defaults_top_to_zero() -> None:
+    CeleryOutboxFactory.create(task_name='app.tasks.task_a', retries=10)
+
+    out = StringIO()
+    call_command('celery_outbox_stats', format='json', stdout=out)
+
+    parsed = json.loads(out.getvalue())
+    assert parsed['top_failing'] == []
+
+
+@pytest.mark.django_db
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=900)
+def test_command_uses_configured_stale_timeout_by_default() -> None:
+    CeleryOutboxFactory.create(
+        task_name='app.tasks.inflight',
+        updated_at=timezone.now() - timedelta(minutes=10),
+        retry_after=None,
+    )
+
+    out = StringIO()
+    call_command('celery_outbox_stats', format='json', stdout=out)
+
+    parsed = json.loads(out.getvalue())
+    assert parsed['queue_depth'] == 0
+
+
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS='not-an-int')
+def test_command_parser_allows_cli_override_when_setting_is_invalid() -> None:
+    from django_celery_outbox.management.commands.celery_outbox_stats import Command
+
+    parser = Command().create_parser('manage.py', 'celery_outbox_stats')
+
+    parsed = parser.parse_args(['--stale-timeout-seconds', '15'])
+
+    assert parsed.stale_timeout_seconds == 15
+
+
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS='not-an-int')
+def test_command_wraps_invalid_stale_timeout_setting_in_command_error() -> None:
+    out = StringIO()
+
+    with pytest.raises(
+        CommandError,
+        match=(
+            r'Invalid CELERY_OUTBOX_STALE_TIMEOUT_SECONDS: '
+            r'CELERY_OUTBOX_STALE_TIMEOUT_SECONDS must be an integer\. '
+            r'Use --stale-timeout-seconds to override it\.'
+        ),
+    ):
+        call_command('celery_outbox_stats', stdout=out)
+
+
+def test_command_rejects_non_positive_stale_timeout() -> None:
+    out = StringIO()
+
+    with pytest.raises(CommandError, match='stale-timeout-seconds must be > 0'):
+        call_command('celery_outbox_stats', stale_timeout_seconds=0, stdout=out)

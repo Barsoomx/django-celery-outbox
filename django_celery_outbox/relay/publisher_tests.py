@@ -6,7 +6,7 @@ import pytest
 from celery import Celery
 
 from django_celery_outbox.models import CeleryOutbox
-from django_celery_outbox.relay._publisher import RelayPublisher, parse_structlog_context
+from django_celery_outbox.relay._publisher import PreparedPublishCall, RelayPublisher, parse_structlog_context
 
 
 @pytest.fixture()
@@ -164,6 +164,63 @@ def test_publish_passes_schema_version_to_deserializer(m_celery_app: MagicMock) 
             publisher.publish(msg)
 
     m_deserialize.assert_called_once_with(msg.options, m_celery_app, 2)
+
+
+@pytest.mark.django_db
+def test_prepare_publish_call_materializes_headers_and_structlog_context(m_celery_app: MagicMock) -> None:
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
+    eta_dt = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
+    msg = CeleryOutbox.objects.create(
+        task_id='prepared-123',
+        task_name='myapp.tasks.prepared',
+        args=[1, 2],
+        kwargs={'key': 'val'},
+        options={'eta': eta_dt.isoformat(), 'priority': 9, 'headers': {'existing': 'header'}, 'timeout': 1.5},
+        sentry_trace_id='trace-id-1',
+        sentry_baggage='baggage-1',
+        structlog_context=json.dumps({'request_id': 'req-1'}),
+    )
+
+    call = publisher.prepare_publish_call(msg)
+
+    assert call.task_name == 'myapp.tasks.prepared'
+    assert call.task_id == 'prepared-123'
+    assert call.args == [1, 2]
+    assert call.kwargs == {'key': 'val'}
+    assert call.options == {'eta': eta_dt, 'priority': 9}
+    assert call.headers == {
+        'existing': 'header',
+        'sentry-trace': 'trace-id-1',
+        'baggage': 'baggage-1',
+    }
+    assert call.structlog_context == {'request_id': 'req-1'}
+
+
+def test_publish_prepared_calls_raw_celery_send_task(m_celery_app: MagicMock) -> None:
+    publisher = RelayPublisher(app=m_celery_app, send_timeout=10.0)
+    call = PreparedPublishCall(
+        task_name='myapp.tasks.prepared',
+        task_id='prepared-123',
+        args=[1, 2],
+        kwargs={'key': 'val'},
+        options={'priority': 9},
+        headers={'trace': '1'},
+        structlog_context={'request_id': 'req-1'},
+    )
+
+    with patch('django_celery_outbox.relay._publisher.Celery.send_task') as m_send:
+        with patch('django_celery_outbox.relay._publisher.structlog.contextvars.bound_contextvars') as m_bound:
+            publisher.publish_prepared(call)
+
+    m_bound.assert_called_once_with(request_id='req-1')
+    _, kwargs = m_send.call_args
+    assert kwargs['name'] == 'myapp.tasks.prepared'
+    assert kwargs['task_id'] == 'prepared-123'
+    assert kwargs['args'] == [1, 2]
+    assert kwargs['kwargs'] == {'key': 'val'}
+    assert kwargs['headers'] == {'trace': '1'}
+    assert kwargs['timeout'] == 10.0
+    assert kwargs['priority'] == 9
 
 
 def test_parse_structlog_context_valid_json() -> None:

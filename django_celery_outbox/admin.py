@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.contrib import admin, messages
 from django.contrib.admin.models import CHANGE, DELETION, LogEntry
 from django.contrib.auth.models import AnonymousUser
@@ -5,9 +7,11 @@ from django.contrib.contenttypes.models import ContentType
 from django.db import transaction
 from django.db.models import QuerySet
 from django.http import HttpRequest, HttpResponse
-from django.utils import timezone
 
+from django_celery_outbox._settings import load_stale_timeout_seconds_setting
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.replay import replay_dead_letters
+from django_celery_outbox.stats import get_queue_stats
 
 
 def _get_log_entry_user_id(request: HttpRequest) -> int:
@@ -37,7 +41,7 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
         'task_id',
         'display_args',
         'display_kwargs',
-        'options',
+        'display_options',
         'retries',
         'schema_version',
         'created_at',
@@ -66,17 +70,19 @@ class CeleryOutboxAdmin(admin.ModelAdmin):
     def display_kwargs(self, obj: CeleryOutbox) -> dict:
         return obj.inspection_kwargs
 
+    @admin.display(description='options')
+    def display_options(self, obj: CeleryOutbox) -> dict:
+        return obj.inspection_options
+
     def changelist_view(self, request: HttpRequest, extra_context: dict | None = None) -> HttpResponse:
         extra_context = extra_context or {}
-        pending_qs = CeleryOutbox.objects.filter(updated_at__isnull=True)
-        extra_context['pending_count'] = pending_qs.count()
+        stale_timeout = timedelta(seconds=load_stale_timeout_seconds_setting())
+        stats = get_queue_stats(top_n=0, stale_timeout=stale_timeout)
+        extra_context['live_backlog'] = stats.queue_depth
+        extra_context['never_attempted'] = CeleryOutbox.objects.filter(updated_at__isnull=True).count()
         extra_context['failed_count'] = CeleryOutbox.objects.filter(retries__gt=0).count()
         extra_context['total_count'] = CeleryOutbox.objects.count()
-        oldest = pending_qs.order_by('created_at').values_list('created_at', flat=True).first()
-        if oldest:
-            extra_context['oldest_pending'] = timezone.now() - oldest
-        else:
-            extra_context['oldest_pending'] = None
+        extra_context['oldest_pending'] = timedelta(seconds=stats.oldest_pending_seconds) if stats.oldest_pending_seconds is not None else None
 
         return super().changelist_view(request, extra_context=extra_context)
 
@@ -125,7 +131,7 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
         'task_id',
         'display_args',
         'display_kwargs',
-        'options',
+        'display_options',
         'retries',
         'schema_version',
         'created_at',
@@ -154,33 +160,23 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
     def display_kwargs(self, obj: CeleryOutboxDeadLetter) -> dict:
         return obj.inspection_kwargs
 
+    @admin.display(description='options')
+    def display_options(self, obj: CeleryOutboxDeadLetter) -> dict:
+        return obj.inspection_options
+
     @admin.action(description='Retry selected dead-lettered messages')
     def retry_selected(self, request: HttpRequest, queryset: QuerySet[CeleryOutboxDeadLetter]) -> None:
         content_type = ContentType.objects.get_for_model(CeleryOutboxDeadLetter)
         dead_letter_entries = list(queryset.values_list('pk', 'task_id'))
+        dead_letter_ids = [pk for pk, _task_id in dead_letter_entries]
         user_id = _get_log_entry_user_id(request)
         with transaction.atomic():
-            outbox_messages = [
-                CeleryOutbox(
-                    task_id=dl.task_id,
-                    task_name=dl.task_name,
-                    args=dl.args,
-                    kwargs=dl.kwargs,
-                    redacted_args=dl.redacted_args,
-                    redacted_kwargs=dl.redacted_kwargs,
-                    options=dl.options,
-                    schema_version=dl.schema_version,
-                    sentry_trace_id=dl.sentry_trace_id,
-                    sentry_baggage=dl.sentry_baggage,
-                    structlog_context=dl.structlog_context,
-                )
-                for dl in queryset
-            ]
-            CeleryOutbox.objects.bulk_create(outbox_messages)
-            count = len(outbox_messages)
-            queryset.delete()
+            count = replay_dead_letters(dead_letter_ids)
+            remaining_ids = set(CeleryOutboxDeadLetter.objects.filter(pk__in=dead_letter_ids).values_list('pk', flat=True))
 
             for pk, task_id in dead_letter_entries:
+                if pk in remaining_ids:
+                    continue
                 LogEntry.objects.create(
                     user_id=user_id,
                     content_type_id=content_type.pk,

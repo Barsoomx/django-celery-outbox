@@ -3,6 +3,18 @@
 All notable changes to this project will be documented in this file.
 This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Changed
+- Release artifacts now exclude internal `*_tests.py` modules from built wheels and source distributions.
+- Release publishing now runs built-artifact and changelog contract checks before PyPI upload.
+- CI now includes dedicated Django 5.0/5.1 compatibility smoke coverage, live RabbitMQ smoke lanes, and release-gating parallel broker smoke.
+- Relay queue-wide gauges (`queue.depth`, `dead_letter.count`, `oldest_pending_age_seconds`) are now sampled snapshots instead of exact per-batch recomputations, with configurable refresh cadence.
+- `celery_outbox_stats` now defaults to `--top=0`, making the expensive live `GROUP BY task_name` drilldown opt-in.
+- Broker-outage streak tracking now accumulates across batch boundaries until a successful publish or cooldown reset.
+- Dead-letter purge execution now deletes in ordered chunks instead of one large transaction.
+- Relay signal delivery now uses `send_robust()` consistently, so one bad receiver does not block later receivers.
+
 
 ## [0.3.0] — 2026-04-19
 
@@ -14,14 +26,16 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 
 ### Changed
 - **Relay internals**: split the relay into focused selector, publisher, mutation, runtime, and policy components for easier testing and safer evolution
+- **Producer contract hardening**: `outbox_message_created` now uses `send_robust()`, receiver failures log `celery_outbox_signal_error` instead of aborting enqueue, and `messages.enqueued` is emitted only after commit
 - **Failure handling semantics**: broker outages are now deferred without consuming retry budget, while non-outage failures continue through normal retry/dead-letter flow
+- **Tracing compatibility**: `sentry_baggage` now persists as `TextField` storage in both outbox and dead-letter tables so valid long baggage values are preserved
 - **Testing story**: package-level pytest integration is now documented and exercised through wheel/plugin tests, making third-party integration tests easier to write
 - **Dependency maintenance**: bumped `pytest` from `9.0.2` to `9.0.3`
 
 ### Fixed
 - **Build cache reliability**: wheel/build cache handling is more predictable in local and CI packaging flows
 - **Relay robustness**: top-level relay loop now survives iteration failures, keeps liveness/metrics fresh during breaker cooldowns, and respects shutdown deadlines while draining
-- **Configuration feedback**: invalid settings and unsupported database setups now fail fast with explicit Django check output instead of surfacing later as runtime surprises
+- **Configuration feedback**: invalid `CELERY_OUTBOX_PII_REDACTOR`, invalid `CELERY_OUTBOX_DLQ_RETENTION`, and unsupported database setups now fail fast with explicit Django check output instead of surfacing later as runtime surprises
 
 
 ## [0.2.0] — 2026-04-13
@@ -30,9 +44,6 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 - **Dead letter support**: Messages exceeding max retries are moved to `CeleryOutboxDeadLetter` table instead of being deleted
 - **Operator CLI commands**: `celery_outbox_stats` for queue metrics and `purge_dead_letter` for dead letter cleanup
 - **Observability**: StatsD/DogStatsD metrics (messages_sent, send_latency, queue_depth, dead_letter_count, etc.)
-- **PII redaction**: Configurable payload scrubbing for sensitive data in logs (`CELERY_OUTBOX_REDACT_FIELDS`)
-- **Log sampling**: Reduce log volume with configurable sampling rates (`CELERY_OUTBOX_LOG_SAMPLE_RATE`)
-- **Health check endpoint**: `/health/` returns queue_depth, oldest_pending, dead_letter_count
 - **Schema versioning**: `schema_version` field for safe format migrations
 - **Example project**: Full Django + Celery + RabbitMQ example in `examples/minimal_django/`
 - **MkDocs documentation**: Comprehensive docs site with operations, observability, and tuning guides

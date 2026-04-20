@@ -9,10 +9,13 @@ services:
         condition: service_healthy
       mysql:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       - DB_ENGINE=postgresql
       - DB_HOST=postgres
       - DB_NAME=test_db
+      - CELERY_BROKER_URL=amqp://test:test@rabbitmq:5672//
 
   postgres:
     image: postgres:15
@@ -25,6 +28,17 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: test
+      RABBITMQ_DEFAULT_PASS: test
+    healthcheck:
+      test: ['CMD', 'rabbitmq-diagnostics', 'check_running']
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   mysql:
     image: mysql:8.0
