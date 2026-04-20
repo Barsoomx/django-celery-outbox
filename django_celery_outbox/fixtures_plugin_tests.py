@@ -9,7 +9,10 @@ from typing import Any
 
 import pytest
 
+from django_celery_outbox import __version__
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
+STUB_WHEEL_NAME = f'django_celery_outbox-{__version__}-py3-none-any.whl'
 
 
 def test_build_project_wheel_uses_pip_wheel(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
@@ -21,7 +24,7 @@ def test_build_project_wheel_uses_pip_wheel(monkeypatch: pytest.MonkeyPatch, tmp
         captured['kwargs'] = kwargs
 
         wheel_dir.mkdir(exist_ok=True)
-        (wheel_dir / 'django_celery_outbox-0.3.0-py3-none-any.whl').write_text('', encoding='utf-8')
+        (wheel_dir / STUB_WHEEL_NAME).write_text('', encoding='utf-8')
 
         return subprocess.CompletedProcess(args[0], 0, stdout='', stderr='')
 

@@ -5,7 +5,11 @@ from pathlib import Path
 
 import pytest
 
+from django_celery_outbox import __version__
+
 pytestmark = pytest.mark.release_contract
+
+STUB_WHEEL_NAME = f'django_celery_outbox-{__version__}-py3-none-any.whl'
 
 
 def test_release_contract_rejects_speculative_markers(tmp_path: Path) -> None:
@@ -96,7 +100,7 @@ def test_installed_wheel_smoke_script_accepts_wheel_origin(monkeypatch: pytest.M
         @staticmethod
         def read_text(name: str) -> str:
             assert name == 'direct_url.json'
-            return '{"url": "file:///tmp/django_celery_outbox-0.3.0-py3-none-any.whl"}'
+            return f'{{"url": "file:///tmp/{STUB_WHEEL_NAME}"}}'
 
     class EntryPoint:
         name = 'django_celery_outbox'
@@ -116,7 +120,7 @@ def test_installed_wheel_smoke_script_accepts_wheel_origin(monkeypatch: pytest.M
     smoke_script.verify_distribution(expect_wheel_origin=True)
 
     assert load_calls == ['django_celery_outbox']
-    assert 'django_celery_outbox-0.3.0-py3-none-any.whl' in capsys.readouterr().out
+    assert STUB_WHEEL_NAME in capsys.readouterr().out
 
 
 def test_installed_wheel_smoke_script_imports_pytest_plugin_and_replay_command() -> None:
