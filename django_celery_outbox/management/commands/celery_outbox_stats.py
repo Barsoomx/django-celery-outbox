@@ -30,7 +30,11 @@ class Command(BaseCommand):
     def handle(self, *args: Any, **options: Any) -> None:
         stale_timeout_seconds = options['stale_timeout_seconds']
         if stale_timeout_seconds is None:
-            stale_timeout_seconds = load_stale_timeout_seconds_setting()
+            try:
+                stale_timeout_seconds = load_stale_timeout_seconds_setting()
+            except ValueError as exc:
+                message = f'Invalid CELERY_OUTBOX_STALE_TIMEOUT_SECONDS: {exc} Use --stale-timeout-seconds to override it.'
+                raise CommandError(message) from exc
         if stale_timeout_seconds <= 0:
             raise CommandError('stale-timeout-seconds must be > 0')
 

@@ -87,6 +87,21 @@ def test_command_parser_allows_cli_override_when_setting_is_invalid() -> None:
     assert parsed.stale_timeout_seconds == 15
 
 
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS='not-an-int')
+def test_command_wraps_invalid_stale_timeout_setting_in_command_error() -> None:
+    out = StringIO()
+
+    with pytest.raises(
+        CommandError,
+        match=(
+            r'Invalid CELERY_OUTBOX_STALE_TIMEOUT_SECONDS: '
+            r'CELERY_OUTBOX_STALE_TIMEOUT_SECONDS must be an integer\. '
+            r'Use --stale-timeout-seconds to override it\.'
+        ),
+    ):
+        call_command('celery_outbox_stats', stdout=out)
+
+
 def test_command_rejects_non_positive_stale_timeout() -> None:
     out = StringIO()
 
