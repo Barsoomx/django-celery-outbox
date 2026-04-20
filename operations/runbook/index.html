@@ -1,0 +1,2541 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Transactional Outbox pattern for Celery tasks in Django">
+      
+      
+      
+        <link rel="canonical" href="https://barsoomx.github.io/django-celery-outbox/operations/runbook/">
+      
+      
+        <link rel="prev" href="../health-checks/">
+      
+      
+        <link rel="next" href="../../deployment/kubernetes/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.6">
+    
+    
+      
+        <title>Runbook - django-celery-outbox</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.484c7ddc.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.ab4e12ef.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#runbook" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+<header class="md-header" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="django-celery-outbox" class="md-header__button md-logo" aria-label="django-celery-outbox" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            django-celery-outbox
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Runbook
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="" data-md-color-scheme="default" data-md-color-primary="blue" data-md-color-accent="blue"  aria-hidden="true"  type="radio" name="__palette" id="__palette_0">
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/Barsoomx/django-celery-outbox" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Barsoomx/django-celery-outbox
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+            
+<nav class="md-tabs" aria-label="Tabs" data-md-component="tabs">
+  <div class="md-grid">
+    <ul class="md-tabs__list">
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../.." class="md-tabs__link">
+        
+  
+  
+    
+  
+  Home
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../getting-started/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Getting Started
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../concepts/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Concepts
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../configuration/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Configuration
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../usage/basic-tasks/" class="md-tabs__link">
+          
+  
+  
+  Usage
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../relay/overview/" class="md-tabs__link">
+          
+  
+  
+  Relay
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../observability/logging-events/" class="md-tabs__link">
+          
+  
+  
+  Observability
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+    
+  
+  
+    
+    
+      <li class="md-tabs__item md-tabs__item--active">
+        <a href="../dead-letter/" class="md-tabs__link">
+          
+  
+  
+  Operations
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    
+    
+      <li class="md-tabs__item">
+        <a href="../../deployment/kubernetes/" class="md-tabs__link">
+          
+  
+  
+  Deployment
+
+        </a>
+      </li>
+    
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../security/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Security
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../troubleshooting/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Troubleshooting
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../../architecture/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Architecture
+
+      </a>
+    </li>
+  
+
+      
+    </ul>
+  </div>
+</nav>
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+  
+
+
+<nav class="md-nav md-nav--primary md-nav--lifted" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="django-celery-outbox" class="md-nav__button md-logo" aria-label="django-celery-outbox" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    django-celery-outbox
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/Barsoomx/django-celery-outbox" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    Barsoomx/django-celery-outbox
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting Started
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../configuration/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Configuration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Usage
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Usage
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../usage/basic-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Basic Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../usage/task-options/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Task Options
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../usage/excluded-tasks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excluded Tasks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../usage/outside-transactions/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Outside Transactions
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../usage/testing-with-pytest/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing with pytest
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Relay
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Relay
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../relay/overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../relay/command-reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command Reference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../relay/tuning/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tuning
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../relay/multiple-instances/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Multiple Instances
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Observability
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Observability
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/logging-events/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Logging Events
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/metrics/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Metrics
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/structlog/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Structlog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/sentry/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Sentry
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../observability/log-sampling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Log Sampling
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+      
+        
+        
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_8" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_8" id="__nav_8_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Operations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_8_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_8">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Operations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dead-letter/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dead Letter Queue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../admin-interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Admin Interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../health-checks/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Health Checks
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbook
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Runbook
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#health-signals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health signals
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Health signals">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#liveness-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Liveness file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#celery_outbox_stats-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        celery_outbox_stats snapshot
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics-for-graphing-and-alerting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metrics for graphing and alerting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#log-events-referenced-during-triage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Log events referenced during triage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicit-non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explicit non-goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#incident-playbooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incident playbooks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incident playbooks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#queue-growing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Queue growing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broker-unreachable-outage-cooldown-active" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broker unreachable / outage cooldown active
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dead-letter-queue-growing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dead-letter queue growing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relay-iteration-failed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relay iteration failed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relay-hanging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relay hanging
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zero-downtime-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zero-downtime upgrade
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Zero-downtime upgrade">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kubernetes-worked-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubernetes worked example
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification-after-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification after upgrade
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollback
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rollback">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#principles_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kubernetes-worked-example_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubernetes worked example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+      
+      
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Deployment
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Deployment
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/kubernetes/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Kubernetes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../deployment/database-setup/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database Setup
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../security/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Security
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../troubleshooting/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Troubleshooting
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#health-signals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Health signals
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Health signals">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#liveness-file" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Liveness file
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#celery_outbox_stats-snapshot" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        celery_outbox_stats snapshot
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#metrics-for-graphing-and-alerting" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Metrics for graphing and alerting
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#log-events-referenced-during-triage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Log events referenced during triage
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicit-non-goals" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Explicit non-goals
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#incident-playbooks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Incident playbooks
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Incident playbooks">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#queue-growing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Queue growing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#broker-unreachable-outage-cooldown-active" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Broker unreachable / outage cooldown active
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dead-letter-queue-growing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Dead-letter queue growing
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relay-iteration-failed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relay iteration failed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#relay-hanging" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Relay hanging
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#zero-downtime-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Zero-downtime upgrade
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Zero-downtime upgrade">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#principles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kubernetes-worked-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubernetes worked example
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#verification-after-upgrade" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Verification after upgrade
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#rollback" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Rollback
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Rollback">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#principles_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Principles
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#kubernetes-worked-example_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Kubernetes worked example
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="runbook">Runbook<a class="headerlink" href="#runbook" title="Permanent link">&para;</a></h1>
+<p>Open this page when something is wrong. Jump to the <a href="#incident-playbooks">Incident playbooks</a> section, find the playbook that matches the symptom you are seeing, read it top to bottom, and execute. This page is not meant to be read cover-to-cover.</p>
+<p>Every playbook below has the same shape: <strong>Detect → Triage → Fix → Verify</strong>. If you cannot find a matching playbook, the closest page for ad-hoc diagnosis is <a href="../../troubleshooting/">Troubleshooting</a>.</p>
+<h2 id="health-signals">Health signals<a class="headerlink" href="#health-signals" title="Permanent link">&para;</a></h2>
+<p>Use these tables as a reference while following any playbook.</p>
+<h3 id="liveness-file">Liveness file<a class="headerlink" href="#liveness-file" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Signal</th>
+<th>Healthy</th>
+<th>Stale</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>mtime of <code>--liveness-file</code></td>
+<td>within your configured freshness threshold</td>
+<td>older → relay stalled or dead → <a href="#relay-hanging">Relay hanging</a></td>
+</tr>
+</tbody>
+</table>
+<p>See <a href="../health-checks/">Health Checks</a> for the <code>--liveness-file</code> flag details.
+Size that freshness threshold to cover healthy idle gaps and broker-outage cooldown windows, not
+just steady-state queue drain.</p>
+<h3 id="celery_outbox_stats-snapshot"><code>celery_outbox_stats</code> snapshot<a class="headerlink" href="#celery_outbox_stats-snapshot" title="Permanent link">&para;</a></h3>
+<p><code>python manage.py celery_outbox_stats</code> prints a point-in-time snapshot. It is not a replacement for metrics over time.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+<th>Abnormal → playbook</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>queue_depth</code></td>
+<td>live backlog: rows eligible for relay send/recovery right now</td>
+<td>trending up → <a href="#queue-growing">Queue growing</a></td>
+</tr>
+<tr>
+<td><code>oldest_pending_seconds</code></td>
+<td>age of the oldest live-backlog row (delivery latency)</td>
+<td>above your SLO → <a href="#queue-growing">Queue growing</a></td>
+</tr>
+<tr>
+<td><code>dlq_count</code></td>
+<td>rows currently stored in <code>celery_outbox_dead_letter</code></td>
+<td>new increases over time → <a href="#dead-letter-queue-growing">Dead-letter queue growing</a></td>
+</tr>
+<tr>
+<td><code>top_failing</code></td>
+<td>current outbox task groups with the highest cumulative retry counts</td>
+<td>one task dominating retries → <a href="#queue-growing">Queue growing</a> or <a href="#dead-letter-queue-growing">Dead-letter queue growing</a></td>
+</tr>
+</tbody>
+</table>
+<h3 id="metrics-for-graphing-and-alerting">Metrics for graphing and alerting<a class="headerlink" href="#metrics-for-graphing-and-alerting" title="Permanent link">&para;</a></h3>
+<p>StatsD names are shown with the default <code>MONITORING_STATSD_PREFIX = 'celery_outbox'</code>. Gauge and counter metrics usually export to Prometheus by replacing dots with underscores. Timer metrics depend on your exporter configuration and often appear as histogram-style series such as <code>_bucket</code>, <code>_sum</code>, and <code>_count</code>.</p>
+<table>
+<thead>
+<tr>
+<th>StatsD metric</th>
+<th>Prometheus</th>
+<th>Type</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>celery_outbox.queue.depth</code></td>
+<td><code>celery_outbox_queue_depth</code></td>
+<td>gauge</td>
+<td>Sampled queue-wide live backlog, refreshed at most once per <code>--queue-snapshot-refresh-seconds</code>. Chart as a time series; monotonic rise means the queue is growing.</td>
+</tr>
+<tr>
+<td><code>celery_outbox.oldest_pending_age_seconds</code></td>
+<td><code>celery_outbox_oldest_pending_age_seconds</code></td>
+<td>gauge</td>
+<td>Sampled queue-wide oldest live backlog age, refreshed at most once per <code>--queue-snapshot-refresh-seconds</code>. Alert on crossing your SLO.</td>
+</tr>
+<tr>
+<td><code>celery_outbox.dead_letter.count</code></td>
+<td><code>celery_outbox_dead_letter_count</code></td>
+<td>gauge</td>
+<td>Sampled dead-letter backlog context, refreshed at most once per <code>--queue-snapshot-refresh-seconds</code>. Page from <code>increase(celery_outbox_messages_exceeded_total[10m]) &gt; 0</code> instead of raw table size.</td>
+</tr>
+<tr>
+<td><code>celery_outbox.batch.duration_ms</code></td>
+<td>e.g. <code>celery_outbox_batch_duration_ms_bucket</code></td>
+<td>timing</td>
+<td>Chart per-batch processing time. Absence of new samples means the relay has stalled.</td>
+</tr>
+</tbody>
+</table>
+<p>Full catalogue: <a href="../../observability/metrics/">Metrics</a>.</p>
+<h3 id="log-events-referenced-during-triage">Log events referenced during triage<a class="headerlink" href="#log-events-referenced-during-triage" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>celery_outbox_relay_started</code></li>
+<li><code>celery_outbox_batch_processed</code> — absence during steady send is a stall signal</li>
+<li><code>celery_outbox_relay_breaker_trip</code></li>
+<li><code>celery_outbox_relay_breaker_open</code> — relay alive, broker unavailable</li>
+<li><code>celery_outbox_relay_iteration_failed</code></li>
+<li><code>celery_outbox_relay_shutdown_deadline_exceeded</code></li>
+<li><code>celery_outbox_send_failed</code></li>
+<li><code>celery_outbox_max_retries_exceeded</code></li>
+</ul>
+<p>Full catalogue: <a href="../../observability/logging-events/">Logging Events</a>.</p>
+<h3 id="explicit-non-goals">Explicit non-goals<a class="headerlink" href="#explicit-non-goals" title="Permanent link">&para;</a></h3>
+<ul>
+<li>The library does not ship an HTTP health endpoint. File-based liveness is the only one provided. See <a href="../health-checks/">Health Checks</a> for a user-built Django view example if you need an HTTP probe.</li>
+<li>No auto-remediation. This runbook tells operators what to do; it does not run on its own.</li>
+</ul>
+<h2 id="incident-playbooks">Incident playbooks<a class="headerlink" href="#incident-playbooks" title="Permanent link">&para;</a></h2>
+<h3 id="queue-growing">Queue growing<a class="headerlink" href="#queue-growing" title="Permanent link">&para;</a></h3>
+<p><strong>Detect.</strong> <code>celery_outbox_oldest_pending_age_seconds</code> exceeds your SLO (suggested starting threshold: 60s). Secondary signal: <code>celery_outbox_queue_depth</code> trending up over 5-10 minutes.</p>
+<p><strong>Triage</strong> (cheapest first):</p>
+<ol>
+<li><strong>Is the relay running?</strong> Check the relay pod status and the <code>--liveness-file</code> mtime.</li>
+<li><strong>Is the broker reachable from the relay?</strong> From inside the relay container, run <code>celery -A &lt;your_celery_app&gt; inspect ping</code>.</li>
+<li>
+<p><strong>Is a single task type dominating the pending set?</strong> Either:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-0-1" name="__codelineno-0-1" href="#__codelineno-0-1"></a>python<span class="w"> </span>manage.py<span class="w"> </span>celery_outbox_stats
+</code></pre></div>
+<p>or, from a DB shell:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="n">task_name</span><span class="p">,</span><span class="w"> </span><span class="k">COUNT</span><span class="p">(</span><span class="o">*</span><span class="p">)</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">celery_outbox</span><span class="w"> </span><span class="k">GROUP</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="n">task_name</span><span class="w"> </span><span class="k">ORDER</span><span class="w"> </span><span class="k">BY</span><span class="w"> </span><span class="mi">2</span><span class="w"> </span><span class="k">DESC</span><span class="w"> </span><span class="k">LIMIT</span><span class="w"> </span><span class="mi">10</span><span class="p">;</span>
+</code></pre></div>
+</li>
+<li>
+<p><strong>Did the app's send rate spike?</strong> Cross-check with producer-side metrics on your service.</p>
+</li>
+<li><strong>Is the broker itself under load?</strong> Check the broker admin UI (CPU, consumer count, its own queue depth).</li>
+</ol>
+<p><strong>Fix</strong> (by triage result):</p>
+<ul>
+<li>Relay is down → follow <a href="#relay-hanging">Relay hanging</a>.</li>
+<li>Broker unreachable → follow <a href="#broker-unreachable-outage-cooldown-active">Broker unreachable / outage cooldown active</a>.</li>
+<li>One task dominates → fix the producing code, or add the task name to <code>CELERY_OUTBOX_EXCLUDE_TASKS</code> temporarily if the library is not a fit for that workload.</li>
+<li>Legitimate throughput → scale relay replicas and/or increase <code>batch_size</code>. See <a href="../../relay/tuning/">Relay Tuning</a>.</li>
+</ul>
+<p><strong>Verify.</strong> <code>celery_outbox_oldest_pending_age_seconds</code> trending down; <code>celery_outbox_queue_depth</code> draining.</p>
+<h3 id="broker-unreachable-outage-cooldown-active">Broker unreachable / outage cooldown active<a class="headerlink" href="#broker-unreachable-outage-cooldown-active" title="Permanent link">&para;</a></h3>
+<p><strong>Detect.</strong> Any of:</p>
+<ul>
+<li><code>celery_outbox_relay_breaker_trip</code> in the relay log.</li>
+<li>Repeated <code>celery_outbox_relay_breaker_open</code> while queue depth is flat or rising.</li>
+<li>Broker ping from the relay container fails.</li>
+</ul>
+<p><strong>Triage:</strong></p>
+<ol>
+<li><strong>Confirm the relay is still alive.</strong> Check the <code>--liveness-file</code> mtime using a freshness threshold sized per <a href="../health-checks/">Health Checks</a>.</li>
+<li><strong>Confirm the broker outage.</strong> From inside the relay container, run <code>celery -A &lt;your_celery_app&gt; inspect ping</code> or the broker's equivalent connectivity check.</li>
+<li><strong>Check whether retries are climbing.</strong> Broker-outage deferral should not increment <code>retries</code> or consume retry budget.</li>
+<li><strong>Look for scope.</strong> Is this one relay process, one AZ, or the whole broker fleet? The breaker is process-local, so different relay pods may trip independently.</li>
+</ol>
+<p><strong>Fix:</strong></p>
+<ul>
+<li>Restore broker connectivity, authentication, or network reachability.</li>
+<li>Leave the selected outbox rows alone. The relay already deferred them by <code>--broker-outage-cooldown</code>.</li>
+<li>Do not interpret one cooldown window without queue drain as a dead relay if the liveness file is still fresh.</li>
+<li>Once the broker recovers, the relay resumes on the next eligible batch attempt after the cooldown expires.</li>
+</ul>
+<p><strong>Verify.</strong></p>
+<ul>
+<li><code>celery_outbox_relay_breaker_open</code> stops repeating.</li>
+<li><code>celery_outbox_batch_processed</code> resumes showing normal publish counts.</li>
+<li><code>celery_outbox_queue_depth</code> and <code>celery_outbox_oldest_pending_age_seconds</code> trend down.</li>
+</ul>
+<h3 id="dead-letter-queue-growing">Dead-letter queue growing<a class="headerlink" href="#dead-letter-queue-growing" title="Permanent link">&para;</a></h3>
+<p><strong>Detect.</strong> <code>increase(celery_outbox_messages_exceeded_total[10m]) &gt; 0</code> or another alert on new dead letters over time. Table size alone is secondary context, not the primary paging signal.</p>
+<p><strong>Triage:</strong></p>
+<ol>
+<li><strong>Group by <code>failure_reason</code></strong> — is this one error class or many?</li>
+<li><strong>Group by <code>task_name</code></strong> — is this scoped to one task or broad?</li>
+<li><strong>Time distribution of <code>dead_at</code></strong> — is this ongoing or a past spike that has already stopped?</li>
+<li><strong>Cross-reference</strong> recent deploys, config changes, and broker incidents.</li>
+</ol>
+<p>The first three are visible in the Django admin (<a href="../admin-interface/">Admin Interface</a>) by filtering on <code>failure_reason</code>, <code>task_name</code>, and <code>dead_at</code>. Item 4 comes from deploy history, config history, and broker incident history outside the package.</p>
+<p><strong>Fix</strong> (by cause):</p>
+<ul>
+<li>
+<p><strong>Past broker outage, now recovered.</strong> Purge old records:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a>python<span class="w"> </span>manage.py<span class="w"> </span>celery_outbox_purge_dead_letter<span class="w"> </span>--older-than-dead<span class="w"> </span>7d
+</code></pre></div>
+<p>See <a href="../dead-letter/">Dead Letter Queue</a> for the full flag surface.</p>
+</li>
+<li>
+<p><strong>Task name not registered on workers.</strong> Roll workers forward to include the task, or revert the producer deploy.</p>
+</li>
+<li><strong>Serialization errors.</strong> Fix the producing code and redeploy.</li>
+</ul>
+<p><strong>Replaying dead-lettered messages.</strong> Use either:</p>
+<ul>
+<li>Django admin: <code>CeleryOutboxDeadLetter</code> has a <code>retry_selected</code> bulk action.</li>
+<li>CLI automation: <code>python manage.py celery_outbox_replay_dead_letter &lt;dead_letter_id_1&gt; &lt;dead_letter_id_2&gt;</code>.</li>
+</ul>
+<p>Both paths preserve the stored payload, schema version, and tracing/context fields and remove the replayed rows from <code>celery_outbox_dead_letter</code>. See <a href="../admin-interface/">Admin Interface</a>.</p>
+<p><strong>Verify.</strong> <code>increase(celery_outbox_messages_exceeded_total[10m])</code> returns to zero; the top <code>failure_reason</code> values stop appearing in newly-inserted rows.</p>
+<h3 id="relay-iteration-failed">Relay iteration failed<a class="headerlink" href="#relay-iteration-failed" title="Permanent link">&para;</a></h3>
+<p><strong>Detect.</strong> <code>celery_outbox_relay_iteration_failed</code> appears in the relay log or your log-alerting stack.</p>
+<p><strong>Triage:</strong></p>
+<ol>
+<li><strong>Read <code>exception_type</code> and <code>exception_message</code> first.</strong> This event is a catch-all; the exception payload tells you whether to route to broker, DB, or config investigation.</li>
+<li><strong>Correlate the previous and next relay events.</strong> If the surrounding logs show <code>celery_outbox_relay_breaker_trip</code> or <code>celery_outbox_relay_breaker_open</code>, switch to <a href="#broker-unreachable-outage-cooldown-active">Broker unreachable / outage cooldown active</a>.</li>
+<li><strong>Check for schema/config drift.</strong> Recent deploys, unapplied migrations, or changed Celery settings are common causes because the relay loop retries instead of crashing hard.</li>
+<li><strong>Check whether the failure repeats.</strong> A single iteration failure can be transient; repeated identical failures mean the relay is stuck in a retry loop.</li>
+</ol>
+<p><strong>Fix:</strong></p>
+<ul>
+<li>Broker/auth/network error → restore connectivity and credentials, then follow <a href="#broker-unreachable-outage-cooldown-active">Broker unreachable / outage cooldown active</a>.</li>
+<li>Database/schema error → apply migrations or roll back the incompatible deploy before the relay retries the same failing code path.</li>
+<li>Bad package setting or broken callback → correct the setting/code and redeploy.</li>
+</ul>
+<p><strong>Verify.</strong></p>
+<ul>
+<li><code>celery_outbox_relay_iteration_failed</code> stops repeating for the same root cause.</li>
+<li><code>celery_outbox_batch_processed</code> resumes.</li>
+<li><code>celery_outbox_queue_depth</code> or <code>celery_outbox_oldest_pending_age_seconds</code> move in the expected direction again.</li>
+</ul>
+<h3 id="relay-hanging">Relay hanging<a class="headerlink" href="#relay-hanging" title="Permanent link">&para;</a></h3>
+<p><strong>Detect</strong> — any of:</p>
+<ul>
+<li>Liveness probe failing (pod restart loop).</li>
+<li><code>--liveness-file</code> mtime older than your configured freshness threshold.</li>
+<li><code>celery_outbox_batch_processed</code> log event absent from the relay log, without matching breaker-open cooldown logs.</li>
+<li><code>celery_outbox_queue_depth</code> flat but non-zero while the application is still producing.</li>
+</ul>
+<p><strong>Triage:</strong></p>
+<ol>
+<li><strong>Last log event and its timestamp</strong> from the relay pod — tells you where execution stalled. If the last events are <code>celery_outbox_relay_breaker_trip</code> or <code>celery_outbox_relay_breaker_open</code>, switch to <a href="#broker-unreachable-outage-cooldown-active">Broker unreachable / outage cooldown active</a>.</li>
+<li>
+<p><strong>DB lock contention:</strong></p>
+<p>PostgreSQL:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span><span class="w"> </span><span class="k">FROM</span><span class="w"> </span><span class="n">pg_locks</span><span class="w"> </span><span class="k">WHERE</span><span class="w"> </span><span class="n">relation</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;celery_outbox&#39;</span><span class="p">::</span><span class="n">regclass</span><span class="p">;</span>
+</code></pre></div>
+<p>MySQL 8:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="k">SELECT</span><span class="w"> </span><span class="o">*</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="k">FROM</span><span class="w"> </span><span class="n">performance_schema</span><span class="p">.</span><span class="n">data_locks</span>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="k">WHERE</span><span class="w"> </span><span class="n">OBJECT_NAME</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s1">&#39;celery_outbox&#39;</span><span class="p">;</span>
+</code></pre></div>
+<p>If <code>performance_schema.data_locks</code> is not enabled in your MySQL deployment, use your platform's lock-wait tooling instead.</p>
+</li>
+<li>
+<p><strong>Broker send blocking</strong> — is the relay waiting on network I/O to the broker? Inspect the pod's network state (<code>ss -tnp</code>, or platform equivalent) from inside the container. A healthy relay should still bound each publish by <code>--send-timeout</code>; repeated breaker logs point to outage handling rather than a Python hang.</p>
+</li>
+<li><strong>Multiple-replica lock contention</strong> — see the note in <a href="../../troubleshooting/#database-lock-contention">Troubleshooting › Database Lock Contention</a>.</li>
+</ol>
+<p><strong>Fix:</strong></p>
+<ul>
+<li>Lock contention across multiple relay replicas → reduce replica count or <code>batch_size</code>. See <a href="../../relay/tuning/">Relay Tuning</a>.</li>
+<li>Broker-blocked with breaker logs → follow <a href="#broker-unreachable-outage-cooldown-active">Broker unreachable / outage cooldown active</a>.</li>
+<li>Python-level hang → restart the pod. If recurring, capture a stack trace next time with <code>py-spy dump --pid &lt;pid&gt;</code> so it can be diagnosed.</li>
+</ul>
+<p><strong>Verify.</strong> Liveness file is being touched again; <code>celery_outbox_batch_processed</code> log events resumed.</p>
+<h2 id="zero-downtime-upgrade">Zero-downtime upgrade<a class="headerlink" href="#zero-downtime-upgrade" title="Permanent link">&para;</a></h2>
+<h3 id="principles">Principles<a class="headerlink" href="#principles" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>The relay must never run against a schema it does not understand.</strong> <code>migrate</code> runs <em>before</em> new relay pods start.</li>
+<li><strong>Migrations should be additive when possible</strong> — add columns, add tables, add indexes. Additive changes let old and new relay versions coexist during a rolling update. For destructive changes (drop column, change type, rename), use the two-release dance: the first release stops using the field, the second release removes it. Do not collapse this into a single release.</li>
+<li><strong>SIGTERM must reach the relay.</strong> <code>SIGTERM</code>/<code>SIGINT</code> starts draining mode. The relay stops starting new sends after <code>--shutdown-timeout</code>, but an already-running publish is still bounded by <code>--send-timeout</code>. Whatever platform runs the relay must deliver SIGTERM and wait — not SIGKILL.</li>
+<li><strong>Grace period ≥ <code>--shutdown-timeout + --send-timeout</code> + margin.</strong> If the orchestrator kills the relay earlier, already-selected rows recover later through stale-timeout reclaim, but operators can see spurious restarts and duplicate delivery.</li>
+</ol>
+<h3 id="kubernetes-worked-example">Kubernetes worked example<a class="headerlink" href="#kubernetes-worked-example" title="Permanent link">&para;</a></h3>
+<p>This is a template, not a drop-in chart. Adapt to your Helm chart's values.</p>
+<p>Run migrations in a <code>pre-upgrade</code> hook, either via an <code>initContainer</code> or a one-shot <code>Job</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">batch/v1</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Job</span>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">myapp-migrate</span>
+<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a><span class="w">  </span><span class="nt">annotations</span><span class="p">:</span>
+<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="w">    </span><span class="s">&quot;helm.sh/hook&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pre-install,pre-upgrade</span>
+<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="w">    </span><span class="s">&quot;helm.sh/hook-weight&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="s">&quot;-5&quot;</span>
+<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="w">    </span><span class="s">&quot;helm.sh/hook-delete-policy&quot;</span><span class="p p-Indicator">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">before-hook-creation,hook-succeeded</span>
+<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a><span class="w">  </span><span class="nt">template</span><span class="p">:</span>
+<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a><span class="w">    </span><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a><span class="w">      </span><span class="nt">restartPolicy</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">OnFailure</span>
+<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a><span class="w">      </span><span class="nt">containers</span><span class="p">:</span>
+<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">migrate</span>
+<a id="__codelineno-5-15" name="__codelineno-5-15" href="#__codelineno-5-15"></a><span class="w">          </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">myapp:{{ .Values.image.tag }}</span>
+<a id="__codelineno-5-16" name="__codelineno-5-16" href="#__codelineno-5-16"></a><span class="w">          </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;python&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;manage.py&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;migrate&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;--noinput&quot;</span><span class="p p-Indicator">]</span>
+</code></pre></div>
+<p>Relay <code>Deployment</code>:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="nt">apiVersion</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">apps/v1</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a><span class="nt">kind</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Deployment</span>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="nt">metadata</span><span class="p">:</span>
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">myapp-relay</span>
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a><span class="w">  </span><span class="nt">replicas</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">2</span>
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">  </span><span class="nt">strategy</span><span class="p">:</span>
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">RollingUpdate</span>
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a><span class="w">    </span><span class="nt">rollingUpdate</span><span class="p">:</span>
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="w">      </span><span class="nt">maxUnavailable</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a><span class="w">      </span><span class="nt">maxSurge</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">1</span>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="w">  </span><span class="nt">template</span><span class="p">:</span>
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="w">    </span><span class="nt">spec</span><span class="p">:</span>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="w">      </span><span class="nt">terminationGracePeriodSeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">120</span><span class="w">   </span><span class="c1"># ≥ shutdown_timeout + send_timeout + margin</span>
+<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a><span class="w">      </span><span class="nt">containers</span><span class="p">:</span>
+<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a><span class="w">        </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">relay</span>
+<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="w">          </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">myapp:{{ .Values.image.tag }}</span>
+<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="w">          </span><span class="nt">command</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">&quot;python&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;manage.py&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;celery_outbox_relay&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;--liveness-file&quot;</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">&quot;/tmp/relay-alive&quot;</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a><span class="w">          </span><span class="nt">livenessProbe</span><span class="p">:</span>
+<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a><span class="w">            </span><span class="nt">exec</span><span class="p">:</span>
+<a id="__codelineno-6-21" name="__codelineno-6-21" href="#__codelineno-6-21"></a><span class="w">              </span><span class="nt">command</span><span class="p">:</span>
+<a id="__codelineno-6-22" name="__codelineno-6-22" href="#__codelineno-6-22"></a><span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">python</span>
+<a id="__codelineno-6-23" name="__codelineno-6-23" href="#__codelineno-6-23"></a><span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">-c</span>
+<a id="__codelineno-6-24" name="__codelineno-6-24" href="#__codelineno-6-24"></a><span class="w">                </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">|</span>
+<a id="__codelineno-6-25" name="__codelineno-6-25" href="#__codelineno-6-25"></a><span class="w">                  </span><span class="no">import os</span>
+<a id="__codelineno-6-26" name="__codelineno-6-26" href="#__codelineno-6-26"></a><span class="w">                  </span><span class="no">import sys</span>
+<a id="__codelineno-6-27" name="__codelineno-6-27" href="#__codelineno-6-27"></a><span class="w">                  </span><span class="no">import time</span>
+<a id="__codelineno-6-28" name="__codelineno-6-28" href="#__codelineno-6-28"></a>
+<a id="__codelineno-6-29" name="__codelineno-6-29" href="#__codelineno-6-29"></a><span class="w">                  </span><span class="no">path = &quot;/tmp/relay-alive&quot;</span>
+<a id="__codelineno-6-30" name="__codelineno-6-30" href="#__codelineno-6-30"></a><span class="w">                  </span><span class="no">max_age_seconds = 90</span>
+<a id="__codelineno-6-31" name="__codelineno-6-31" href="#__codelineno-6-31"></a>
+<a id="__codelineno-6-32" name="__codelineno-6-32" href="#__codelineno-6-32"></a><span class="w">                  </span><span class="no">try:</span>
+<a id="__codelineno-6-33" name="__codelineno-6-33" href="#__codelineno-6-33"></a><span class="w">                      </span><span class="no">stale_for = time.time() - os.path.getmtime(path)</span>
+<a id="__codelineno-6-34" name="__codelineno-6-34" href="#__codelineno-6-34"></a><span class="w">                  </span><span class="no">except FileNotFoundError:</span>
+<a id="__codelineno-6-35" name="__codelineno-6-35" href="#__codelineno-6-35"></a><span class="w">                      </span><span class="no">sys.exit(1)</span>
+<a id="__codelineno-6-36" name="__codelineno-6-36" href="#__codelineno-6-36"></a>
+<a id="__codelineno-6-37" name="__codelineno-6-37" href="#__codelineno-6-37"></a><span class="w">                  </span><span class="no">sys.exit(0 if stale_for &lt; max_age_seconds else 1)</span>
+<a id="__codelineno-6-38" name="__codelineno-6-38" href="#__codelineno-6-38"></a><span class="w">            </span><span class="nt">initialDelaySeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10</span>
+<a id="__codelineno-6-39" name="__codelineno-6-39" href="#__codelineno-6-39"></a><span class="w">            </span><span class="nt">periodSeconds</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">30</span>
+<a id="__codelineno-6-40" name="__codelineno-6-40" href="#__codelineno-6-40"></a><span class="w">            </span><span class="nt">failureThreshold</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+</code></pre></div>
+<p>Deployment layout references: <a href="../../deployment/kubernetes/">Kubernetes</a>.</p>
+<h3 id="verification-after-upgrade">Verification after upgrade<a class="headerlink" href="#verification-after-upgrade" title="Permanent link">&para;</a></h3>
+<ul>
+<li><code>--liveness-file</code> mtime refreshes on every new pod.</li>
+<li><code>celery_outbox_batch_processed</code> log events appear from the new pod names.</li>
+<li><code>celery_outbox_queue_depth</code> and <code>celery_outbox_oldest_pending_age_seconds</code> stay within your SLO.</li>
+</ul>
+<h2 id="rollback">Rollback<a class="headerlink" href="#rollback" title="Permanent link">&para;</a></h2>
+<h3 id="principles_1">Principles<a class="headerlink" href="#principles_1" title="Permanent link">&para;</a></h3>
+<ol>
+<li><strong>Rolling back code is cheap. Rolling back schema is not.</strong> <code>helm rollback</code> (or equivalent) reverts the container image and config; it does <strong>not</strong> revert the database. The library's migrations use standard reversible Django operations, so <code>python manage.py migrate django_celery_outbox &lt;previous_migration&gt;</code> can roll the schema back — but destructive reverses (dropping a column that now holds data) still lose rows. Verify the reverse is safe for your data before running it.</li>
+<li><strong>Three scenarios, three procedures.</strong><ul>
+<li><strong>Bad image, schema is fine</strong> → standard rollback. Works because migrations are additive (see <a href="#zero-downtime-upgrade">Zero-downtime upgrade</a>).</li>
+<li><strong>Bad schema, needs reversal</strong> → run <code>python manage.py migrate django_celery_outbox &lt;previous_migration&gt;</code> <em>after</em> confirming it will not drop data you need. For non-trivial reverses (data transforms, dropping columns that have been written to) write a forward-fix migration instead — do not invent one during the incident.</li>
+<li><strong>Corruption or data loss</strong> → out of scope for this runbook. Use standard Postgres point-in-time recovery.</li>
+</ul>
+</li>
+<li><strong>Watch the DLQ during the rollback.</strong> A rollback that introduces incompatibility (e.g., workers on old code cannot deserialize tasks produced by the newer relay) shows up as DLQ growth. See <a href="#dead-letter-queue-growing">Dead-letter queue growing</a>.</li>
+</ol>
+<h3 id="kubernetes-worked-example_1">Kubernetes worked example<a class="headerlink" href="#kubernetes-worked-example_1" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="c1"># List revisions</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>helm<span class="w"> </span><span class="nb">history</span><span class="w"> </span>&lt;release&gt;
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="c1"># Roll back to a specific revision</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a>helm<span class="w"> </span>rollback<span class="w"> </span>&lt;release&gt;<span class="w"> </span>&lt;revision&gt;
+</code></pre></div>
+<p><strong>Verification after rollback:</strong></p>
+<ul>
+<li>Relay image tag reverted on all relay pods.</li>
+<li><code>celery_outbox_batch_processed</code> log events continue.</li>
+<li><code>celery_outbox_dead_letter_count</code> does not climb.</li>
+</ul>
+<div class="admonition warning">
+<p class="admonition-title">Schema changes are not rolled back by <code>helm rollback</code></p>
+<p><code>helm rollback</code> reverts images and config. Schema reversals are a separate, manual decision: they are possible via <code>manage.py migrate django_celery_outbox &lt;previous_migration&gt;</code>, but only if the reverse does not lose data you need. For non-trivial reverses, write a forward-fix migration and deploy it as a normal release instead.</p>
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+        
+<div class="md-social">
+  
+    
+    
+    
+    
+      
+      
+    
+    <a href="https://github.com/Barsoomx/django-celery-outbox" target="_blank" rel="noopener" title="github.com" class="md-social__link">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M173.9 397.4c0 2-2.3 3.6-5.2 3.6-3.3.3-5.6-1.3-5.6-3.6 0-2 2.3-3.6 5.2-3.6 3-.3 5.6 1.3 5.6 3.6m-31.1-4.5c-.7 2 1.3 4.3 4.3 4.9 2.6 1 5.6 0 6.2-2s-1.3-4.3-4.3-5.2c-2.6-.7-5.5.3-6.2 2.3m44.2-1.7c-2.9.7-4.9 2.6-4.6 4.9.3 2 2.9 3.3 5.9 2.6 2.9-.7 4.9-2.6 4.6-4.6-.3-1.9-3-3.2-5.9-2.9M252.8 8C114.1 8 8 113.3 8 252c0 110.9 69.8 205.8 169.5 239.2 12.8 2.3 17.3-5.6 17.3-12.1 0-6.2-.3-40.4-.3-61.4 0 0-70 15-84.7-29.8 0 0-11.4-29.1-27.8-36.6 0 0-22.9-15.7 1.6-15.4 0 0 24.9 2 38.6 25.8 21.9 38.6 58.6 27.5 72.9 20.9 2.3-16 8.8-27.1 16-33.7-55.9-6.2-112.3-14.3-112.3-110.5 0-27.5 7.6-41.3 23.6-58.9-2.6-6.5-11.1-33.3 2.6-67.9 20.9-6.5 69 27 69 27 20-5.6 41.5-8.5 62.8-8.5s42.8 2.9 62.8 8.5c0 0 48.1-33.6 69-27 13.7 34.7 5.2 61.4 2.6 67.9 16 17.7 25.8 31.5 25.8 58.9 0 96.5-58.9 104.2-114.8 110.5 9.2 7.9 17 22.9 17 46.4 0 33.7-.3 75.4-.3 83.6 0 6.5 4.6 14.4 17.3 12.1C436.2 457.8 504 362.9 504 252 504 113.3 391.5 8 252.8 8M105.2 352.9c-1.3 1-1 3.3.7 5.2 1.6 1.6 3.9 2.3 5.2 1 1.3-1 1-3.3-.7-5.2-1.6-1.6-3.9-2.3-5.2-1m-10.8-8.1c-.7 1.3.3 2.9 2.3 3.9 1.6 1 3.6.7 4.3-.7.7-1.3-.3-2.9-2.3-3.9-2-.6-3.6-.3-4.3.7m32.4 35.6c-1.6 1.3-1 4.3 1.3 6.2 2.3 2.3 5.2 2.6 6.5 1 1.3-1.3.7-4.3-1.3-6.2-2.2-2.3-5.2-2.6-6.5-1m-11.4-14.7c-1.6 1-1.6 3.6 0 5.9s4.3 3.3 5.6 2.3c1.6-1.3 1.6-3.9 0-6.2-1.4-2.3-4-3.3-5.6-2"/></svg>
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.instant", "navigation.tabs", "navigation.sections", "navigation.expand", "navigation.top", "toc.follow", "content.code.copy", "content.code.select"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.79ae519e.min.js"></script>
+      
+    
+  </body>
+</html>
