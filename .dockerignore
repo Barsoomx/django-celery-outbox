@@ -4,3 +4,4 @@ django_celery_outbox.egg-info/
 build/
 site/
 htmlcov/
+htmlcov/
