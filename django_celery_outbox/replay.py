@@ -8,15 +8,16 @@ from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 
 def replay_dead_letters(dead_letter_ids: Sequence[int], *, limit: int | None = None) -> int:
     db_alias = get_outbox_db_alias()
-    queryset = CeleryOutboxDeadLetter.objects.using(db_alias).filter(pk__in=dead_letter_ids).order_by('pk')
-    if limit is not None:
-        queryset = queryset[:limit]
-
-    rows = list(queryset)
-    if not rows:
-        return 0
 
     with transaction.atomic(using=db_alias):
+        queryset = CeleryOutboxDeadLetter.objects.using(db_alias).select_for_update().filter(pk__in=dead_letter_ids).order_by('pk')
+        if limit is not None:
+            queryset = queryset[:limit]
+
+        rows = list(queryset)
+        if not rows:
+            return 0
+
         CeleryOutbox.objects.using(db_alias).bulk_create(
             [
                 CeleryOutbox(

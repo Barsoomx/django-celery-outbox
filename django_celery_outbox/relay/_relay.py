@@ -465,6 +465,8 @@ class Relay:
                 breaker_exc=breaker_exc,
             )
             wait_for_inflight_after_outage = wait_for_inflight_after_outage or should_wait_for_inflight
+            # Block for only one completion here, then return control so the caller can refill the
+            # sliding window promptly instead of draining every in-flight future before submitting again.
             break
 
         for future in [future for future in list(pending) if future.done()]:

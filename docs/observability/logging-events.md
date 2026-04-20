@@ -36,6 +36,14 @@ Event names and field schemas are part of the public API.
 | exception_type | str | Exception class name |
 | exception_message | str | Exception message |
 
+Example Loki LogQL alert:
+
+```logql
+sum by (exception_type) (
+  count_over_time({app="relay"} |= "celery_outbox_relay_iteration_failed"[5m])
+) > 0
+```
+
 ### celery_outbox_relay_shutdown
 
 **Level:** INFO
@@ -145,7 +153,7 @@ No additional fields.
 1. **Pre-send exceeded:** Message was already at max retries when relay picked it up (e.g., after restart). `exception_type='pre_exceeded'`.
 2. **Post-send exceeded:** Send attempt failed on the last allowed retry. `exception_type` contains the actual exception category.
 
-`celery_outbox_relay_iteration_failed` is the catch-all relay-loop failure event. Wire it into your log-alerting stack.
+`celery_outbox_relay_iteration_failed` is the catch-all relay-loop failure event. Promote it to a first-class log alert rather than relying only on stale liveness or backlog symptoms.
 
 ## App Events
 

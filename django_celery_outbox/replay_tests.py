@@ -75,12 +75,19 @@ def test_replay_dead_letters_uses_outbox_alias_for_read_write_and_delete() -> No
     read_queryset.order_by.return_value = read_queryset
     read_queryset.__iter__.return_value = iter([row])
     delete_queryset = MagicMock()
-    using_manager = MagicMock()
-    using_manager.filter.side_effect = [read_queryset, delete_queryset]
+    read_locking_manager = MagicMock()
+    read_locking_manager.filter.return_value = read_queryset
+    read_using_manager = MagicMock()
+    read_using_manager.select_for_update.return_value = read_locking_manager
+    delete_using_manager = MagicMock()
+    delete_using_manager.filter.return_value = delete_queryset
 
     with (
         patch('django_celery_outbox.replay.get_outbox_db_alias', return_value='outbox') as m_alias,
-        patch('django_celery_outbox.replay.CeleryOutboxDeadLetter.objects.using', return_value=using_manager) as m_dead_using,
+        patch(
+            'django_celery_outbox.replay.CeleryOutboxDeadLetter.objects.using',
+            side_effect=[read_using_manager, delete_using_manager],
+        ) as m_dead_using,
         patch('django_celery_outbox.replay.CeleryOutbox.objects.using') as m_outbox_using,
         patch('django_celery_outbox.replay.transaction.atomic') as m_atomic,
     ):
@@ -89,8 +96,9 @@ def test_replay_dead_letters_uses_outbox_alias_for_read_write_and_delete() -> No
     assert replayed == 1
     m_alias.assert_called_once_with()
     assert m_dead_using.call_count == 2
-    assert using_manager.filter.call_count == 2
-    using_manager.filter.assert_any_call(pk__in=[row.pk])
+    read_using_manager.select_for_update.assert_called_once_with()
+    read_locking_manager.filter.assert_called_once_with(pk__in=[row.pk])
+    delete_using_manager.filter.assert_called_once_with(pk__in=[row.pk])
     m_atomic.assert_called_once_with(using='outbox')
     m_outbox_using.assert_called_once_with('outbox')
     m_outbox_using.return_value.bulk_create.assert_called_once()

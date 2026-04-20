@@ -248,12 +248,12 @@ Observability context is captured at `send_task()` time and restored by `RelayPu
 
 The package emits Django signals around enqueue and relay operations. The signal kwargs are part of the documented integration contract:
 
-| Signal | Sender | Kwargs |
-|--------|--------|--------|
-| `outbox_message_created` | `OutboxCelery` | `task_id`, `task_name` |
-| `outbox_message_sent` | `Relay` | `task_id`, `task_name` |
-| `outbox_message_failed` | `Relay` | `task_id`, `task_name`, `retries` |
-| `outbox_message_dead_lettered` | `Relay` | `task_ids`, `task_names` |
+| Signal | Sender | Shape | Kwargs |
+|--------|--------|-------|--------|
+| `outbox_message_created` | `OutboxCelery` | scalar | `task_id`, `task_name` |
+| `outbox_message_sent` | `Relay` | scalar | `task_id`, `task_name` |
+| `outbox_message_failed` | `Relay` | scalar | `task_id`, `task_name`, `retries` |
+| `outbox_message_dead_lettered` | `Relay` | batched | `task_ids`, `task_names` |
 
 `outbox_message_created` is emitted after the outbox row is written but before transaction commit. Use `transaction.on_commit()` if downstream work must observe only committed rows.
 

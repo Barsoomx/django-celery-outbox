@@ -172,6 +172,34 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
     assert 'Framework :: Django :: 5.1' in pyproject
 
 
+def test_architecture_docs_explicitly_mark_signal_payload_shape() -> None:
+    architecture = Path('docs/architecture.md').read_text(encoding='utf-8')
+
+    assert '| Signal | Sender | Shape | Kwargs |' in architecture
+    assert '| `outbox_message_created` | `OutboxCelery` | scalar | `task_id`, `task_name` |' in architecture
+    assert '| `outbox_message_sent` | `Relay` | scalar | `task_id`, `task_name` |' in architecture
+    assert '| `outbox_message_failed` | `Relay` | scalar | `task_id`, `task_name`, `retries` |' in architecture
+    assert '| `outbox_message_dead_lettered` | `Relay` | batched | `task_ids`, `task_names` |' in architecture
+
+
+def test_logging_events_docs_include_relay_iteration_failed_alert_snippet() -> None:
+    logging_events = Path('docs/observability/logging-events.md').read_text(encoding='utf-8')
+
+    assert 'celery_outbox_relay_iteration_failed' in logging_events
+    assert 'LogQL' in logging_events
+    assert '{app="relay"} |= "celery_outbox_relay_iteration_failed"' in logging_events
+
+
+def test_relay_index_explain_note_records_non_empty_table_evidence() -> None:
+    note = Path('docs/superpowers/plans/notes/2026-04-19-relay-index-explain.txt').read_text(encoding='utf-8')
+
+    assert 'BitmapOr' in note
+    assert 'index_merge' in note
+    assert 'rows=1 width=2298' not in note
+    assert 'dead_at, id' in note
+    assert 'created_at, id' in note
+
+
 def test_packaged_alert_rules_only_include_package_owned_alerts() -> None:
     alert_rules = Path('docs/observability/alert-rules.yml').read_text(encoding='utf-8')
 
