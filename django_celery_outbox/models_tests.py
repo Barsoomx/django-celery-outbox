@@ -2,6 +2,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.test import override_settings
+from django.utils import timezone
 
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
 
@@ -263,6 +264,44 @@ def test_outbox_inspection_options_falls_back_to_raw_options_when_nested_redacti
         task_name='parent.task',
         exc_info=True,
     )
+
+
+@pytest.mark.django_db
+def test_dead_letter_inspection_args_prefers_redacted_payload() -> None:
+    msg = CeleryOutboxDeadLetter.objects.create(
+        created_at=timezone.now(),
+        task_id='dead-inspect-args-1',
+        task_name='dead.task',
+        args=[1, 2],
+        redacted_args=['[REDACTED]', 2],
+    )
+
+    assert msg.inspection_args == ['[REDACTED]', 2]
+
+
+@pytest.mark.django_db
+def test_dead_letter_inspection_options_redacts_nested_signatures() -> None:
+    msg = CeleryOutboxDeadLetter.objects.create(
+        created_at=timezone.now(),
+        task_id='dead-inspect-options-1',
+        task_name='parent.task',
+        options={
+            'link': [
+                {
+                    'task': 'callback.task',
+                    'args': [],
+                    'kwargs': {'token': 'secret'},
+                    'options': {},
+                    'subtask_type': None,
+                    'immutable': False,
+                    'chord_size': None,
+                }
+            ],
+        },
+    )
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=_redact_payloads):
+        assert msg.inspection_options['link'][0]['kwargs']['token'] == '[REDACTED]'
 
 
 @pytest.mark.django_db

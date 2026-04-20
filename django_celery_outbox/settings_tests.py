@@ -68,6 +68,14 @@ def test_load_celery_app_setting_wraps_import_errors() -> None:
         load_celery_app_setting()
 
 
+@override_settings(CELERY_OUTBOX_APP='django_celery_outbox.settings_tests.valid_celery_app')
+def test_load_celery_app_setting_rejects_missing_module_spec(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr('django_celery_outbox._settings.importlib.util.find_spec', lambda _: None)
+
+    with pytest.raises(ValueError, match='module could not be imported'):
+        load_celery_app_setting()
+
+
 @override_settings(CELERY_OUTBOX_APP='django_celery_outbox.settings_tests.missing_celery_app')
 def test_load_celery_app_setting_requires_attribute() -> None:
     with pytest.raises(ValueError, match='was not found'):
@@ -164,6 +172,12 @@ def test_load_pii_redactor_setting_raises_for_bad_signature() -> None:
         load_pii_redactor_setting()
 
 
+@override_settings(CELERY_OUTBOX_PII_REDACTOR=123)
+def test_load_pii_redactor_setting_rejects_non_callable_values() -> None:
+    with pytest.raises(TypeError, match='must be a callable or dotted path'):
+        load_pii_redactor_setting()
+
+
 @override_settings(CELERY_OUTBOX_DLQ_RETENTION={'older_than_dead': '7d', 'task_name': 'myapp.*'})
 def test_load_dlq_retention_setting_parses_supported_values() -> None:
     assert load_dlq_retention_setting() == {
@@ -191,6 +205,12 @@ def test_load_dlq_retention_setting_rejects_non_string_task_name() -> None:
         load_dlq_retention_setting()
 
 
+@override_settings(CELERY_OUTBOX_DLQ_RETENTION='30d')
+def test_load_dlq_retention_setting_rejects_non_dict_values() -> None:
+    with pytest.raises(TypeError, match='CELERY_OUTBOX_DLQ_RETENTION must be a dict'):
+        load_dlq_retention_setting()
+
+
 @override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=900)
 def test_load_stale_timeout_seconds_setting_returns_configured_value() -> None:
     assert load_stale_timeout_seconds_setting() == 900
@@ -199,4 +219,10 @@ def test_load_stale_timeout_seconds_setting_returns_configured_value() -> None:
 @override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS=0)
 def test_load_stale_timeout_seconds_setting_rejects_non_positive_values() -> None:
     with pytest.raises(ValueError, match='CELERY_OUTBOX_STALE_TIMEOUT_SECONDS must be > 0'):
+        load_stale_timeout_seconds_setting()
+
+
+@override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS='not-an-int')
+def test_load_stale_timeout_seconds_setting_rejects_non_integer_values() -> None:
+    with pytest.raises(ValueError, match='CELERY_OUTBOX_STALE_TIMEOUT_SECONDS must be an integer'):
         load_stale_timeout_seconds_setting()

@@ -11,7 +11,7 @@ from celery.result import AsyncResult
 from django.db import transaction
 from django.test import override_settings
 
-from django_celery_outbox.app import OutboxCelery, _send_signal_safe
+from django_celery_outbox.app import OutboxCelery, _redact_options_for_inspection, _send_signal_safe
 from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.signals import outbox_message_created
 
@@ -686,6 +686,15 @@ def test_send_task_redactor_invoked_once_for_top_level_payload(
         [{'email': 'user@example.com'}],
         {'token': 'secret'},
     )
+
+
+def test_redact_options_for_inspection_returns_original_options_when_redactor_disabled() -> None:
+    options = {'link': [{'task': 'child.task'}]}
+
+    with override_settings(CELERY_OUTBOX_PII_REDACTOR=None):
+        result = _redact_options_for_inspection('parent.task', options)
+
+    assert result is options
 
 
 @pytest.mark.django_db

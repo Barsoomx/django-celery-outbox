@@ -855,6 +855,16 @@ def test_processing_breaker_open_closes_connections_around_cooldown_sleep(
     assert m_close.call_count == 2
 
 
+def test_setup_signals_registers_sigterm_and_sigint_handlers(f_relay: Relay) -> None:
+    with patch('django_celery_outbox.relay._relay.signal.signal') as m_signal:
+        f_relay._setup_signals()
+
+    assert m_signal.call_args_list == [
+        ((signal.SIGTERM, f_relay._handle_signal), {}),
+        ((signal.SIGINT, f_relay._handle_signal), {}),
+    ]
+
+
 @pytest.mark.django_db
 def test_processing_breaker_open_clamps_sleep_to_shutdown_deadline(
     m_celery_app: MagicMock,
@@ -967,6 +977,29 @@ def test_should_continue_draining_respects_configured_stale_timeout(
     relay._policy.begin_shutdown(now_monotonic=0.0)
 
     with patch('django_celery_outbox.relay._relay.time.monotonic', return_value=1.0):
+        assert relay._should_continue_draining() is False
+
+
+@pytest.mark.django_db
+def test_should_continue_draining_returns_false_after_shutdown_deadline_expires(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(batch_size=10, idle_time=0, max_retries=3, shutdown_timeout=30.0),
+    )
+    CeleryOutboxFactory.create(
+        task_id='drain-deadline-1',
+        task_name='some.task',
+        updated_at=None,
+        retry_after=None,
+        options={},
+    )
+    relay._policy.begin_shutdown(now_monotonic=0.0)
+
+    with patch('django_celery_outbox.relay._relay.time.monotonic', return_value=30.0):
         assert relay._should_continue_draining() is False
 
 
@@ -1238,6 +1271,29 @@ def test_process_messages_empty_list(f_relay: Relay) -> None:
 
 
 @pytest.mark.django_db
+def test_parallel_mode_marks_messages_shutdown_aborted_when_deadline_expires_before_submit(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(batch_size=10, idle_time=0, max_retries=3, publish_concurrency=2),
+    )
+    first = CeleryOutbox.objects.create(task_id='parallel-shutdown-1', task_name='some.task', retries=0, options={})
+    second = CeleryOutbox.objects.create(task_id='parallel-shutdown-2', task_name='some.task', retries=0, options={})
+
+    with patch.object(relay._policy, 'shutdown_deadline_exceeded', return_value=True):
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = relay._process_messages_parallel([first, second])
+
+    assert published == []
+    assert failed == []
+    assert exceeded == []
+    assert deferred_due_to_outage == []
+    assert [msg.task_id for msg in shutdown_aborted] == ['parallel-shutdown-1', 'parallel-shutdown-2']
+
+
+@pytest.mark.django_db
 def test_processing_calls_close_old_connections(m_celery_app: MagicMock) -> None:
     relay = Relay(
         app=m_celery_app,
@@ -1372,6 +1428,11 @@ def test_config_validation_zero_backoff_time() -> None:
 def test_config_validation_zero_max_retries() -> None:
     with pytest.raises(ImproperlyConfigured, match='max_retries must be > 0'):
         RelayConfig.init(max_retries=0)
+
+
+def test_config_validation_zero_publish_concurrency() -> None:
+    with pytest.raises(ImproperlyConfigured, match='publish_concurrency must be > 0'):
+        RelayConfig.init(publish_concurrency=0)
 
 
 def test_config_validation_zero_queue_snapshot_refresh_seconds() -> None:
@@ -1949,6 +2010,118 @@ def test_send_latency_ms_emitted_on_success(
     timing_calls = [c for c in m_metrics.timing.call_args_list if c[0][0] == 'send_latency_ms']
     assert len(timing_calls) == 1
     assert 1900 < timing_calls[0][0][1] < 2500
+
+
+@pytest.mark.django_db
+def test_parallel_mode_classifies_pre_exceeded_messages_before_submission(
+    m_celery_app: MagicMock,
+    m_metrics: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2),
+    )
+    pre_exceeded = CeleryOutbox.objects.create(
+        task_id='parallel-pre-exceeded-1',
+        task_name='some.task',
+        retries=relay._config.max_retries,
+        options={},
+    )
+    publishable = CeleryOutbox.objects.create(
+        task_id='parallel-pre-exceeded-2',
+        task_name='some.task',
+        retries=0,
+        options={},
+    )
+
+    with patch.object(relay._publisher, 'prepare_publish_call', return_value='prepared'):
+        with patch.object(relay._publisher, 'publish_prepared', return_value=None):
+            published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = relay._process_messages_parallel([pre_exceeded, publishable])
+
+    assert published == [publishable.id]
+    assert failed == []
+    assert [msg.id for msg in exceeded] == [pre_exceeded.id]
+    assert deferred_due_to_outage == []
+    assert shutdown_aborted == []
+    m_metrics.increment.assert_any_call('messages.exceeded', tags={'task_name': 'some.task', 'exception_type': 'pre_exceeded'})
+
+
+@pytest.mark.django_db
+def test_parallel_mode_breaks_on_prepare_publish_outage_exceptions(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2, broker_outage_cooldown=30.0),
+    )
+    first = CeleryOutbox.objects.create(task_id='parallel-prepare-outage-1', task_name='some.task', retries=0, options={})
+    second = CeleryOutbox.objects.create(task_id='parallel-prepare-outage-2', task_name='some.task', retries=0, options={})
+
+    with patch.object(
+        relay._publisher,
+        'prepare_publish_call',
+        side_effect=[TimeoutError('timed out-1'), TimeoutError('timed out-2')],
+    ):
+        published, failed, exceeded, deferred_due_to_outage, shutdown_aborted = relay._process_messages_parallel([first, second])
+
+    assert published == []
+    assert failed == []
+    assert exceeded == []
+    assert deferred_due_to_outage == [first.id, second.id]
+    assert shutdown_aborted == []
+
+
+@pytest.mark.django_db
+def test_parallel_completion_reraises_base_exceptions(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2),
+    )
+    msg = CeleryOutbox.objects.create(task_id='parallel-base-exc-1', task_name='some.task', retries=0, options={})
+
+    with pytest.raises(KeyboardInterrupt):
+        relay._process_parallel_completion(msg, KeyboardInterrupt(), [], [], [], [])
+
+
+@pytest.mark.django_db
+def test_parallel_breaker_remaining_messages_classifies_pre_exceeded_rows(
+    m_celery_app: MagicMock,
+    m_metrics: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2),
+    )
+    pre_exceeded = CeleryOutbox.objects.create(
+        task_id='parallel-breaker-remaining-1',
+        task_name='some.task',
+        retries=relay._config.max_retries,
+        options={},
+    )
+    publishable = CeleryOutbox.objects.create(
+        task_id='parallel-breaker-remaining-2',
+        task_name='some.task',
+        retries=0,
+        options={},
+    )
+    exceeded: list[CeleryOutbox] = []
+    deferred_due_to_outage: list[int] = []
+
+    relay._classify_breaker_remaining_messages([pre_exceeded, publishable], exceeded, deferred_due_to_outage)
+
+    assert [msg.id for msg in exceeded] == [pre_exceeded.id]
+    assert deferred_due_to_outage == [publishable.id]
+    m_metrics.increment.assert_any_call('messages.exceeded', tags={'task_name': 'some.task', 'exception_type': 'pre_exceeded'})
 
 
 def test_setup_delayed_delivery_calls_declare(f_relay: Relay) -> None:

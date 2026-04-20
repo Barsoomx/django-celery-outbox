@@ -56,6 +56,14 @@ def test_replay_dead_letters_limit_replays_only_requested_slice() -> None:
     assert CeleryOutboxDeadLetter.objects.filter(pk=dead3.pk).exists()
 
 
+@pytest.mark.django_db
+def test_replay_dead_letters_returns_zero_when_no_rows_match() -> None:
+    replayed = replay_dead_letters([999_999])
+
+    assert replayed == 0
+    assert CeleryOutbox.objects.count() == 0
+
+
 def test_replay_dead_letters_uses_outbox_alias_for_read_write_and_delete() -> None:
     row = MagicMock(
         pk=11,

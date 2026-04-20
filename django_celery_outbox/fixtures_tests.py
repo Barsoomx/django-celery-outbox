@@ -286,6 +286,28 @@ def test_drain_outbox_uses_fixture_support_run_once(monkeypatch: pytest.MonkeyPa
     assert len(called) == 1
 
 
+@pytest.mark.django_db
+def test_drain_outbox_returns_immediately_when_queue_is_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    called: list[tuple[object, float]] = []
+
+    def fake_run_drain_outbox_once(app: object, *, idle_time: float = 0.0) -> None:
+        called.append((app, idle_time))
+
+    monkeypatch.setattr(
+        fixtures_module,
+        'run_drain_outbox_once',
+        fake_run_drain_outbox_once,
+        raising=False,
+    )
+
+    drain_outbox = cast(Any, fixtures_module.drain_outbox_fixture).__wrapped__(outbox=CeleryOutbox)
+
+    with patch.object(CeleryOutbox.objects, 'count', return_value=0):
+        drain_outbox()
+
+    assert called == []
+
+
 class FakeDeleteQuerySet:
     def __init__(self, manager: FakeManager) -> None:
         self._manager = manager
@@ -488,6 +510,24 @@ def test_assert_task_sent_treats_ellipsis_as_omitted_with_fake_model() -> None:
     assert matched is message
 
 
+def test_assert_task_sent_accepts_list_args_without_tuple_normalization_with_fake_model() -> None:
+    message = FakeQueuedMessage(
+        id=1,
+        task_name='list.task',
+        task_id='list-1',
+        args=[1, 2],
+        kwargs={},
+    )
+    assert_task_sent, _ = _build_assert_task_sent([message])
+
+    matched = assert_task_sent(
+        'list.task',
+        args=[1, 2],
+    )
+
+    assert matched is message
+
+
 def test_assert_task_sent_reports_missing_task_with_queued_summary_with_fake_model() -> None:
     assert_task_sent, _ = _build_assert_task_sent(
         [
@@ -596,6 +636,27 @@ def test_fake_relay_delegates_non_relay_celery_sends(
             },
         )
     ]
+
+
+def test_fixture_support_normalize_send_task_call_rejects_too_many_positionals() -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+
+    with pytest.raises(TypeError, match='takes at most'):
+        fixture_support_module._normalize_send_task_call(tuple(range(64)), {})
+
+
+def test_fixture_support_normalize_send_task_call_rejects_duplicate_argument() -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+
+    with pytest.raises(TypeError, match="multiple values for argument 'name'"):
+        fixture_support_module._normalize_send_task_call(('demo.task',), {'name': 'other.task'})
+
+
+def test_fixture_support_normalize_send_task_call_requires_name() -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+
+    with pytest.raises(TypeError, match="missing required argument: 'name'"):
+        fixture_support_module._normalize_send_task_call((), {})
 
 
 def test_fake_relay_records_relay_celery_sends_with_positional_arguments(

@@ -211,3 +211,13 @@ class TestPurgeDeadLetterCommandSettings:
     def test_invalid_duration_raises_command_error(self) -> None:
         with pytest.raises(CommandError, match='Invalid duration format'):
             call_command('celery_outbox_purge_dead_letter', older_than_dead='30x')
+
+    @patch('django_celery_outbox.management.commands.celery_outbox_purge_dead_letter.load_dlq_retention_setting')
+    def test_invalid_settings_loader_error_is_wrapped_as_command_error(
+        self,
+        m_load_retention: MagicMock,
+    ) -> None:
+        m_load_retention.side_effect = TypeError('bad retention config')
+
+        with pytest.raises(CommandError, match='bad retention config'):
+            call_command('celery_outbox_purge_dead_letter')

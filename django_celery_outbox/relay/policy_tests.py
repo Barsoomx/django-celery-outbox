@@ -101,3 +101,9 @@ def test_policy_shutdown_deadline_exceeded() -> None:
 
     assert policy.shutdown_deadline_exceeded(now_monotonic=129.9) is False
     assert policy.shutdown_deadline_exceeded(now_monotonic=130.0) is True
+
+
+def test_policy_seconds_until_shutdown_deadline_without_shutdown_returns_zero() -> None:
+    policy = RelayPolicy(broker_outage_cooldown=30.0, shutdown_timeout=30.0)
+
+    assert policy.seconds_until_shutdown_deadline(now_monotonic=100.0) == 0.0

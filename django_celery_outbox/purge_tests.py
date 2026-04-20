@@ -90,6 +90,12 @@ class TestChunkOrdering:
             older_than_created=timedelta(days=90),
         ) == ('dead_at', 'pk')
 
+    def test_falls_back_to_primary_key_when_no_retention_dimension_is_selected(self) -> None:
+        assert _chunk_ordering(
+            older_than_dead=None,
+            older_than_created=None,
+        ) == ('pk',)
+
 
 class TestPurgeDeadLetterValidation:
     def test_raises_when_no_criteria_provided(self) -> None:
