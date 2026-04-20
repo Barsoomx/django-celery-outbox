@@ -146,6 +146,68 @@ class TestPurgeDeadLetterCommandSettings:
             dry_run=False,
         )
 
+    @override_settings(CELERY_OUTBOX_DLQ_RETENTION={'older_than_dead': '30x'})
+    @patch('django_celery_outbox.management.commands.celery_outbox_purge_dead_letter.purge_dead_letter')
+    def test_cli_retention_skips_invalid_settings_loader(self, m_purge: MagicMock) -> None:
+        m_purge.return_value = PurgeResult(deleted_count=0, task_names={})
+
+        call_command('celery_outbox_purge_dead_letter', older_than_dead='30d')
+
+        m_purge.assert_called_once_with(
+            older_than_dead=timedelta(days=30),
+            older_than_created=None,
+            task_name_pattern=None,
+            dry_run=False,
+        )
+
+    @patch('django_celery_outbox.management.commands.celery_outbox_purge_dead_letter.load_dlq_retention_setting')
+    @patch('django_celery_outbox.management.commands.celery_outbox_purge_dead_letter.purge_dead_letter')
+    def test_uses_shared_retention_loader_when_cli_retention_missing(
+        self,
+        m_purge: MagicMock,
+        m_load_retention: MagicMock,
+    ) -> None:
+        m_purge.return_value = PurgeResult(deleted_count=0, task_names={})
+        m_load_retention.return_value = {
+            'older_than_dead': timedelta(days=7),
+            'older_than_created': timedelta(days=90),
+            'task_name_pattern': 'myapp.*',
+        }
+
+        call_command('celery_outbox_purge_dead_letter')
+
+        m_load_retention.assert_called_once_with()
+        m_purge.assert_called_once_with(
+            older_than_dead=timedelta(days=7),
+            older_than_created=timedelta(days=90),
+            task_name_pattern='myapp.*',
+            dry_run=False,
+        )
+
+    @patch('django_celery_outbox.management.commands.celery_outbox_purge_dead_letter.load_dlq_retention_setting')
+    @patch('django_celery_outbox.management.commands.celery_outbox_purge_dead_letter.purge_dead_letter')
+    def test_cli_retention_overrides_loader_values_and_task_name(
+        self,
+        m_purge: MagicMock,
+        m_load_retention: MagicMock,
+    ) -> None:
+        m_purge.return_value = PurgeResult(deleted_count=0, task_names={})
+        m_load_retention.return_value = {
+            'older_than_dead': timedelta(days=7),
+            'older_than_created': timedelta(days=90),
+            'task_name_pattern': 'myapp.*',
+        }
+
+        call_command('celery_outbox_purge_dead_letter', older_than_dead='30d')
+
+        m_load_retention.assert_not_called()
+        m_purge.assert_called_once_with(
+            older_than_dead=timedelta(days=30),
+            older_than_created=None,
+            task_name_pattern=None,
+            dry_run=False,
+        )
+
     def test_invalid_duration_raises_command_error(self) -> None:
         with pytest.raises(CommandError, match='Invalid duration format'):
             call_command('celery_outbox_purge_dead_letter', older_than_dead='30x')

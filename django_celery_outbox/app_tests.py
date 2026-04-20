@@ -11,7 +11,7 @@ from celery.result import AsyncResult
 from django.db import transaction
 from django.test import override_settings
 
-from django_celery_outbox.app import OutboxCelery
+from django_celery_outbox.app import OutboxCelery, _send_signal_safe
 from django_celery_outbox.models import CeleryOutbox
 from django_celery_outbox.signals import outbox_message_created
 
@@ -24,6 +24,38 @@ def boom(sender: type, **kwargs: object) -> None:
     raise RuntimeError('boom')
 
 
+def test_send_signal_safe_logs_send_robust_exception_details() -> None:
+    signal = MagicMock()
+    try:
+        raise RuntimeError('boom')
+    except RuntimeError as exc:
+        response = exc
+    signal.send_robust.return_value = [(boom, response)]
+
+    with patch('django_celery_outbox.app._logger') as m_logger:
+        _send_signal_safe(
+            signal=signal,
+            signal_name='outbox_message_created',
+            task_id='safe-signal-1',
+            task_name='my.task',
+        )
+
+    m_logger.error.assert_called_once()
+    assert m_logger.error.call_args.args == ('celery_outbox_signal_error',)
+    assert m_logger.error.call_args.kwargs['signal'] == 'outbox_message_created'
+    assert m_logger.error.call_args.kwargs['task_id'] == 'safe-signal-1'
+    assert m_logger.error.call_args.kwargs['task_name'] == 'my.task'
+    assert m_logger.error.call_args.kwargs['receiver'] == 'boom'
+    assert m_logger.error.call_args.kwargs['exception_type'] == 'RuntimeError'
+    assert m_logger.error.call_args.kwargs['exception_message'] == 'boom'
+
+    exc_info = m_logger.error.call_args.kwargs['exc_info']
+    assert exc_info[0] is RuntimeError
+    assert isinstance(exc_info[1], RuntimeError)
+    assert str(exc_info[1]) == 'boom'
+    assert exc_info[2] is not None
+
+
 @pytest.fixture()
 def f_app() -> OutboxCelery:
     return OutboxCelery('test')
@@ -31,11 +63,11 @@ def f_app() -> OutboxCelery:
 
 @pytest.fixture(autouse=True)
 def clear_redactor_cache() -> Generator[None, None, None]:
-    from django_celery_outbox.app import _get_redactor
+    from django_celery_outbox.app import clear_redactor_cache as clear_cache
 
-    _get_redactor.cache_clear()
+    clear_cache()
     yield
-    _get_redactor.cache_clear()
+    clear_cache()
 
 
 def test_package_root_import_outbox_celery_before_django_setup() -> None:
@@ -101,14 +133,20 @@ def test_send_task_ignores_outbox_message_created_receiver_exception(
 
     assert result.id == 'safe-signal-1'
     assert CeleryOutbox.objects.filter(task_id='safe-signal-1').exists()
-    m_logger.error.assert_any_call(
-        'celery_outbox_signal_error',
-        signal='outbox_message_created',
-        task_id='safe-signal-1',
-        task_name='my.task',
-        receiver='boom',
-        exc_info=True,
-    )
+    m_logger.error.assert_called_once()
+    assert m_logger.error.call_args.args == ('celery_outbox_signal_error',)
+    assert m_logger.error.call_args.kwargs['signal'] == 'outbox_message_created'
+    assert m_logger.error.call_args.kwargs['task_id'] == 'safe-signal-1'
+    assert m_logger.error.call_args.kwargs['task_name'] == 'my.task'
+    assert m_logger.error.call_args.kwargs['receiver'] == 'boom'
+    assert m_logger.error.call_args.kwargs['exception_type'] == 'RuntimeError'
+    assert m_logger.error.call_args.kwargs['exception_message'] == 'boom'
+
+    exc_info = m_logger.error.call_args.kwargs['exc_info']
+    assert exc_info[0] is RuntimeError
+    assert isinstance(exc_info[1], RuntimeError)
+    assert str(exc_info[1]) == 'boom'
+    assert exc_info[2] is not None
 
 
 @pytest.mark.django_db
@@ -148,12 +186,16 @@ def test_messages_enqueued_not_emitted_on_rollback(
 def test_send_task_excluded_does_not_increment_messages_enqueued(
     m_super_send: MagicMock,
     f_app: OutboxCelery,
+    django_capture_on_commit_callbacks: Callable[..., AbstractContextManager[list[Callable[[], object]]]],
 ) -> None:
-    with patch('django_celery_outbox.metrics.increment') as increment:
-        with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS={'my.excluded.task'}):
-            f_app.send_task('my.excluded.task')
+    with django_capture_on_commit_callbacks(execute=False) as callbacks:
+        with patch('django_celery_outbox.metrics.increment') as increment:
+            with override_settings(CELERY_OUTBOX_EXCLUDE_TASKS={'my.excluded.task'}):
+                f_app.send_task('my.excluded.task')
 
-        increment.assert_not_called()
+            increment.assert_not_called()
+
+    assert callbacks == []
     m_super_send.assert_called_once()
 
 

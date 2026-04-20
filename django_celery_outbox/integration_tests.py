@@ -86,11 +86,11 @@ def f_clean_structlog() -> Generator[None]:
 
 @pytest.fixture(autouse=True)
 def clear_redactor_cache() -> Generator[None]:
-    from django_celery_outbox.app import _get_redactor
+    from django_celery_outbox.app import clear_redactor_cache
 
-    _get_redactor.cache_clear()
+    clear_redactor_cache()
     yield
-    _get_redactor.cache_clear()
+    clear_redactor_cache()
 
 
 def test_integration_tests_patch_close_old_connections_is_local() -> None:
@@ -434,9 +434,9 @@ def test_e2e_relay_uses_original_payload_when_redacted_copy_exists(
         kwargs['email'] = '[REDACTED]'
         return args, kwargs
 
-    from django_celery_outbox.app import _get_redactor
+    from django_celery_outbox.app import clear_redactor_cache
 
-    _get_redactor.cache_clear()
+    clear_redactor_cache()
     try:
         with override_settings(
             CELERY_OUTBOX_PII_REDACTOR=redactor,
@@ -445,7 +445,7 @@ def test_e2e_relay_uses_original_payload_when_redacted_copy_exists(
             with transaction.atomic():
                 f_outbox_app.send_task('my.task', kwargs={'email': 'user@example.com'})
     finally:
-        _get_redactor.cache_clear()
+        clear_redactor_cache()
 
     msg = CeleryOutbox.objects.get()
     assert msg.kwargs == {'email': 'user@example.com'}

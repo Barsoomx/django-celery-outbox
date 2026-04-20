@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from django_celery_outbox.admin import CeleryOutboxAdmin, CeleryOutboxDeadLetterAdmin
 from django_celery_outbox.factories import CeleryOutboxDeadLetterFactory, CeleryOutboxFactory
 from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+from django_celery_outbox.replay import replay_dead_letters as real_replay_dead_letters
 
 
 def _redact_payloads(task_name: str, args: list, kwargs: dict) -> tuple[list, dict]:
@@ -444,6 +445,35 @@ def test_retry_selected_creates_log_entries_for_dead_letter(f_user: 'User') -> N
     log2 = logs.get(object_id=str(dead2_pk))
     assert log2.user_id == f_user.pk
     assert log2.action_flag == DELETION
+
+
+@pytest.mark.django_db
+def test_retry_selected_logs_only_rows_actually_replayed(f_user: 'User') -> None:
+    from django.contrib.admin.models import LogEntry
+    from django.contrib.contenttypes.models import ContentType
+
+    dead1 = CeleryOutboxDeadLetterFactory.create(task_id='audit-partial-1')
+    dead2 = CeleryOutboxDeadLetterFactory.create(task_id='audit-partial-2')
+
+    admin_instance: CeleryOutboxDeadLetterAdmin = admin.site._registry[CeleryOutboxDeadLetter]  # type: ignore[assignment]
+    queryset = CeleryOutboxDeadLetter.objects.filter(pk__in=[dead1.pk, dead2.pk])
+    m_request = MagicMock()
+    m_request.user = f_user
+
+    def replay_only_first(dead_letter_ids: list[int]) -> int:
+        real_replay_dead_letters([dead1.pk])
+        assert dead_letter_ids == [dead1.pk, dead2.pk]
+        return 1
+
+    with patch('django_celery_outbox.admin.replay_dead_letters', side_effect=replay_only_first):
+        admin_instance.retry_selected(m_request, queryset)
+
+    content_type = ContentType.objects.get_for_model(CeleryOutboxDeadLetter)
+    logs = LogEntry.objects.filter(content_type=content_type).order_by('object_id')
+
+    assert logs.count() == 1
+    log = logs.get()
+    assert log.object_id == str(dead1.pk)
 
 
 @pytest.mark.django_db

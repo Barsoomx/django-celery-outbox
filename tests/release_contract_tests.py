@@ -2,7 +2,6 @@ import importlib.util
 import subprocess
 import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -91,6 +90,7 @@ def test_installed_wheel_smoke_script_accepts_wheel_origin(monkeypatch: pytest.M
     assert spec.loader is not None
     smoke_script = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(smoke_script)
+    load_calls: list[str] = []
 
     class Distribution:
         @staticmethod
@@ -98,15 +98,24 @@ def test_installed_wheel_smoke_script_accepts_wheel_origin(monkeypatch: pytest.M
             assert name == 'direct_url.json'
             return '{"url": "file:///tmp/django_celery_outbox-0.3.0-py3-none-any.whl"}'
 
+    class EntryPoint:
+        name = 'django_celery_outbox'
+
+        @staticmethod
+        def load() -> object:
+            load_calls.append('django_celery_outbox')
+            return object()
+
     monkeypatch.setattr(smoke_script.metadata, 'distribution', lambda _: Distribution())
     monkeypatch.setattr(
         smoke_script.metadata,
         'entry_points',
-        lambda *, group: [SimpleNamespace(name='django_celery_outbox')] if group == 'pytest11' else [],
+        lambda *, group: [EntryPoint()] if group == 'pytest11' else [],
     )
 
     smoke_script.verify_distribution(expect_wheel_origin=True)
 
+    assert load_calls == ['django_celery_outbox']
     assert 'django_celery_outbox-0.3.0-py3-none-any.whl' in capsys.readouterr().out
 
 
@@ -127,7 +136,8 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
 
     assert 'artifact_smoke:' in publish_workflow
     assert 'release_contract:' in publish_workflow
-    assert 'needs: [artifact_smoke, live_broker_smoke]' in publish_workflow
+    assert 'parallel_broker_smoke:' in publish_workflow
+    assert 'needs: [artifact_smoke, live_broker_smoke, parallel_broker_smoke]' in publish_workflow
     assert 'needs: [release_contract]' in publish_workflow or 'needs:\n    - release_contract' in publish_workflow
     assert publish_workflow.count('python -Im build') == 1
     assert 'actions/download-artifact@' in publish_workflow
@@ -136,12 +146,16 @@ def test_release_workflows_include_contract_and_live_broker_gates() -> None:
     assert '--expect-wheel-origin' in publish_workflow
     assert '--version "${GITHUB_REF_NAME#v}" CHANGELOG.md' in publish_workflow
     assert "metadata.entry_points(group='pytest11')" in smoke_script
+    assert '.load()' in smoke_script
 
     assert 'live_broker_smoke:' in tests_workflow
+    assert 'parallel_broker_smoke:' in tests_workflow
     assert 'rabbitmq:' in tests_workflow
     assert 'tests/live_broker_smoke_tests.py' in tests_workflow
+    assert 'tests/parallel_broker_smoke_tests.py' in tests_workflow
     assert "django: '5.0'" in tests_workflow or 'django: "5.0"' in tests_workflow
     assert "django: '5.1'" in tests_workflow or 'django: "5.1"' in tests_workflow
+    assert 'Run Django compatibility smoke tests' in tests_workflow
     assert 'pytest -m "not release_artifact and not live_broker_smoke" -v' in tests_workflow
 
     assert 'name: Test Example Project' in example_workflow
@@ -172,6 +186,8 @@ def test_release_workflows_use_pinned_actions() -> None:
     offenders: list[str] = []
 
     for path in (
+        workflow_dir / 'codeql.yml',
+        workflow_dir / 'stale.yml',
         workflow_dir / 'publish.yml',
         workflow_dir / 'tests.yml',
         workflow_dir / 'docs.yml',

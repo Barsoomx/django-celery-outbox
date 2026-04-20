@@ -9,7 +9,7 @@ class CeleryOutbox(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(null=True)
     retries = models.SmallIntegerField(default=0)
-    retry_after = models.DateTimeField(null=True, db_index=True)
+    retry_after = models.DateTimeField(null=True)
 
     task_id = models.CharField(max_length=255, db_index=True)
     task_name = models.CharField(max_length=255, db_index=True)

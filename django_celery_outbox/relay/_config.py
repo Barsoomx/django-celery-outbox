@@ -18,6 +18,7 @@ class RelayConfig:
     backoff_time: int
     max_retries: int
     publish_concurrency: int
+    queue_snapshot_refresh_seconds: float
     stale_timeout_seconds: int
     send_timeout: float
     shutdown_timeout: float
@@ -33,6 +34,7 @@ class RelayConfig:
         backoff_time: int = 120,
         max_retries: int = 5,
         publish_concurrency: int = 1,
+        queue_snapshot_refresh_seconds: float = 5.0,
         stale_timeout_seconds: int = 300,
         send_timeout: float = 10.0,
         shutdown_timeout: float = 30.0,
@@ -55,6 +57,8 @@ class RelayConfig:
         if publish_concurrency <= 0:
             raise ImproperlyConfigured('publish_concurrency must be > 0')
 
+        _validate_positive_finite_seconds('queue_snapshot_refresh_seconds', queue_snapshot_refresh_seconds)
+
         if stale_timeout_seconds <= 0:
             raise ImproperlyConfigured('stale_timeout_seconds must be > 0')
 
@@ -69,6 +73,7 @@ class RelayConfig:
             backoff_time=backoff_time,
             max_retries=max_retries,
             publish_concurrency=publish_concurrency,
+            queue_snapshot_refresh_seconds=queue_snapshot_refresh_seconds,
             stale_timeout_seconds=stale_timeout_seconds,
             send_timeout=send_timeout,
             shutdown_timeout=shutdown_timeout,
@@ -85,6 +90,7 @@ class RelayConfig:
             backoff_time=int(options['backoff_time']),  # type: ignore[arg-type]
             max_retries=int(options['max_retries']),  # type: ignore[arg-type]
             publish_concurrency=int(options.get('publish_concurrency', 1)),  # type: ignore[arg-type]
+            queue_snapshot_refresh_seconds=float(options.get('queue_snapshot_refresh_seconds', 5.0)),  # type: ignore[arg-type]
             stale_timeout_seconds=int(options['stale_timeout_seconds']),  # type: ignore[arg-type]
             send_timeout=float(options['send_timeout']),  # type: ignore[arg-type]
             shutdown_timeout=float(options['shutdown_timeout']),  # type: ignore[arg-type]

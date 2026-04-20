@@ -222,6 +222,23 @@ jobs:
 
       - name: Install Django and Celery versions under test
         run: pip install "Django~=${{ matrix.django }}" "celery~=5.6"
+      - name: Run Django compatibility smoke tests
+        env:
+          DB_ENGINE: postgresql
+          DB_HOST: 127.0.0.1
+          DB_NAME: test_db
+          DB_USER: test
+          DB_PASSWORD: test
+          DB_PORT: 5432
+        run: >
+          pytest
+          django_celery_outbox/admin_tests.py
+          django_celery_outbox/app_tests.py
+          django_celery_outbox/checks_tests.py
+          django_celery_outbox/replay_tests.py
+          django_celery_outbox/signals_tests.py
+          tests/relay_tests.py
+          -v
 
       - name: Run live broker smoke tests
         env:

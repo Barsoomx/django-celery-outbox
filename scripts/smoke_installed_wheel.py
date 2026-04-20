@@ -48,8 +48,11 @@ def bootstrap_django() -> None:
 def verify_distribution(*, expect_wheel_origin: bool) -> None:
     distribution = metadata.distribution('django-celery-outbox')
     pytest11 = metadata.entry_points(group='pytest11')
-    if not any(ep.name == 'django_celery_outbox' for ep in pytest11):
+    entry_point = next((ep for ep in pytest11 if ep.name == 'django_celery_outbox'), None)
+    if entry_point is None:
         raise SystemExit('pytest11 entry point missing for django_celery_outbox')
+
+    entry_point.load()
 
     if expect_wheel_origin:
         direct_url = distribution.read_text('direct_url.json')

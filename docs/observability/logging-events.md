@@ -162,7 +162,7 @@ No additional fields.
 ### celery_outbox_signal_error
 
 **Level:** ERROR
-**When:** A package-owned Django signal receiver raises an exception; enqueue/relay continues because signals use `send_robust()`
+**When:** A package-owned Django signal receiver raises an exception; enqueue/relay continues because package-owned signal emission catches and logs receiver failures
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -170,6 +170,8 @@ No additional fields.
 | task_id | str | Task UUID |
 | task_name | str | Task name |
 | receiver | str | Receiver `__qualname__` or repr used in the log |
+| exception_type | str | Receiver exception class name |
+| exception_message | str | Receiver exception string form |
 
 ### celery_outbox_metric_error
 

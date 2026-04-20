@@ -17,6 +17,7 @@ python manage.py celery_outbox_relay [OPTIONS]
 | `--backoff-time` | int | 120 | Base seconds for exponential backoff |
 | `--max-retries` | int | 5 | Retries before dead letter |
 | `--publish-concurrency` | int | 1 | Maximum concurrent publish operations per batch |
+| `--queue-snapshot-refresh-seconds` | float | 5.0 | Refresh cadence for sampled queue-wide gauges and batch summary snapshot data |
 | `--stale-timeout-seconds` | int | `CELERY_OUTBOX_STALE_TIMEOUT_SECONDS` or 300 | Seconds before in-flight rows are considered stale |
 | `--send-timeout` | float | 10.0 | Timeout passed to broker publish |
 | `--shutdown-timeout` | float | 30.0 | Drain window for starting additional sends after SIGTERM |
@@ -39,6 +40,8 @@ python manage.py celery_outbox_relay \
   --idle-time 1.0 \
   --backoff-time 120 \
   --max-retries 5 \
+  --publish-concurrency 1 \
+  --queue-snapshot-refresh-seconds 5.0 \
   --stale-timeout-seconds 300 \
   --send-timeout 10.0 \
   --shutdown-timeout 30.0 \

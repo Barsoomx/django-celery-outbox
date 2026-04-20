@@ -1,4 +1,5 @@
 import os
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -14,7 +15,7 @@ pytestmark = pytest.mark.live_broker_smoke
 def test_parallel_publish_smoke_to_live_rabbitmq() -> None:
     broker_url = os.environ['CELERY_BROKER_URL']
     queue_name = f'parallel-smoke-{uuid4().hex}'
-    task_ids = ['parallel-smoke-1', 'parallel-smoke-2']
+    task_ids = ['parallel-smoke-1', 'parallel-smoke-2', 'parallel-smoke-3', 'parallel-smoke-4']
 
     app = OutboxCelery('parallel-smoke')
     app.conf.broker_url = broker_url
@@ -27,9 +28,14 @@ def test_parallel_publish_smoke_to_live_rabbitmq() -> None:
 
     relay = Relay(
         app=app,
-        config=RelayConfig.init(batch_size=2, idle_time=0, max_retries=1, publish_concurrency=2),
+        config=RelayConfig.init(batch_size=4, idle_time=0, max_retries=1, publish_concurrency=2),
     )
-    relay._processing()
+    with patch.object(relay, '_process_messages_parallel', wraps=relay._process_messages_parallel) as m_parallel:
+        with patch.object(relay, '_process_messages_serial', wraps=relay._process_messages_serial) as m_serial:
+            relay._processing()
+
+    m_parallel.assert_called_once()
+    m_serial.assert_not_called()
 
     with Connection(broker_url) as connection:
         queue = connection.SimpleQueue(queue_name)

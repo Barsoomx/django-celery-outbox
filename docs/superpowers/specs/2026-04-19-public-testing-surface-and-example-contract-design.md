@@ -18,7 +18,7 @@ These are not release-pipeline bugs. They are public-support-surface bugs.
 
 - Give the packaged pytest plugin one narrow package-owned support boundary.
 - Keep downstream public API limited to the shipped fixtures, not a new general testing framework.
-- Treat the example project as documentation-as-contract and run it when the package contract changes.
+- Treat the example project as documentation-as-contract and keep it running on every push and pull request.
 - Stop treating globally patched connection-recycling behavior as acceptable default coverage for "integration" style tests.
 
 ## Non-Goals
@@ -100,12 +100,7 @@ This keeps the fast feedback loop while making the contract honest.
 
 ### 3. Make example-project CI contract-aware
 
-Broaden example CI triggers so the example runs when changes touch:
-
-- `django_celery_outbox/**`
-- `pyproject.toml`
-- packaging and workflow files that affect installation/runtime contract
-- example files themselves
+Keep the example workflow always-on for `push` and `pull_request`. Do not add a `paths:` filter. The user-facing example is part of the repository contract, so it should run every time rather than only for selected file changes.
 
 The example workflow must install the same built package artifact produced by CI rather than an unbuilt source tree. That keeps the example project aligned with the actual release artifact and turns the example into a real packaging-contract check instead of only a source-tree smoke test.
 
@@ -119,6 +114,7 @@ The example workflow must install the same built package artifact produced by CI
 
 - fixture tests prove the shipped pytest plugin works through the new support module rather than unrelated private imports
 - example CI proves package changes can trigger the example workflow
+- example CI proves the example workflow stays always-on for push and pull_request
 - example workflow proves the example can install and boot against the same package artifact CI built
 - source-tree contract tests remain green after the support-boundary extraction
 - source-tree contract tests prove connection-recycling patches are narrow and local rather than global default behavior

@@ -35,6 +35,11 @@ class Command(BaseCommand):
             default=1,
         )
         parser.add_argument(
+            '--queue-snapshot-refresh-seconds',
+            type=float,
+            default=5.0,
+        )
+        parser.add_argument(
             '--stale-timeout-seconds',
             type=int,
             default=None,

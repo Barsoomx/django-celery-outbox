@@ -257,7 +257,7 @@ The package emits Django signals around enqueue and relay operations. The signal
 
 `outbox_message_created` is emitted after the outbox row is written but before transaction commit. Use `transaction.on_commit()` if downstream work must observe only committed rows.
 
-All package-owned signals use `send_robust()`. Receiver exceptions are logged as `celery_outbox_signal_error` and do not abort enqueue or relay processing.
+All package-owned signal emission goes through `send_robust()`. Receiver failures are logged as `celery_outbox_signal_error`, but they do not abort enqueue or relay processing.
 
 Relay signal timing is:
 

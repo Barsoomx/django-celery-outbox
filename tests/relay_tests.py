@@ -237,6 +237,12 @@ def test_relay_config_accepts_publish_concurrency() -> None:
     assert config.publish_concurrency == 4
 
 
+def test_relay_config_accepts_queue_snapshot_refresh_seconds() -> None:
+    config = RelayConfig.init(max_retries=3, queue_snapshot_refresh_seconds=2.5)
+
+    assert config.queue_snapshot_refresh_seconds == 2.5
+
+
 def test_relay_config_from_options_defaults_publish_concurrency_when_missing() -> None:
     config = RelayConfig.from_options(
         {
@@ -284,24 +290,23 @@ def test_parallel_mode_never_submits_more_than_publish_concurrency(
         app=m_celery_app,
         config=RelayConfig.init(idle_time=0, max_retries=3, publish_concurrency=2),
     )
-    messages = [CeleryOutbox.objects.create(task_id=f'parallel-window-{i}', task_name='demo.task', options={}) for i in range(4)]
+    messages = [CeleryOutbox.objects.create(task_id=f'parallel-window-{i}', task_name='demo.task', options={}) for i in range(5)]
     submitted: list[int] = []
-    release = threading.Event()
-    window_full = threading.Event()
+    release_by_id = {msg.id: threading.Event() for msg in messages}
+    started_by_id = {msg.id: threading.Event() for msg in messages}
     result: tuple[list[int], list[tuple[int, int]], list[CeleryOutbox], list[int], list[CeleryOutbox]] | None = None
     error: BaseException | None = None
     active = 0
     max_active = 0
     lock = threading.Lock()
 
-    def publish_prepared(_msg: CeleryOutbox) -> None:
+    def publish_prepared(msg: CeleryOutbox) -> None:
         nonlocal active, max_active
         with lock:
             active += 1
             max_active = max(max_active, active)
-            if active == relay._config.publish_concurrency:
-                window_full.set()
-        assert release.wait(timeout=5)
+        started_by_id[msg.id].set()
+        assert release_by_id[msg.id].wait(timeout=5)
         with lock:
             active -= 1
 
@@ -322,10 +327,24 @@ def test_parallel_mode_never_submits_more_than_publish_concurrency(
             worker = threading.Thread(target=run_relay)
             worker.start()
             try:
-                assert window_full.wait(timeout=5)
-                assert len(submitted) == relay._config.publish_concurrency
+                assert started_by_id[messages[0].id].wait(timeout=5)
+                assert started_by_id[messages[1].id].wait(timeout=5)
+                assert submitted == [messages[0].id, messages[1].id]
+
+                release_by_id[messages[0].id].set()
+                assert started_by_id[messages[2].id].wait(timeout=5)
+                assert submitted == [messages[0].id, messages[1].id, messages[2].id]
+
+                release_by_id[messages[1].id].set()
+                assert started_by_id[messages[3].id].wait(timeout=5)
+                assert submitted == [messages[0].id, messages[1].id, messages[2].id, messages[3].id]
+
+                release_by_id[messages[2].id].set()
+                assert started_by_id[messages[4].id].wait(timeout=5)
+                assert submitted == [message.id for message in messages]
             finally:
-                release.set()
+                for event in release_by_id.values():
+                    event.set()
                 worker.join(timeout=5)
 
     assert worker.is_alive() is False
@@ -334,7 +353,7 @@ def test_parallel_mode_never_submits_more_than_publish_concurrency(
     assert max_active == relay._config.publish_concurrency
 
     assert submitted[:2] == [messages[0].id, messages[1].id]
-    assert len(submitted) == 4
+    assert len(submitted) == 5
 
 
 @pytest.mark.django_db
@@ -872,7 +891,10 @@ def test_relay_uses_cached_queue_snapshot_between_refreshes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _enable_relay_for_sqlite(monkeypatch)
-    relay = Relay(app=m_celery_app, config=RelayConfig.init(batch_size=10, idle_time=0, max_retries=3))
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(batch_size=10, idle_time=0, max_retries=3, queue_snapshot_refresh_seconds=5.0),
+    )
 
     with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[0.0] * 8):
         with patch.object(relay, '_touch_liveness'):
@@ -892,6 +914,37 @@ def test_relay_uses_cached_queue_snapshot_between_refreshes(
                         relay._processing()
 
     assert m_stats.call_count == 1
+
+
+@pytest.mark.django_db
+def test_relay_refreshes_queue_snapshot_after_configured_interval(
+    m_celery_app: MagicMock,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _enable_relay_for_sqlite(monkeypatch)
+    relay = Relay(
+        app=m_celery_app,
+        config=RelayConfig.init(batch_size=10, idle_time=0, max_retries=3, queue_snapshot_refresh_seconds=2.0),
+    )
+
+    with patch('django_celery_outbox.relay._relay.time.monotonic', side_effect=[0.0, 0.0, 0.0, 1.0, 3.1, 3.1]):
+        with patch.object(relay, '_touch_liveness'):
+            with patch.object(relay._selector, 'run', return_value=[]):
+                with patch('django_celery_outbox.relay._relay.close_old_connections'):
+                    with patch(
+                        'django_celery_outbox.relay._relay.get_queue_stats',
+                        return_value=QueueStats(
+                            queue_depth=0,
+                            dlq_count=0,
+                            oldest_pending_seconds=None,
+                            top_failing=[],
+                        ),
+                        create=True,
+                    ) as m_stats:
+                        relay._processing()
+                        relay._processing()
+
+    assert m_stats.call_count == 2
 
 
 @pytest.mark.django_db
@@ -1321,6 +1374,11 @@ def test_config_validation_zero_max_retries() -> None:
         RelayConfig.init(max_retries=0)
 
 
+def test_config_validation_zero_queue_snapshot_refresh_seconds() -> None:
+    with pytest.raises(ImproperlyConfigured, match='queue_snapshot_refresh_seconds must be > 0 and finite'):
+        RelayConfig.init(queue_snapshot_refresh_seconds=0)
+
+
 def test_config_validation_zero_stale_timeout_seconds() -> None:
     with pytest.raises(ImproperlyConfigured, match='stale_timeout_seconds must be > 0'):
         RelayConfig.init(stale_timeout_seconds=0)
@@ -1362,6 +1420,12 @@ def test_config_validation_non_finite_shutdown_timeout(value: float) -> None:
 def test_config_validation_non_finite_broker_outage_cooldown(value: float) -> None:
     with pytest.raises(ImproperlyConfigured, match='broker_outage_cooldown must be > 0 and finite'):
         RelayConfig.init(broker_outage_cooldown=value)
+
+
+@pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])
+def test_config_validation_non_finite_queue_snapshot_refresh_seconds(value: float) -> None:
+    with pytest.raises(ImproperlyConfigured, match='queue_snapshot_refresh_seconds must be > 0 and finite'):
+        RelayConfig.init(queue_snapshot_refresh_seconds=value)
 
 
 @pytest.mark.parametrize('value', [math.nan, math.inf, -math.inf])

@@ -103,6 +103,23 @@ jobs:
         run: pip install -e '.[test]'
       - name: Install Django and Celery versions under test
         run: pip install "Django~=${{ matrix.django }}" "celery~=5.6"
+      - name: Run Django compatibility smoke tests
+        env:
+          DB_ENGINE: postgresql
+          DB_HOST: 127.0.0.1
+          DB_NAME: test_db
+          DB_USER: test
+          DB_PASSWORD: test
+          DB_PORT: 5432
+        run: >
+          pytest
+          django_celery_outbox/admin_tests.py
+          django_celery_outbox/app_tests.py
+          django_celery_outbox/checks_tests.py
+          django_celery_outbox/replay_tests.py
+          django_celery_outbox/signals_tests.py
+          tests/relay_tests.py
+          -v
       - name: Run live broker smoke tests
         env:
           DB_ENGINE: postgresql
@@ -114,9 +131,68 @@ jobs:
           CELERY_BROKER_URL: amqp://test:test@127.0.0.1:5672//
         run: pytest tests/live_broker_smoke_tests.py -v
 
+  parallel_broker_smoke:
+    name: Parallel Broker Smoke
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+        ports:
+          - 5432:5432
+
+      rabbitmq:
+        image: rabbitmq:3.13-management-alpine
+        env:
+          RABBITMQ_DEFAULT_USER: test
+          RABBITMQ_DEFAULT_PASS: test
+        options: >-
+          --health-cmd "rabbitmq-diagnostics check_running"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5672:5672
+
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pkg-config default-libmysqlclient-dev
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+      - name: Install package with test dependencies
+        run: pip install -e '.[test]'
+      - name: Install Django and Celery versions under test
+        run: pip install "Django~=5.2" "celery~=5.6"
+      - name: Run parallel broker smoke tests
+        env:
+          DB_ENGINE: postgresql
+          DB_HOST: 127.0.0.1
+          DB_NAME: test_db
+          DB_USER: test
+          DB_PASSWORD: test
+          DB_PORT: 5432
+          CELERY_BROKER_URL: amqp://test:test@127.0.0.1:5672//
+        run: pytest tests/parallel_broker_smoke_tests.py -v
+
   release_contract:
     runs-on: ubuntu-latest
-    needs: [artifact_smoke, live_broker_smoke]
+    needs: [artifact_smoke, live_broker_smoke, parallel_broker_smoke]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
       - name: Set up Python

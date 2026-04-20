@@ -8,7 +8,7 @@ from django.utils import timezone
 
 from django_celery_outbox.factories import CeleryOutboxDeadLetterFactory
 from django_celery_outbox.models import CeleryOutboxDeadLetter
-from django_celery_outbox.purge import PurgeResult, parse_duration, purge_dead_letter
+from django_celery_outbox.purge import PurgeResult, _chunk_ordering, parse_duration, purge_dead_letter
 
 
 class TestParseDuration:
@@ -69,6 +69,26 @@ class TestPurgeResult:
 
         assert result.deleted_count == 0
         assert result.task_names == {}
+
+
+class TestChunkOrdering:
+    def test_prefers_dead_at_when_dead_retention_present(self) -> None:
+        assert _chunk_ordering(
+            older_than_dead=timedelta(days=30),
+            older_than_created=None,
+        ) == ('dead_at', 'pk')
+
+    def test_uses_created_at_when_only_created_retention_present(self) -> None:
+        assert _chunk_ordering(
+            older_than_dead=None,
+            older_than_created=timedelta(days=90),
+        ) == ('created_at', 'pk')
+
+    def test_prefers_dead_at_when_both_retentions_present(self) -> None:
+        assert _chunk_ordering(
+            older_than_dead=timedelta(days=30),
+            older_than_created=timedelta(days=90),
+        ) == ('dead_at', 'pk')
 
 
 class TestPurgeDeadLetterValidation:
@@ -279,7 +299,7 @@ class TestPurgeDeadLetterDryRun:
 
 
 @pytest.mark.django_db
-def test_purge_dead_letter_deletes_in_pk_chunks() -> None:
+def test_purge_dead_letter_deletes_in_deterministic_chunks() -> None:
     now = timezone.now()
     old_time = now - timedelta(days=31)
     with patch('django.utils.timezone.now', return_value=now):

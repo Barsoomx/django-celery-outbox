@@ -1,3 +1,5 @@
+from unittest.mock import MagicMock, patch
+
 import pytest
 
 from django_celery_outbox.factories import CeleryOutboxDeadLetterFactory
@@ -52,3 +54,44 @@ def test_replay_dead_letters_limit_replays_only_requested_slice() -> None:
     assert not CeleryOutboxDeadLetter.objects.filter(pk=dead1.pk).exists()
     assert not CeleryOutboxDeadLetter.objects.filter(pk=dead2.pk).exists()
     assert CeleryOutboxDeadLetter.objects.filter(pk=dead3.pk).exists()
+
+
+def test_replay_dead_letters_uses_outbox_alias_for_read_write_and_delete() -> None:
+    row = MagicMock(
+        pk=11,
+        task_id='replay-alias-1',
+        task_name='app.tasks.replay_alias',
+        args=[1],
+        kwargs={'k': 'v'},
+        redacted_args=None,
+        redacted_kwargs=None,
+        options={'queue': 'critical'},
+        schema_version=2,
+        sentry_trace_id='trace-1',
+        sentry_baggage='baggage-1',
+        structlog_context='{"request_id": "req-1"}',
+    )
+    read_queryset = MagicMock()
+    read_queryset.order_by.return_value = read_queryset
+    read_queryset.__iter__.return_value = iter([row])
+    delete_queryset = MagicMock()
+    using_manager = MagicMock()
+    using_manager.filter.side_effect = [read_queryset, delete_queryset]
+
+    with (
+        patch('django_celery_outbox.replay.get_outbox_db_alias', return_value='outbox') as m_alias,
+        patch('django_celery_outbox.replay.CeleryOutboxDeadLetter.objects.using', return_value=using_manager) as m_dead_using,
+        patch('django_celery_outbox.replay.CeleryOutbox.objects.using') as m_outbox_using,
+        patch('django_celery_outbox.replay.transaction.atomic') as m_atomic,
+    ):
+        replayed = replay_dead_letters([row.pk])
+
+    assert replayed == 1
+    m_alias.assert_called_once_with()
+    assert m_dead_using.call_count == 2
+    assert using_manager.filter.call_count == 2
+    using_manager.filter.assert_any_call(pk__in=[row.pk])
+    m_atomic.assert_called_once_with(using='outbox')
+    m_outbox_using.assert_called_once_with('outbox')
+    m_outbox_using.return_value.bulk_create.assert_called_once()
+    delete_queryset.delete.assert_called_once_with()

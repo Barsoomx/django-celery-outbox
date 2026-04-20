@@ -35,9 +35,9 @@ StatsD names are shown with the default `MONITORING_STATSD_PREFIX = 'celery_outb
 
 | StatsD metric                               | Prometheus                                   | Type   | Use                                                                                           |
 | ------------------------------------------- | -------------------------------------------- | ------ | --------------------------------------------------------------------------------------------- |
-| `celery_outbox.queue.depth`                 | `celery_outbox_queue_depth`                  | gauge  | Chart as a time series. Sawtooth is healthy; monotonic rise means the queue is growing.       |
-| `celery_outbox.oldest_pending_age_seconds`  | `celery_outbox_oldest_pending_age_seconds`   | gauge  | Alert on crossing your SLO. Suggested starting threshold: 60s. Tune to your application.      |
-| `celery_outbox.dead_letter.count`           | `celery_outbox_dead_letter_count`            | gauge  | Use as backlog context; page from `increase(celery_outbox_messages_exceeded_total[10m]) > 0` instead of from raw table size. |
+| `celery_outbox.queue.depth`                 | `celery_outbox_queue_depth`                  | gauge  | Sampled queue-wide live backlog, refreshed at most once per `--queue-snapshot-refresh-seconds`. Chart as a time series; monotonic rise means the queue is growing. |
+| `celery_outbox.oldest_pending_age_seconds`  | `celery_outbox_oldest_pending_age_seconds`   | gauge  | Sampled queue-wide oldest live backlog age, refreshed at most once per `--queue-snapshot-refresh-seconds`. Alert on crossing your SLO. |
+| `celery_outbox.dead_letter.count`           | `celery_outbox_dead_letter_count`            | gauge  | Sampled dead-letter backlog context, refreshed at most once per `--queue-snapshot-refresh-seconds`. Page from `increase(celery_outbox_messages_exceeded_total[10m]) > 0` instead of raw table size. |
 | `celery_outbox.batch.duration_ms`           | e.g. `celery_outbox_batch_duration_ms_bucket` | timing | Chart per-batch processing time. Absence of new samples means the relay has stalled.          |
 
 Full catalogue: [Metrics](../observability/metrics.md).

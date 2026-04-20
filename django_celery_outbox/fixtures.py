@@ -1,3 +1,10 @@
+"""Public pytest fixtures for `django-celery-outbox`.
+
+The fixtures themselves are the public downstream surface. Their package-owned
+support helpers live in :mod:`django_celery_outbox._fixture_support` and are
+semver-stable for this library's testing contract.
+"""
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
@@ -9,6 +16,7 @@ from django_celery_outbox._fixture_support import (
     RecordedRelayCall,
     load_fixture_celery_app,
     patch_fake_relay_send_task,
+    reset_fixture_state,
     run_drain_outbox_once,
 )
 
@@ -83,25 +91,15 @@ def outbox(
     django_db_blocker: Any,
 ) -> Generator[type[CeleryOutbox], None, None]:
     del transactional_db
-
-    import structlog.contextvars
-
-    from django_celery_outbox.app import _get_redactor
-    from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
-
-    def _reset_state() -> None:
-        _get_redactor.cache_clear()
-        structlog.contextvars.clear_contextvars()
-        CeleryOutboxDeadLetter.objects.all().delete()
-        CeleryOutbox.objects.all().delete()
+    from django_celery_outbox.models import CeleryOutbox
 
     with django_db_blocker.unblock():
-        _reset_state()
+        reset_fixture_state()
 
         try:
             yield CeleryOutbox
         finally:
-            _reset_state()
+            reset_fixture_state()
 
 
 @pytest.fixture(name='assert_task_sent')

@@ -34,6 +34,10 @@ def _get_redactor(cache_key: tuple[str, object]) -> Callable[[str, list, dict], 
     return load_pii_redactor_setting()
 
 
+def clear_redactor_cache() -> None:
+    _get_redactor.cache_clear()
+
+
 def _build_redacted_payloads(
     task_name: str,
     args_list: list[Any],
@@ -127,13 +131,16 @@ def _send_signal_safe(
         task_name=task_name,
     ):
         if isinstance(response, Exception):
+            exc_info = (type(response), response, response.__traceback__)
             _logger.error(
                 'celery_outbox_signal_error',
                 signal=signal_name,
                 task_id=task_id,
                 task_name=task_name,
                 receiver=getattr(receiver, '__qualname__', repr(receiver)),
-                exc_info=True,
+                exception_type=type(response).__name__,
+                exception_message=str(response),
+                exc_info=exc_info,
             )
 
 

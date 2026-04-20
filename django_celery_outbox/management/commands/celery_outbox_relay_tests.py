@@ -45,6 +45,8 @@ def test_handle_creates_relay_with_reliability_params(
         idle_time=2.0,
         backoff_time=60,
         max_retries=3,
+        publish_concurrency=1,
+        queue_snapshot_refresh_seconds=5.0,
         stale_timeout_seconds=300,
         send_timeout=10.0,
         shutdown_timeout=30.0,
@@ -60,6 +62,8 @@ def test_handle_creates_relay_with_reliability_params(
             idle_time=2.0,
             backoff_time=60,
             max_retries=3,
+            publish_concurrency=1,
+            queue_snapshot_refresh_seconds=5.0,
             stale_timeout_seconds=300,
             send_timeout=10.0,
             shutdown_timeout=30.0,
@@ -104,6 +108,8 @@ def test_add_arguments_registers_reliability_params() -> None:
     assert vars(defaults)['shutdown_timeout'] == 30.0
     assert vars(defaults)['broker_outage_cooldown'] == 30.0
     assert vars(defaults)['max_backoff'] == 3600.0
+    assert vars(defaults)['publish_concurrency'] == 1
+    assert vars(defaults)['queue_snapshot_refresh_seconds'] == 5.0
 
     assert vars(parsed)['send_timeout'] == 12.5
     assert vars(parsed)['shutdown_timeout'] == 45.0
@@ -114,6 +120,16 @@ def test_add_arguments_registers_reliability_params() -> None:
     assert isinstance(parsed.shutdown_timeout, float)
     assert isinstance(parsed.broker_outage_cooldown, float)
     assert isinstance(parsed.max_backoff, float)
+
+
+def test_add_arguments_registers_queue_snapshot_refresh_seconds() -> None:
+    command = Command()
+    parser = command.create_parser('manage.py', 'celery_outbox_relay')
+
+    parsed = parser.parse_args(['--queue-snapshot-refresh-seconds', '2.5'])
+
+    assert parsed.queue_snapshot_refresh_seconds == 2.5
+    assert isinstance(parsed.queue_snapshot_refresh_seconds, float)
 
 
 @override_settings(CELERY_OUTBOX_STALE_TIMEOUT_SECONDS='not-an-int')
@@ -152,6 +168,7 @@ def test_handle_uses_configured_stale_timeout_when_cli_omits_it(
         max_backoff=3600.0,
         liveness_file=None,
         publish_concurrency=1,
+        queue_snapshot_refresh_seconds=5.0,
     )
 
     m_relay_cls.assert_called_once_with(
@@ -161,6 +178,8 @@ def test_handle_uses_configured_stale_timeout_when_cli_omits_it(
             idle_time=2.0,
             backoff_time=60,
             max_retries=3,
+            publish_concurrency=1,
+            queue_snapshot_refresh_seconds=5.0,
             stale_timeout_seconds=900,
             send_timeout=10.0,
             shutdown_timeout=30.0,

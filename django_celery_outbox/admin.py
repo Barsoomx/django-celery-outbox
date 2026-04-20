@@ -168,11 +168,15 @@ class CeleryOutboxDeadLetterAdmin(admin.ModelAdmin):
     def retry_selected(self, request: HttpRequest, queryset: QuerySet[CeleryOutboxDeadLetter]) -> None:
         content_type = ContentType.objects.get_for_model(CeleryOutboxDeadLetter)
         dead_letter_entries = list(queryset.values_list('pk', 'task_id'))
+        dead_letter_ids = [pk for pk, _task_id in dead_letter_entries]
         user_id = _get_log_entry_user_id(request)
         with transaction.atomic():
-            count = replay_dead_letters([pk for pk, _task_id in dead_letter_entries])
+            count = replay_dead_letters(dead_letter_ids)
+            remaining_ids = set(CeleryOutboxDeadLetter.objects.filter(pk__in=dead_letter_ids).values_list('pk', flat=True))
 
             for pk, task_id in dead_letter_entries:
+                if pk in remaining_ids:
+                    continue
                 LogEntry.objects.create(
                     user_id=user_id,
                     content_type_id=content_type.pk,

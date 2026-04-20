@@ -1,3 +1,11 @@
+"""Package-owned support API for the shipped pytest fixtures.
+
+The public pytest fixtures in :mod:`django_celery_outbox.fixtures` depend on the
+helpers exported here. These helpers are part of the package's semver-stable
+testing surface for the library itself, even though downstream users should
+continue to prefer the fixtures as the primary public API.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,6 +15,15 @@ from unittest.mock import patch
 from celery import Celery
 
 import django_celery_outbox._settings as settings_module
+
+__all__ = [
+    'FakeRelayRecorder',
+    'RecordedRelayCall',
+    'load_fixture_celery_app',
+    'patch_fake_relay_send_task',
+    'reset_fixture_state',
+    'run_drain_outbox_once',
+]
 
 _SEND_TASK_POSITIONAL_PARAMETER_NAMES = (
     'name',
@@ -79,10 +96,25 @@ def _normalize_send_task_call(
 
 
 def load_fixture_celery_app() -> Celery:
+    """Return the Celery app configured for the package's pytest fixtures."""
     return settings_module.load_celery_app_setting()
 
 
+def reset_fixture_state() -> None:
+    """Reset fixture-managed process state between tests."""
+    import structlog.contextvars
+
+    from django_celery_outbox.app import clear_redactor_cache
+    from django_celery_outbox.models import CeleryOutbox, CeleryOutboxDeadLetter
+
+    clear_redactor_cache()
+    structlog.contextvars.clear_contextvars()
+    CeleryOutboxDeadLetter.objects.all().delete()
+    CeleryOutbox.objects.all().delete()
+
+
 def patch_fake_relay_send_task(recorder: FakeRelayRecorder) -> Any:
+    """Patch the relay Celery app to record publishes instead of sending them."""
     from django_celery_outbox.relay._publisher import Celery as RelayCelery
 
     relay_app = load_fixture_celery_app()
@@ -133,6 +165,7 @@ def patch_fake_relay_send_task(recorder: FakeRelayRecorder) -> Any:
 
 
 def run_drain_outbox_once(app: Celery, *, idle_time: float = 0.0) -> None:
+    """Run one relay drain pass for the package-owned fixture support."""
     from django_celery_outbox.relay import Relay, RelayConfig
 
     relay = Relay(app=app, config=RelayConfig.init(idle_time=idle_time))

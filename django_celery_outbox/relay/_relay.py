@@ -85,7 +85,10 @@ class Relay:
             broker_outage_cooldown=config.broker_outage_cooldown,
             shutdown_timeout=config.shutdown_timeout,
         )
-        self._queue_snapshot_sampler = QueueSnapshotSampler(stale_timeout=self._stale_timeout)
+        self._queue_snapshot_sampler = QueueSnapshotSampler(
+            refresh_interval_seconds=config.queue_snapshot_refresh_seconds,
+            stale_timeout=self._stale_timeout,
+        )
         self._running = True
 
     def start(self) -> None:
@@ -236,6 +239,7 @@ class Relay:
                 for msg in exceeded:
                     self._send_signal_safe(
                         outbox_message_dead_lettered,
+                        'outbox_message_dead_lettered',
                         None,
                         None,
                         task_ids=[msg.task_id],
@@ -560,6 +564,7 @@ class Relay:
         metrics.increment('messages.failed', tags=tags)
         self._send_signal_safe(
             outbox_message_failed,
+            'outbox_message_failed',
             msg.task_id,
             msg.task_name,
             retries=msg.retries,
@@ -572,7 +577,7 @@ class Relay:
         tags = get_task_tag(msg.task_name)
         metrics.timing('send_latency_ms', latency_ms, tags=tags)
         metrics.increment('messages.published', tags=tags)
-        self._send_signal_safe(outbox_message_sent, msg.task_id, msg.task_name)
+        self._send_signal_safe(outbox_message_sent, 'outbox_message_sent', msg.task_id, msg.task_name)
         published.append(msg.id)
 
     def _classify_parallel_publish_exception(
@@ -654,21 +659,31 @@ class Relay:
         self._config.liveness_file.touch()
 
     @staticmethod
-    def _send_signal_safe(sig: Signal, task_id: str | None, task_name: str | None, **kwargs: object) -> None:
-        try:
-            payload = dict(kwargs)
-            if task_id is not None:
-                payload['task_id'] = task_id
-            if task_name is not None:
-                payload['task_name'] = task_name
-            sig.send(sender=Relay, **payload)
-        except Exception:
+    def _send_signal_safe(
+        sig: Signal,
+        signal_name: str,
+        task_id: str | None,
+        task_name: str | None,
+        **kwargs: object,
+    ) -> None:
+        payload = dict(kwargs)
+        if task_id is not None:
+            payload['task_id'] = task_id
+        if task_name is not None:
+            payload['task_name'] = task_name
+
+        for receiver, response in sig.send_robust(sender=Relay, **payload):
+            if not isinstance(response, Exception):
+                continue
+
             log_kwargs: dict[str, object] = {
-                'signal': getattr(sig, 'providing_args', str(sig)),
-                'exc_info': True,
+                'signal': signal_name,
+                'receiver': getattr(receiver, '__qualname__', repr(receiver)),
+                'exception_type': type(response).__name__,
+                'exception_message': str(response),
+                'exc_info': (type(response), response, response.__traceback__),
             }
-            if task_id is not None:
-                log_kwargs['task_id'] = task_id
-            if task_name is not None:
-                log_kwargs['task_name'] = task_name
+            for key in ('task_id', 'task_name', 'task_ids', 'task_names', 'retries'):
+                if key in payload:
+                    log_kwargs[key] = payload[key]
             _logger.error('celery_outbox_signal_error', **log_kwargs)

@@ -8,7 +8,12 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 ### Changed
 - Release artifacts now exclude internal `*_tests.py` modules from built wheels and source distributions.
 - Release publishing now runs built-artifact and changelog contract checks before PyPI upload.
-- CI now includes a dedicated live RabbitMQ smoke lane for Django 5.0 and 5.1.
+- CI now includes dedicated Django 5.0/5.1 compatibility smoke coverage, live RabbitMQ smoke lanes, and release-gating parallel broker smoke.
+- Relay queue-wide gauges (`queue.depth`, `dead_letter.count`, `oldest_pending_age_seconds`) are now sampled snapshots instead of exact per-batch recomputations, with configurable refresh cadence.
+- `celery_outbox_stats` now defaults to `--top=0`, making the expensive live `GROUP BY task_name` drilldown opt-in.
+- Broker-outage streak tracking now accumulates across batch boundaries until a successful publish or cooldown reset.
+- Dead-letter purge execution now deletes in ordered chunks instead of one large transaction.
+- Relay signal delivery now uses `send_robust()` consistently, so one bad receiver does not block later receivers.
 
 
 ## [0.3.0] — 2026-04-19

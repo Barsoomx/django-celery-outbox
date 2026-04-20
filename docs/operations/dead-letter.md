@@ -29,6 +29,7 @@ python manage.py celery_outbox_replay_dead_letter 123 124 125 --limit 2
 ```
 
 The replay command requeues only the selected dead-letter IDs. It preserves stored payload, schema, and tracing/context fields, then removes replayed rows from `celery_outbox_dead_letter`.
+If some selected IDs were already replayed or deleted by another operator, the command requeues only the remaining matches and prints `0` when nothing is left to move.
 
 ## Investigating Failures
 

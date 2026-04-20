@@ -59,7 +59,14 @@ def purge_dead_letter(
         regex = _glob_to_regex(task_name_pattern)
         queryset = queryset.filter(task_name__regex=regex)
 
-    result = _execute_purge(queryset, dry_run)
+    result = _execute_purge(
+        queryset,
+        dry_run,
+        chunk_ordering=_chunk_ordering(
+            older_than_dead=older_than_dead,
+            older_than_created=older_than_created,
+        ),
+    )
 
     _logger.info(
         'celery_outbox_dead_letter_purged',
@@ -73,20 +80,50 @@ def purge_dead_letter(
     return result
 
 
-def _execute_purge(queryset: QuerySet, dry_run: bool) -> PurgeResult:
-    aggregated = queryset.values('task_name').annotate(count=Count('id'))
-    task_names = {row['task_name']: row['count'] for row in aggregated}
-    deleted_count = sum(task_names.values())
+def _chunk_ordering(
+    *,
+    older_than_dead: timedelta | None,
+    older_than_created: timedelta | None,
+) -> tuple[str, ...]:
+    if older_than_dead is not None:
+        return ('dead_at', 'pk')
 
-    if not dry_run and deleted_count > 0:
-        _delete_in_chunks(queryset)
+    if older_than_created is not None:
+        return ('created_at', 'pk')
+
+    return ('pk',)
+
+
+def _execute_purge(
+    queryset: QuerySet,
+    dry_run: bool,
+    *,
+    chunk_ordering: tuple[str, ...],
+) -> PurgeResult:
+    if dry_run:
+        aggregated = queryset.values('task_name').annotate(count=Count('id'))
+        task_names = {row['task_name']: row['count'] for row in aggregated}
+        return PurgeResult(deleted_count=sum(task_names.values()), task_names=task_names)
+
+    return _delete_in_chunks(queryset, chunk_ordering=chunk_ordering)
+
+
+def _delete_in_chunks(
+    queryset: QuerySet[CeleryOutboxDeadLetter],
+    *,
+    chunk_ordering: tuple[str, ...],
+) -> PurgeResult:
+    deleted_count = 0
+    task_names: dict[str, int] = {}
+
+    while rows := list(queryset.order_by(*chunk_ordering).values_list('pk', 'task_name')[:_DELETE_CHUNK_SIZE]):
+        ids = [pk for pk, _task_name in rows]
+        deleted_count += len(rows)
+        for _pk, task_name in rows:
+            task_names[task_name] = task_names.get(task_name, 0) + 1
+        CeleryOutboxDeadLetter.objects.filter(pk__in=ids).delete()
 
     return PurgeResult(deleted_count=deleted_count, task_names=task_names)
-
-
-def _delete_in_chunks(queryset: QuerySet[CeleryOutboxDeadLetter]) -> None:
-    while ids := list(queryset.order_by('pk').values_list('pk', flat=True)[:_DELETE_CHUNK_SIZE]):
-        CeleryOutboxDeadLetter.objects.filter(pk__in=ids).delete()
 
 
 def parse_duration(value: str) -> timedelta:

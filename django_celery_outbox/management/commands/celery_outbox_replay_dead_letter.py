@@ -1,6 +1,6 @@
 from typing import Any
 
-from django.core.management.base import BaseCommand, CommandParser
+from django.core.management.base import BaseCommand, CommandError, CommandParser
 
 from django_celery_outbox.replay import replay_dead_letters
 
@@ -13,5 +13,9 @@ class Command(BaseCommand):
         parser.add_argument('--limit', type=int, default=None)
 
     def handle(self, *args: Any, **options: Any) -> None:
-        replayed = replay_dead_letters(options['dead_letter_ids'], limit=options['limit'])
+        limit = options['limit']
+        if limit is not None and limit <= 0:
+            raise CommandError('--limit must be greater than 0')
+
+        replayed = replay_dead_letters(options['dead_letter_ids'], limit=limit)
         self.stdout.write(f'Replayed {replayed} dead letter record(s).')

@@ -174,6 +174,66 @@ def test_fixture_types_are_importable() -> None:
     assert RecordedRelayCall is not None
 
 
+def test_fixture_support_exports_semver_stable_boundary() -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+
+    assert fixture_support_module.__all__ == [
+        'FakeRelayRecorder',
+        'RecordedRelayCall',
+        'load_fixture_celery_app',
+        'patch_fake_relay_send_task',
+        'reset_fixture_state',
+        'run_drain_outbox_once',
+    ]
+
+
+def test_reset_fixture_state_clears_models_redactor_cache_and_contextvars(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import django_celery_outbox._fixture_support as fixture_support_module
+    import django_celery_outbox.app as app_module
+    import django_celery_outbox.models as models_module
+
+    outbox_model = _build_fake_model(
+        [
+            FakeQueuedMessage(
+                id=1,
+                task_name='queued.task',
+                task_id='queued-1',
+                args=[],
+                kwargs={},
+            ),
+        ],
+    )
+    dead_letter_model = _build_fake_model(
+        [
+            FakeQueuedMessage(
+                id=2,
+                task_name='dead.task',
+                task_id='dead-1',
+                args=[],
+                kwargs={},
+            ),
+        ],
+    )
+    redactor_tracker = CacheClearTracker()
+    contextvars_tracker = ContextVarsTracker()
+
+    monkeypatch.setattr(app_module, '_get_redactor', redactor_tracker)
+    monkeypatch.setattr(structlog.contextvars, 'clear_contextvars', contextvars_tracker)
+    monkeypatch.setattr(models_module, 'CeleryOutbox', outbox_model)
+    monkeypatch.setattr(models_module, 'CeleryOutboxDeadLetter', dead_letter_model)
+
+    fixture_support_module.reset_fixture_state()
+
+    assert outbox_model.objects.rows == []
+    assert dead_letter_model.objects.rows == []
+    assert outbox_model.objects.delete_calls == 1
+    assert dead_letter_model.objects.delete_calls == 1
+    assert redactor_tracker.clear_calls == 1
+    assert contextvars_tracker.clear_calls == 1
+
+
 def test_fake_relay_uses_fixture_support_patch_target(monkeypatch: pytest.MonkeyPatch) -> None:
     called: list[FakeRelayRecorder] = []
 
@@ -224,25 +284,6 @@ def test_drain_outbox_uses_fixture_support_run_once(monkeypatch: pytest.MonkeyPa
         drain_outbox()
 
     assert len(called) == 1
-
-
-@dataclass(slots=True)
-class FakeQueuedMessage:
-    id: int
-    task_name: str
-    task_id: str
-    args: list[Any]
-    kwargs: dict[str, Any]
-    redacted_args: list[Any] | None = None
-    redacted_kwargs: dict[str, Any] | None = None
-
-    @property
-    def inspection_args(self) -> list[Any]:
-        return self.redacted_args if self.redacted_args is not None else self.args
-
-    @property
-    def inspection_kwargs(self) -> dict[str, Any]:
-        return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
 
 
 class FakeDeleteQuerySet:
@@ -342,42 +383,41 @@ def _build_assert_task_sent(
     return assert_task_sent, outbox_model
 
 
-def test_outbox_fixture_cleans_models_redactor_cache_and_contextvars(
+@dataclass(slots=True)
+class FakeQueuedMessage:
+    id: int
+    task_name: str
+    task_id: str
+    args: list[Any]
+    kwargs: dict[str, Any]
+    redacted_args: list[Any] | None = None
+    redacted_kwargs: dict[str, Any] | None = None
+
+    @property
+    def inspection_args(self) -> list[Any]:
+        return self.redacted_args if self.redacted_args is not None else self.args
+
+    @property
+    def inspection_kwargs(self) -> dict[str, Any]:
+        return self.redacted_kwargs if self.redacted_kwargs is not None else self.kwargs
+
+
+def test_outbox_fixture_uses_fixture_support_reset_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import django_celery_outbox.app as app_module
     import django_celery_outbox.models as models_module
 
-    outbox_model = _build_fake_model(
-        [
-            FakeQueuedMessage(
-                id=1,
-                task_name='queued.task',
-                task_id='queued-1',
-                args=[],
-                kwargs={},
-            ),
-        ],
-    )
-    dead_letter_model = _build_fake_model(
-        [
-            FakeQueuedMessage(
-                id=2,
-                task_name='dead.task',
-                task_id='dead-1',
-                args=[],
-                kwargs={},
-            ),
-        ],
-    )
-    redactor_tracker = CacheClearTracker()
-    contextvars_tracker = ContextVarsTracker()
+    outbox_model = _build_fake_model([])
+    dead_letter_model = _build_fake_model([])
     blocker_tracker = DjangoDbBlockerTracker()
+    reset_calls: list[None] = []
 
-    monkeypatch.setattr(app_module, '_get_redactor', redactor_tracker)
-    monkeypatch.setattr(structlog.contextvars, 'clear_contextvars', contextvars_tracker)
+    def fake_reset_fixture_state() -> None:
+        reset_calls.append(None)
+
     monkeypatch.setattr(models_module, 'CeleryOutbox', outbox_model)
     monkeypatch.setattr(models_module, 'CeleryOutboxDeadLetter', dead_letter_model)
+    monkeypatch.setattr(fixtures_module, 'reset_fixture_state', fake_reset_fixture_state, raising=False)
 
     outbox_fixture = cast(Any, fixtures_module.outbox)
     generator = outbox_fixture.__wrapped__(
@@ -387,43 +427,14 @@ def test_outbox_fixture_cleans_models_redactor_cache_and_contextvars(
     yielded_model = next(generator)
 
     assert yielded_model is outbox_model
-    assert outbox_model.objects.rows == []
-    assert dead_letter_model.objects.rows == []
-    assert outbox_model.objects.delete_calls == 1
-    assert dead_letter_model.objects.delete_calls == 1
-    assert redactor_tracker.clear_calls == 1
-    assert contextvars_tracker.clear_calls == 1
+    assert reset_calls == [None]
     assert blocker_tracker.enter_calls == 1
     assert blocker_tracker.exit_calls == 0
-
-    outbox_model.objects.rows.append(
-        FakeQueuedMessage(
-            id=3,
-            task_name='later.task',
-            task_id='later-1',
-            args=[],
-            kwargs={},
-        ),
-    )
-    dead_letter_model.objects.rows.append(
-        FakeQueuedMessage(
-            id=4,
-            task_name='later.dead',
-            task_id='dead-2',
-            args=[],
-            kwargs={},
-        ),
-    )
 
     with pytest.raises(StopIteration):
         next(generator)
 
-    assert outbox_model.objects.rows == []
-    assert dead_letter_model.objects.rows == []
-    assert outbox_model.objects.delete_calls == 2
-    assert dead_letter_model.objects.delete_calls == 2
-    assert redactor_tracker.clear_calls == 2
-    assert contextvars_tracker.clear_calls == 2
+    assert reset_calls == [None, None]
     assert blocker_tracker.enter_calls == 1
     assert blocker_tracker.exit_calls == 1
 
