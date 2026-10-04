@@ -48,9 +48,11 @@ app = OutboxCelery('myproject')
 
 ```bash
 python manage.py migrate
-python manage.py check
+python manage.py check --database default
 python manage.py celery_outbox_relay
 ```
+
+`check --database <alias>` verifies `SKIP LOCKED` support and the outbox schema on the alias that stores the outbox tables; a plain `check` validates settings only. See [Getting Started](https://barsoomx.github.io/django-celery-outbox/getting-started/).
 
 Committed rows stay in the outbox until the relay publishes them or dead-letters them, but
 consumers still need to be idempotent. If the relay crashes after a broker publish and before

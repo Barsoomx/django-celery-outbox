@@ -122,7 +122,7 @@ Result:
 
 Current behavior already checks `connection.features.has_select_for_update_skip_locked`. Keep that logic, but ensure it respects database selection rules:
 
-- on plain `manage.py check`, inspect the routed outbox DB alias directly
+- on plain `manage.py check`, inspect the routed outbox DB alias directly (superseded in 0.4.1, see section 5)
 - on `manage.py check --database <alias>`, only run if `<alias>` includes the outbox DB alias
 
 Message:
@@ -197,6 +197,14 @@ Hint:
 This prevents `manage.py check` from failing with raw database exceptions.
 
 ### 5. Database check execution semantics
+
+> **Superseded in 0.4.1.** Running database checks against the outbox alias when `databases is None`
+> made `makemigrations`, `makemigrations --check`, `runserver`, and plain `check` fail with
+> `celery_outbox.E006` on a fresh, unmigrated, or unreachable database on Django < 6.1, where
+> `run_checks()` still calls database-tagged checks when no database is selected. Since 0.4.1 the
+> package follows the Django convention: database checks run only for explicitly selected aliases
+> (`python manage.py check --database <alias>`), and a plain `check` validates settings only. See
+> the `0.4.1` entry in `CHANGELOG.md`. The rules below describe the original 0.4.0 design.
 
 This package intentionally differs slightly from Django's built-in database-tagged checks.
 

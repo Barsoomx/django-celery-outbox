@@ -100,7 +100,10 @@ python manage.py migrate
 
 ```bash
 python manage.py check
+python manage.py check --database default
 ```
+
+The plain `check` validates settings without touching the database. Database checks (`SKIP LOCKED` support, applied outbox migrations, outbox schema) run only with `--database <alias>`; pass the alias that stores the outbox tables.
 
 ### 8. Start the relay
 
