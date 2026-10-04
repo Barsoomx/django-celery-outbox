@@ -93,6 +93,23 @@ def test_database_checks_skip_database_access_without_selected_databases(
     assert migrations_errors == []
 
 
+@pytest.fixture
+def m_get_outbox_db_alias() -> Iterator[MagicMock]:
+    with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default') as m_get_outbox_db_alias:
+        yield m_get_outbox_db_alias
+
+
+@pytest.mark.parametrize('databases', [None, []], ids=['databases_none', 'databases_empty'])
+def test_database_checks_do_not_resolve_outbox_alias_without_selected_databases(
+    databases: list[str] | None,
+    m_get_outbox_db_alias: MagicMock,
+) -> None:
+    check_database_supports_skip_locked(None, databases=databases)
+    check_outbox_migrations_applied(None, databases=databases)
+
+    m_get_outbox_db_alias.assert_not_called()
+
+
 def test_check_outbox_migrations_applied_reports_unmigrated_schema_for_selected_database(
     m_unmigrated_connection: MagicMock,
 ) -> None:
