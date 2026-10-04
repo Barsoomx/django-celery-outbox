@@ -134,6 +134,25 @@ def f_migrate_alias_database(django_db_blocker: DjangoDbBlocker) -> Iterator[str
         yield alias
 
 
+@pytest.fixture
+def f_outbox_alias_database(django_db_blocker: DjangoDbBlocker) -> Iterator[str]:
+    with _unmigrated_outbox_database('outbox', django_db_blocker) as alias:
+        yield alias
+
+
+def test_call_command_check_with_outbox_database_alias_reports_unmigrated_outbox_schema(
+    f_outbox_alias_database: str,
+) -> None:
+    with pytest.raises(SystemCheckError, match='celery_outbox.E006'):
+        call_command('check', databases=[f_outbox_alias_database])
+
+
+def test_call_command_check_with_default_database_skips_outbox_alias_schema(
+    f_outbox_alias_database: str,
+) -> None:
+    call_command('check', databases=[DEFAULT_DB_ALIAS])
+
+
 @pytest.mark.parametrize(
     'f_argv',
     [
