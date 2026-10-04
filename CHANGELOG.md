@@ -8,8 +8,12 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 
 ## [0.4.1] — 2026-10-04
 
+### Changed
+- Plain `python manage.py check` (without `--database`) no longer verifies `SKIP LOCKED` support or the outbox schema. Deployment pipelines that relied on it to gate releases on the outbox schema must run `python manage.py check --database <alias>` with the alias that stores the outbox tables.
+
 ### Fixed
-- Database system checks (`celery_outbox.E001`, `E005`, `E006`) honour the `databases` argument of the Django check framework: they only inspect the outbox database when it is explicitly selected (`check --database <alias>`, the Django test runner, and `migrate` for `E001`) and no longer touch the database on plain management commands such as `makemigrations`, `makemigrations --check`, `check`, `shell`, or `collectstatic`. Previously a fresh, unmigrated, or unreachable database made these commands fail with `celery_outbox.E006` on Django < 6.0.
+- Database system checks (`celery_outbox.E001`, `E005`, `E006`) honour the `databases` argument of the Django check framework: they only inspect the outbox database when its alias is explicitly selected (`check --database <alias>`, the Django test runner, and `migrate` for `E001`). On Django < 6.1, where `run_checks()` still calls database-tagged checks when no database is selected, a fresh, unmigrated, or unreachable database no longer fails `check` without `--database`, `makemigrations` (including `makemigrations --check`), `runserver`, and other commands that run all system checks (`requires_system_checks = '__all__'`) with `celery_outbox.E006`. Django 6.1 already skips database-tagged checks when no database is selected.
+- `migrate` detection for skipping `E005`/`E006` is exact: the schema checks are skipped only when `migrate` is the management subcommand (`manage.py migrate`, `django-admin migrate`, `python -m django migrate`) or when a `migrate` command instance is running, including programmatic `call_command('migrate')` on Django 5.2+, where system checks run before `handle()`. A `migrate` token elsewhere on the command line, such as `check --database migrate`, no longer suppresses them.
 
 
 ## [0.4.0] — 2026-04-20
