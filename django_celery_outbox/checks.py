@@ -4,6 +4,7 @@ from types import FrameType
 
 from django.conf import settings
 from django.core.checks import Error, Tags, register
+from django.core.management.commands.migrate import Command as MigrateCommand
 from django.db import DatabaseError, connections
 from django.db.migrations.loader import MigrationLoader
 from django.db.migrations.recorder import MigrationRecorder
@@ -19,14 +20,25 @@ from django_celery_outbox._settings import (
 _REQUIRED_OUTBOX_TABLES = frozenset({'celery_outbox', 'celery_outbox_dead_letter'})
 
 
+def _is_migrate_subcommand_in_argv() -> bool:
+    return len(sys.argv) > 1 and sys.argv[1] == 'migrate'
+
+
+def _is_migrate_frame(frame: FrameType) -> bool:
+    filename = frame.f_code.co_filename.replace('\\', '/')
+    if filename.endswith('/django/core/management/commands/migrate.py'):
+        return True
+
+    return isinstance(frame.f_locals.get('self'), MigrateCommand)
+
+
 def _is_migrate_command() -> bool:
-    if 'migrate' in sys.argv[1:]:
+    if _is_migrate_subcommand_in_argv():
         return True
 
     frame: FrameType | None = sys._getframe()
     while frame is not None:
-        filename = frame.f_code.co_filename.replace('\\', '/')
-        if filename.endswith('/django/core/management/commands/migrate.py'):
+        if _is_migrate_frame(frame):
             return True
         frame = frame.f_back
 
