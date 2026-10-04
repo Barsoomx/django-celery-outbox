@@ -6,6 +6,12 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 ## [Unreleased]
 
 
+## [0.4.1] — 2026-10-04
+
+### Fixed
+- Database system checks (`celery_outbox.E001`, `E005`, `E006`) honour the `databases` argument of the Django check framework: they only inspect the outbox database when it is explicitly selected (`check --database <alias>`, the Django test runner, and `migrate` for `E001`) and no longer touch the database on plain management commands such as `makemigrations`, `makemigrations --check`, `check`, `shell`, or `collectstatic`. Previously a fresh, unmigrated, or unreachable database made these commands fail with `celery_outbox.E006` on Django < 6.0.
+
+
 ## [0.4.0] — 2026-04-20
 
 ### Added

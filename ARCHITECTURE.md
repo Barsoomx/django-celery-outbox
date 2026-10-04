@@ -680,6 +680,13 @@ Current checks:
 - `celery_outbox.E005` -- django-celery-outbox migrations not fully applied
 - `celery_outbox.E006` -- outbox schema could not be verified
 
+`E001`, `E005`, and `E006` are database-tagged checks. Following the Django convention, they only
+inspect databases passed in the check framework's `databases` argument and only when it includes
+the outbox alias: `python manage.py check --database <alias>`, the Django test runner, and
+`migrate` (which runs `E001` but skips `E005`/`E006` because it is the command that applies the
+schema). Plain management commands such as `check`, `makemigrations`, `shell`, or `collectstatic`
+never touch the database through these checks.
+
 These checks reuse the same internal setting loaders used by runtime code so early validation and
 runtime behavior stay aligned.
 

@@ -10,6 +10,8 @@ Most package settings are prefixed with `CELERY_OUTBOX_`. Metrics integration al
 
 django-celery-outbox also registers Django system checks for database support, applied outbox migrations, and `CELERY_OUTBOX_EXCLUDE_TASKS` validation.
 
+The database checks (`celery_outbox.E001`, `E005`, `E006`) only run against explicitly selected databases: use `python manage.py check --database <alias>` (with the outbox alias) to verify `SKIP LOCKED` support and the outbox schema. A plain `python manage.py check`, `makemigrations`, or any other management command does not access the database through these checks. `migrate` runs `E001` and skips `E005`/`E006`.
+
 ## Package Settings
 
 | Setting | Type | Default | Description |
