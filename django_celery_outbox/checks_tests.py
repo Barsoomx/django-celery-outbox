@@ -1,4 +1,6 @@
 import sys
+from collections.abc import Iterator
+from typing import NoReturn
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -54,12 +56,78 @@ def _mock_applied_outbox_migrations() -> dict[tuple[str, str], object]:
     }
 
 
+class _ForbiddenConnections:
+    def __getitem__(self, alias: str) -> NoReturn:
+        raise AssertionError(f'database connection {alias!r} must not be accessed')
+
+
+@pytest.fixture
+def f_forbidden_connections() -> Iterator[_ForbiddenConnections]:
+    forbidden_connections = _ForbiddenConnections()
+    with patch('django_celery_outbox.checks.connections', forbidden_connections):
+        with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
+            yield forbidden_connections
+
+
+@pytest.fixture
+def m_unmigrated_connection() -> Iterator[MagicMock]:
+    connection = _mock_connection(table_names=['django_migrations'])
+    with patch('django_celery_outbox.checks.connections', {'default': connection}):
+        with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
+            yield connection
+
+
+@pytest.mark.parametrize(
+    'check_kwargs',
+    [{}, {'databases': None}, {'databases': []}],
+    ids=['no_databases_kwarg', 'databases_none', 'databases_empty'],
+)
+def test_database_checks_skip_database_access_without_selected_databases(
+    check_kwargs: dict[str, object],
+    f_forbidden_connections: _ForbiddenConnections,
+) -> None:
+    skip_locked_errors = check_database_supports_skip_locked(None, **check_kwargs)
+    migrations_errors = check_outbox_migrations_applied(None, **check_kwargs)
+
+    assert skip_locked_errors == []
+    assert migrations_errors == []
+
+
+def test_check_outbox_migrations_applied_reports_unmigrated_schema_for_selected_database(
+    m_unmigrated_connection: MagicMock,
+) -> None:
+    errors = check_outbox_migrations_applied(None, databases=['default'])
+
+    assert [error.id for error in errors] == ['celery_outbox.E006']
+    m_unmigrated_connection.introspection.table_names.assert_called_once_with()
+
+
+def test_call_command_check_without_database_argument_does_not_access_database() -> None:
+    call_command('check')
+
+
+@pytest.mark.django_db
+def test_call_command_makemigrations_check_ignores_unmigrated_outbox_schema(
+    m_unmigrated_connection: MagicMock,
+) -> None:
+    call_command('makemigrations', '--check', '--dry-run', skip_checks=False)
+
+    m_unmigrated_connection.introspection.table_names.assert_not_called()
+
+
+def test_call_command_check_with_database_argument_reports_unmigrated_outbox_schema(
+    m_unmigrated_connection: MagicMock,
+) -> None:
+    with pytest.raises(SystemCheckError, match='celery_outbox.E006'):
+        call_command('check', databases=['default'])
+
+
 def test_check_returns_error_when_skip_locked_not_supported() -> None:
     m_connection = _mock_connection(skip_locked=False)
 
     with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
         with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
-            errors = check_database_supports_skip_locked(None)
+            errors = check_database_supports_skip_locked(None, databases=['default'])
 
     assert len(errors) == 1
     assert errors[0].id == 'celery_outbox.E001'
@@ -159,7 +227,7 @@ def test_check_outbox_migrations_applied_returns_missing_migration_error() -> No
         with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
             with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
                 with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
-                    errors = check_outbox_migrations_applied(None)
+                    errors = check_outbox_migrations_applied(None, databases=['default'])
 
     assert [error.id for error in errors] == ['celery_outbox.E005']
 
@@ -169,7 +237,7 @@ def test_check_outbox_migrations_applied_returns_schema_verification_error_when_
 
     with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
         with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
-            errors = check_outbox_migrations_applied(None)
+            errors = check_outbox_migrations_applied(None, databases=['default'])
 
     assert [error.id for error in errors] == ['celery_outbox.E006']
 
@@ -180,7 +248,7 @@ def test_check_outbox_migrations_applied_skips_schema_verification_during_migrat
     with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
         with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
             with patch.object(sys, 'argv', ['python', '-m', 'django', 'migrate']):
-                errors = check_outbox_migrations_applied(None)
+                errors = check_outbox_migrations_applied(None, databases=['default'])
 
     assert errors == []
 
@@ -204,7 +272,7 @@ def test_check_outbox_migrations_applied_converts_database_error_to_schema_verif
 
     with patch('django_celery_outbox.checks.connections', {'default': m_connection}):
         with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
-            errors = check_outbox_migrations_applied(None)
+            errors = check_outbox_migrations_applied(None, databases=['default'])
 
     assert [error.id for error in errors] == ['celery_outbox.E006']
 
@@ -218,7 +286,7 @@ def test_check_outbox_migrations_applied_converts_loader_error_to_schema_verific
         with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='default'):
             with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
                 with patch('django_celery_outbox.checks.MigrationLoader', side_effect=RuntimeError('boom')):
-                    errors = check_outbox_migrations_applied(None)
+                    errors = check_outbox_migrations_applied(None, databases=['default'])
 
     assert [error.id for error in errors] == ['celery_outbox.E006']
 
@@ -275,19 +343,20 @@ def test_call_command_check_reports_invalid_dlq_retention_setting() -> None:
 
 
 @override_settings(CELERY_OUTBOX_APP='django_celery_outbox.checks_tests.valid_celery_app')
-def test_call_command_check_reports_database_errors_on_plain_check() -> None:
-    m_connection = _mock_connection(skip_locked=False, alias='outbox')
+def test_call_command_check_skips_outbox_database_checks_on_plain_check() -> None:
+    m_connection = _mock_connection(skip_locked=False, table_names=['django_migrations'], alias='outbox')
     m_recorder = MagicMock()
-    m_recorder.applied_migrations.return_value = _mock_applied_outbox_migrations()
     m_loader = MagicMock()
-    m_loader.disk_migrations = _mock_applied_outbox_migrations()
 
     with patch('django_celery_outbox.checks.connections', {'outbox': m_connection}):
         with patch('django_celery_outbox.checks.get_outbox_db_alias', return_value='outbox'):
             with patch('django_celery_outbox.checks.MigrationRecorder', return_value=m_recorder):
                 with patch('django_celery_outbox.checks.MigrationLoader', return_value=m_loader):
-                    with pytest.raises(SystemCheckError, match='celery_outbox.E001'):
-                        call_command('check')
+                    call_command('check')
+
+    m_connection.introspection.table_names.assert_not_called()
+    m_recorder.applied_migrations.assert_not_called()
+    assert m_loader.mock_calls == []
 
 
 def test_call_command_check_reports_database_errors_with_database_argument() -> None:

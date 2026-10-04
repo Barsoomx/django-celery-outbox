@@ -35,10 +35,9 @@ def _is_migrate_command() -> bool:
 
 def _selected_outbox_aliases(databases: object) -> list[str]:
     outbox_alias = get_outbox_db_alias()
-    if databases is None:
-        return [outbox_alias]
     if isinstance(databases, Collection) and not isinstance(databases, (str, bytes)) and outbox_alias in databases:
         return [outbox_alias]
+
     return []
 
 
