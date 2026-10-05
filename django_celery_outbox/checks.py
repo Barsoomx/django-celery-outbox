@@ -36,11 +36,15 @@ def _is_migrate_command() -> bool:
     if _is_migrate_subcommand_in_argv():
         return True
 
-    frame: FrameType | None = sys._getframe()
-    while frame is not None:
-        if _is_migrate_frame(frame):
-            return True
-        frame = frame.f_back
+    frame: FrameType | None = sys._getframe(1)
+    try:
+        while frame is not None:
+            if _is_migrate_frame(frame):
+                return True
+
+            frame = frame.f_back
+    finally:
+        frame = None
 
     return False
 
@@ -187,12 +191,13 @@ def check_outbox_migrations_applied(
     app_configs: object,
     **kwargs: object,
 ) -> list[Error]:
-    if _is_migrate_command():
+    selected_aliases = _selected_outbox_aliases(kwargs.get('databases'))
+    if not selected_aliases or _is_migrate_command():
         return []
 
     errors: list[Error] = []
 
-    for db_alias in _selected_outbox_aliases(kwargs.get('databases')):
+    for db_alias in selected_aliases:
         connection = connections[db_alias]
 
         try:

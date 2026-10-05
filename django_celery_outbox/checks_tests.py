@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import gc
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
+from types import FrameType
 from typing import TYPE_CHECKING, NoReturn
 from unittest.mock import MagicMock, patch
 
@@ -414,6 +416,60 @@ def test_check_outbox_migrations_applied_skips_schema_verification_during_migrat
                 errors = check_outbox_migrations_applied(None, databases=['default'])
 
     assert errors == []
+
+
+@pytest.fixture
+def f_gc_garbage() -> Iterator[list[object]]:
+    gc.collect()
+    gc.disable()
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    try:
+        yield gc.garbage
+    finally:
+        gc.set_debug(0)
+        gc.garbage.clear()
+        gc.enable()
+
+
+@pytest.fixture
+def m_is_migrate_command() -> Iterator[MagicMock]:
+    with patch('django_celery_outbox.checks._is_migrate_command', return_value=False) as m_is_migrate_command:
+        yield m_is_migrate_command
+
+
+def test_is_migrate_command_leaves_no_frame_reference_cycles(
+    f_pytest_argv: list[str],
+    f_gc_garbage: list[object],
+) -> None:
+    assert _is_migrate_command() is False
+
+    gc.collect()
+    assert [obj for obj in f_gc_garbage if isinstance(obj, FrameType)] == []
+
+
+@pytest.mark.parametrize(
+    'databases',
+    [None, [], ['replica']],
+    ids=['databases_none', 'databases_empty', 'outbox_alias_not_selected'],
+)
+def test_check_outbox_migrations_applied_does_not_inspect_stack_without_selected_outbox_alias(
+    databases: list[str] | None,
+    m_get_outbox_db_alias: MagicMock,
+    m_is_migrate_command: MagicMock,
+) -> None:
+    errors = check_outbox_migrations_applied(None, databases=databases)
+
+    assert errors == []
+    m_is_migrate_command.assert_not_called()
+
+
+def test_call_command_check_does_not_inspect_stack_on_plain_check(
+    m_get_outbox_db_alias: MagicMock,
+    m_is_migrate_command: MagicMock,
+) -> None:
+    call_command('check')
+
+    m_is_migrate_command.assert_not_called()
 
 
 def test_is_migrate_command_detects_programmatic_migrate_from_stack() -> None:
