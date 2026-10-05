@@ -1,7 +1,9 @@
+from __future__ import annotations
+
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import NoReturn
+from typing import TYPE_CHECKING, NoReturn
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,7 +13,6 @@ from django.core.management.base import SystemCheckError
 from django.db import DEFAULT_DB_ALIAS, DatabaseError, connections
 from django.db.models import Model
 from django.test import override_settings
-from pytest_django import DjangoDbBlocker
 
 from django_celery_outbox.checks import (
     _is_migrate_command,
@@ -22,6 +23,9 @@ from django_celery_outbox.checks import (
     check_database_supports_skip_locked,
     check_outbox_migrations_applied,
 )
+
+if TYPE_CHECKING:
+    from pytest_django import DjangoDbBlocker
 
 valid_celery_app = Celery('checks-tests')
 not_a_celery_app = object()
