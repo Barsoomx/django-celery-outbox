@@ -1,3 +1,4 @@
+import ast
 import importlib.util
 import subprocess
 import sys
@@ -10,6 +11,28 @@ from django_celery_outbox import __version__
 pytestmark = pytest.mark.release_contract
 
 STUB_WHEEL_NAME = f'django_celery_outbox-{__version__}-py3-none-any.whl'
+
+
+def _imports_pytest_django(node: ast.AST) -> bool:
+    if isinstance(node, ast.ImportFrom):
+        return (node.module or '').split('.')[0] == 'pytest_django'
+
+    if isinstance(node, ast.Import):
+        return any(alias.name.split('.')[0] == 'pytest_django' for alias in node.names)
+
+    return False
+
+
+def _runtime_pytest_django_import_lines(path: Path) -> list[int]:
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    type_checking_nodes = {
+        id(child)
+        for node in ast.walk(tree)
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Name) and node.test.id == 'TYPE_CHECKING'
+        for child in ast.walk(node)
+    }
+
+    return [node.lineno for node in ast.walk(tree) if id(node) not in type_checking_nodes and _imports_pytest_django(node)]
 
 
 def test_release_contract_rejects_speculative_markers(tmp_path: Path) -> None:
@@ -246,3 +269,11 @@ def test_release_workflows_use_pinned_actions() -> None:
                     offenders.append(f'{path}: {stripped}')
 
     assert not offenders, offenders
+
+
+def test_package_modules_import_pytest_django_only_for_type_checking() -> None:
+    runtime_imports = {
+        str(path): lines for path in sorted(Path('django_celery_outbox').rglob('*.py')) if (lines := _runtime_pytest_django_import_lines(path))
+    }
+
+    assert runtime_imports == {}

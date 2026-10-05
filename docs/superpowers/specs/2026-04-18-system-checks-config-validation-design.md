@@ -203,8 +203,9 @@ This prevents `manage.py check` from failing with raw database exceptions.
 > `celery_outbox.E006` on a fresh, unmigrated, or unreachable database on Django < 6.1, where
 > `run_checks()` still calls database-tagged checks when no database is selected. Since 0.4.1 the
 > package follows the Django convention: database checks run only for explicitly selected aliases
-> (`python manage.py check --database <alias>`), and a plain `check` validates settings only. See
-> the `0.4.1` entry in `CHANGELOG.md`. The rules below describe the original 0.4.0 design.
+> (`python manage.py check --database <alias>`, or `check --tag database` on Django 6.1+, which
+> selects every configured database), and a plain `check` validates settings only. See
+> the `0.4.1` and `0.4.2` entries in `CHANGELOG.md`. The rules below describe the original 0.4.0 design.
 
 This package intentionally differs slightly from Django's built-in database-tagged checks.
 

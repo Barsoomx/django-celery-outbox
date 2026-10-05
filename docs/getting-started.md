@@ -103,7 +103,7 @@ python manage.py check
 python manage.py check --database default
 ```
 
-The plain `check` validates settings without touching the database. Database checks (`SKIP LOCKED` support, applied outbox migrations, outbox schema) run only with `--database <alias>`; pass the alias that stores the outbox tables.
+The plain `check` validates settings without touching the database. Database checks (`SKIP LOCKED` support, applied outbox migrations, outbox schema) run only for selected databases: pass `--database <alias>` with the alias that stores the outbox tables. On Django 6.1+, `check --tag database` without `--database` selects every configured database and runs them as well; on Django < 6.1 it skips them.
 
 ### 8. Start the relay
 

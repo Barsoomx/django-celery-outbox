@@ -6,13 +6,23 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 ## [Unreleased]
 
 
+## [0.4.2] — 2026-10-05
+
+### Fixed
+- The package test suite collects with every `pytest-django` release allowed by the `test` extra (`>=4.5`): `checks_tests` imports `DjangoDbBlocker` only for type checking, since `pytest-django` 4.5–4.7 does not export it.
+- `celery_outbox.E005`/`E006` no longer walk the call stack unless the outbox alias is selected, so plain `check`, `makemigrations`, and `runserver` on Django < 6.1 skip the `migrate` detection entirely. The stack walk starts at the caller's frame and drops its frame reference on exit, so it no longer leaves a frame reference cycle for the garbage collector.
+
+### Documentation
+- The database checks (`celery_outbox.E001`, `E005`, `E006`) run for selected databases, not only with `--database`: on Django 6.1+, `python manage.py check --tag database` without `--database` selects every configured database and runs them against the outbox alias; on Django < 6.1 the same command skips them. Getting started, configuration, and architecture docs now say so.
+
+
 ## [0.4.1] — 2026-10-04
 
 ### Changed
 - Plain `python manage.py check` (without `--database`) no longer verifies `SKIP LOCKED` support or the outbox schema. Deployment pipelines that relied on it to gate releases on the outbox schema must run `python manage.py check --database <alias>` with the alias that stores the outbox tables.
 
 ### Fixed
-- Database system checks (`celery_outbox.E001`, `E005`, `E006`) honour the `databases` argument of the Django check framework: they only inspect the outbox database when its alias is explicitly selected (`check --database <alias>`, the Django test runner, and `migrate` for `E001`). On Django < 6.1, where `run_checks()` still calls database-tagged checks when no database is selected, a fresh, unmigrated, or unreachable database no longer fails `check` without `--database`, `makemigrations` (including `makemigrations --check`), `runserver`, and other commands that run all system checks (`requires_system_checks = '__all__'`) with `celery_outbox.E006`. Django 6.1 already skips database-tagged checks when no database is selected.
+- Database system checks (`celery_outbox.E001`, `E005`, `E006`) honour the `databases` argument of the Django check framework: they only inspect the outbox database when its alias is explicitly selected (`check --database <alias>`, the Django test runner, and `migrate` for `E001`). On Django < 6.1, where `run_checks()` still calls database-tagged checks when no database is selected, a fresh, unmigrated, or unreachable database no longer fails `check` without `--database`, `makemigrations` (including `makemigrations --check`), `runserver`, and other commands that run all system checks (`requires_system_checks = '__all__'`) with `celery_outbox.E006`. Django 6.1 already skips database-tagged checks when no database is selected and no tag is requested.
 - `migrate` detection for skipping `E005`/`E006` is exact: the schema checks are skipped only when `migrate` is the management subcommand (`manage.py migrate`, `django-admin migrate`, `python -m django migrate`) or when a `migrate` command instance is running, including programmatic `call_command('migrate')` on Django 5.2+, where system checks run before `handle()`. A `migrate` token elsewhere on the command line, such as `check --database migrate`, no longer suppresses them.
 
 

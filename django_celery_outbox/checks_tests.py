@@ -1,17 +1,21 @@
+from __future__ import annotations
+
+import gc
 import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import NoReturn
+from types import FrameType
+from typing import TYPE_CHECKING, NoReturn
 from unittest.mock import MagicMock, patch
 
 import pytest
 from celery import Celery
+from django import VERSION as DJANGO_VERSION
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 from django.db import DEFAULT_DB_ALIAS, DatabaseError, connections
 from django.db.models import Model
 from django.test import override_settings
-from pytest_django import DjangoDbBlocker
 
 from django_celery_outbox.checks import (
     _is_migrate_command,
@@ -22,6 +26,9 @@ from django_celery_outbox.checks import (
     check_database_supports_skip_locked,
     check_outbox_migrations_applied,
 )
+
+if TYPE_CHECKING:
+    from pytest_django import DjangoDbBlocker
 
 valid_celery_app = Celery('checks-tests')
 not_a_celery_app = object()
@@ -263,6 +270,23 @@ def test_call_command_check_with_database_argument_reports_unmigrated_outbox_sch
         call_command('check', databases=['default'])
 
 
+@pytest.mark.skipif(DJANGO_VERSION < (6, 1), reason='Django 6.1 selects every database for explicitly tagged checks')
+def test_call_command_check_with_database_tag_reports_unmigrated_outbox_schema_on_django_6_1(
+    m_unmigrated_connection: MagicMock,
+) -> None:
+    with pytest.raises(SystemCheckError, match='celery_outbox.E006'):
+        call_command('check', tags=['database'])
+
+
+@pytest.mark.skipif(DJANGO_VERSION >= (6, 1), reason='Django < 6.1 passes no databases to explicitly tagged checks')
+def test_call_command_check_with_database_tag_skips_outbox_schema_before_django_6_1(
+    m_unmigrated_connection: MagicMock,
+) -> None:
+    call_command('check', tags=['database'])
+
+    m_unmigrated_connection.introspection.table_names.assert_not_called()
+
+
 def test_check_returns_error_when_skip_locked_not_supported() -> None:
     m_connection = _mock_connection(skip_locked=False)
 
@@ -392,6 +416,60 @@ def test_check_outbox_migrations_applied_skips_schema_verification_during_migrat
                 errors = check_outbox_migrations_applied(None, databases=['default'])
 
     assert errors == []
+
+
+@pytest.fixture
+def f_gc_garbage() -> Iterator[list[object]]:
+    gc.collect()
+    gc.disable()
+    gc.set_debug(gc.DEBUG_SAVEALL)
+    try:
+        yield gc.garbage
+    finally:
+        gc.set_debug(0)
+        gc.garbage.clear()
+        gc.enable()
+
+
+@pytest.fixture
+def m_is_migrate_command() -> Iterator[MagicMock]:
+    with patch('django_celery_outbox.checks._is_migrate_command', return_value=False) as m_is_migrate_command:
+        yield m_is_migrate_command
+
+
+def test_is_migrate_command_leaves_no_frame_reference_cycles(
+    f_pytest_argv: list[str],
+    f_gc_garbage: list[object],
+) -> None:
+    assert _is_migrate_command() is False
+
+    gc.collect()
+    assert [obj for obj in f_gc_garbage if isinstance(obj, FrameType)] == []
+
+
+@pytest.mark.parametrize(
+    'databases',
+    [None, [], ['replica']],
+    ids=['databases_none', 'databases_empty', 'outbox_alias_not_selected'],
+)
+def test_check_outbox_migrations_applied_does_not_inspect_stack_without_selected_outbox_alias(
+    databases: list[str] | None,
+    m_get_outbox_db_alias: MagicMock,
+    m_is_migrate_command: MagicMock,
+) -> None:
+    errors = check_outbox_migrations_applied(None, databases=databases)
+
+    assert errors == []
+    m_is_migrate_command.assert_not_called()
+
+
+def test_call_command_check_does_not_inspect_stack_on_plain_check(
+    m_get_outbox_db_alias: MagicMock,
+    m_is_migrate_command: MagicMock,
+) -> None:
+    call_command('check')
+
+    m_is_migrate_command.assert_not_called()
 
 
 def test_is_migrate_command_detects_programmatic_migrate_from_stack() -> None:

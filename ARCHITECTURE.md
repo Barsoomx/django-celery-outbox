@@ -684,7 +684,10 @@ Current checks:
 inspect databases passed in the check framework's `databases` argument and only when it includes
 the outbox alias: `python manage.py check --database <alias>`, the Django test runner, and
 `migrate` (which runs `E001` but skips `E005`/`E006` because it is the command that applies the
-schema). `migrate` is recognised either as the management subcommand (`sys.argv[1]`) or by a
+schema). On Django 6.1+, explicitly requesting the tag without `--database`
+(`python manage.py check --tag database`) selects every configured database, so `E001`, `E005`,
+and `E006` run against the outbox alias as well; on Django < 6.1 the same command passes no
+databases and the checks are skipped. `migrate` is recognised either as the management subcommand (`sys.argv[1]`) or by a
 running `migrate` command instance in the call stack, which covers `call_command('migrate')` on
 Django 5.2+ where checks run from `BaseCommand.execute()`. Commands whose system checks receive no
 selected databases (plain `check`, `makemigrations`, `runserver`) never touch the database through
