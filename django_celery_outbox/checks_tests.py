@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from celery import Celery
+from django import VERSION as DJANGO_VERSION
 from django.core.management import call_command
 from django.core.management.base import SystemCheckError
 from django.db import DEFAULT_DB_ALIAS, DatabaseError, connections
@@ -265,6 +266,23 @@ def test_call_command_check_with_database_argument_reports_unmigrated_outbox_sch
 ) -> None:
     with pytest.raises(SystemCheckError, match='celery_outbox.E006'):
         call_command('check', databases=['default'])
+
+
+@pytest.mark.skipif(DJANGO_VERSION < (6, 1), reason='Django 6.1 selects every database for explicitly tagged checks')
+def test_call_command_check_with_database_tag_reports_unmigrated_outbox_schema_on_django_6_1(
+    m_unmigrated_connection: MagicMock,
+) -> None:
+    with pytest.raises(SystemCheckError, match='celery_outbox.E006'):
+        call_command('check', tags=['database'])
+
+
+@pytest.mark.skipif(DJANGO_VERSION >= (6, 1), reason='Django < 6.1 passes no databases to explicitly tagged checks')
+def test_call_command_check_with_database_tag_skips_outbox_schema_before_django_6_1(
+    m_unmigrated_connection: MagicMock,
+) -> None:
+    call_command('check', tags=['database'])
+
+    m_unmigrated_connection.introspection.table_names.assert_not_called()
 
 
 def test_check_returns_error_when_skip_locked_not_supported() -> None:
