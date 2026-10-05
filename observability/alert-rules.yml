@@ -1,0 +1,20 @@
+groups:
+  - name: celery-outbox
+    rules:
+      - alert: CeleryOutboxNewDeadLetters
+        expr: increase(celery_outbox_messages_exceeded_total[10m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+        annotations:
+          summary: "New dead-lettered messages detected"
+          description: "{{ $value }} messages exceeded max retries in the last 10 minutes"
+
+      - alert: CeleryOutboxQueueAgeHigh
+        expr: celery_outbox_oldest_pending_age_seconds > 60
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Outbox queue age above SLO"
+          description: "Oldest live-backlog message is {{ $value | humanizeDuration }} old"
