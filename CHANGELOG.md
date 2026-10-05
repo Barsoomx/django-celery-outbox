@@ -5,6 +5,9 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 
 ## [Unreleased]
 
+
+## [0.4.2] — 2026-10-05
+
 ### Fixed
 - The package test suite collects with every `pytest-django` release allowed by the `test` extra (`>=4.5`): `checks_tests` imports `DjangoDbBlocker` only for type checking, since `pytest-django` 4.5–4.7 does not export it.
 - `celery_outbox.E005`/`E006` no longer walk the call stack unless the outbox alias is selected, so plain `check`, `makemigrations`, and `runserver` on Django < 6.1 skip the `migrate` detection entirely. The stack walk starts at the caller's frame and drops its frame reference on exit, so it no longer leaves a frame reference cycle for the garbage collector.
