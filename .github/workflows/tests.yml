@@ -114,6 +114,26 @@ jobs:
             django: '5.2'
             celery: '5.6'
             db: 'mysql'
+          - python-version: '3.12'
+            django: '6.0'
+            celery: '5.6'
+            db: 'postgresql'
+          - python-version: '3.14'
+            django: '6.0'
+            celery: '5.6'
+            db: 'postgresql'
+          - python-version: '3.14'
+            django: '6.0'
+            celery: '5.6'
+            db: 'mysql'
+          - python-version: '3.12'
+            django: '6.1'
+            celery: '5.6'
+            db: 'postgresql'
+          - python-version: '3.14'
+            django: '6.1'
+            celery: '5.6'
+            db: 'postgresql'
 
     services:
       postgres:
@@ -166,10 +186,10 @@ jobs:
         run: pip install -e '.[test]'
 
       - name: Install Django version
-        run: pip install "Django~=${{ matrix.django }}"
+        run: pip install "Django==${{ matrix.django }}.*"
 
       - name: Install Celery version
-        run: pip install "celery~=${{ matrix.celery }}"
+        run: pip install "celery==${{ matrix.celery }}.*"
 
       - name: Run tests
         env:
@@ -222,7 +242,7 @@ jobs:
         run: pip install -e '.[test]'
 
       - name: Install Django and Celery versions under test
-        run: pip install "Django~=5.2" "celery~=5.6"
+        run: pip install "Django==5.2.*" "celery==5.6.*"
 
       - name: Run tests and collect coverage
         id: coverage_tests
@@ -329,7 +349,7 @@ jobs:
         run: pip install -e '.[test]'
 
       - name: Install Django and Celery versions under test
-        run: pip install "Django~=${{ matrix.django }}" "celery~=5.6"
+        run: pip install "Django==${{ matrix.django }}.*" "celery==5.6.*"
       - name: Run Django compatibility smoke tests
         env:
           DB_ENGINE: postgresql
@@ -411,7 +431,7 @@ jobs:
         run: pip install -e '.[test]'
 
       - name: Install Django and Celery versions under test
-        run: pip install "Django~=5.2" "celery~=5.6"
+        run: pip install "Django==5.2.*" "celery==5.6.*"
 
       - name: Run parallel broker smoke tests
         env:

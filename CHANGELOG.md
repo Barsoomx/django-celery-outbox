@@ -5,8 +5,16 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 
 ## [Unreleased]
 
+
+## [0.4.3] — 2026-10-25
+
 ### Added
 - Python 3.13 and 3.14 support: both versions run in the CI test matrix with Django 5.2 on PostgreSQL and MySQL, and the package classifiers declare them.
+- Django 6.0 and 6.1 support: both versions run in the CI test matrix on Python 3.12 and 3.14, and the package classifiers declare them. The Django 6.1 lanes run on PostgreSQL only: Django 6.1 requires MySQL 8.4, and the CI MySQL service runs 8.0.
+- `Typing :: Typed` classifier: the package already ships `py.typed`.
+
+### Fixed
+- CI installs the Django and Celery minor version that each lane names. `celery~=5.3` and `Django~=5.0` resolve to the newest `5.x` release, so the Celery 5.3–5.5 lanes ran Celery 5.6 and the Django 5.0 and 5.1 smoke lanes ran Django 5.2; the lanes now install `==X.Y.*`.
 
 
 ## [0.4.2] — 2026-10-05

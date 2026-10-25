@@ -102,7 +102,7 @@ jobs:
       - name: Install package with test dependencies
         run: pip install -e '.[test]'
       - name: Install Django and Celery versions under test
-        run: pip install "Django~=${{ matrix.django }}" "celery~=5.6"
+        run: pip install "Django==${{ matrix.django }}.*" "celery==5.6.*"
       - name: Run Django compatibility smoke tests
         env:
           DB_ENGINE: postgresql
@@ -178,7 +178,7 @@ jobs:
       - name: Install package with test dependencies
         run: pip install -e '.[test]'
       - name: Install Django and Celery versions under test
-        run: pip install "Django~=5.2" "celery~=5.6"
+        run: pip install "Django==5.2.*" "celery==5.6.*"
       - name: Run parallel broker smoke tests
         env:
           DB_ENGINE: postgresql
