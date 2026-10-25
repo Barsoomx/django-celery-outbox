@@ -5,6 +5,9 @@ This project adheres to [Keep a Changelog](https://keepachangelog.com/) and [Sem
 
 ## [Unreleased]
 
+### Added
+- Python 3.13 and 3.14 support: both versions run in the CI test matrix with Django 5.2 on PostgreSQL and MySQL, and the package classifiers declare them.
+
 
 ## [0.4.2] — 2026-10-05
 
