@@ -21,7 +21,7 @@ Transactional Outbox pattern for Celery tasks in Django.
 
 ## Compatibility
 
-CI exercises Django 4.2 and 5.2 in the general matrix, plus dedicated live-broker smoke coverage for Django 5.0 and 5.1. The support claims in this repository stay aligned with those explicit lanes.
+CI exercises Django 4.2 and 5.2 with Celery 5.3–5.6 on Python 3.10–3.12 in the general matrix, Django 5.2 on Python 3.13 and 3.14, Django 6.0 and 6.1 on Python 3.12 and 3.14, plus dedicated live-broker smoke coverage for Django 5.0 and 5.1. The Django 6.1 lanes run on PostgreSQL only: Django 6.1 requires MySQL 8.4, and the CI MySQL service runs 8.0. The support claims in this repository stay aligned with those explicit lanes.
 
 ## Coverage
 
