@@ -54,7 +54,7 @@ Issues = "https://github.com/Barsoomx/django-celery-outbox/issues"
 
 [project.optional-dependencies]
 dev = [
-  "ruff==0.15.17",
+  "ruff==0.17.2",
   "django-stubs>=5.0.0",
   "django-stubs-ext>=5.0.0",
   "mypy>=1.8",
